@@ -16,6 +16,7 @@ import 'connect_executor.dart';
 import 'connect_lyrics.dart';
 import 'connect_protocol.dart';
 import 'connect_tracks.dart';
+import 'connect_video.dart';
 
 /// YouTube Music, as the rpc handler reads it.
 abstract interface class ConnectCatalog {
@@ -47,17 +48,23 @@ class ConnectRpcHandler {
     required this._library,
     required this._deviceId,
     this._lyrics,
+    this._video,
     this._currentSong,
     this.lyricsWindow = lyricsAnswerWindow,
+    this.videoWindow = videoAnswerWindow,
   });
 
   final ConnectLyricsSource? _lyrics;
+  final ConnectVideoSource? _video;
 
   /// The track playing now, or null.
   final SongModel? Function()? _currentSong;
 
   /// How long the `lyrics` rpc waits for a lookup.
   final Duration lyricsWindow;
+
+  /// How long the `video` rpc waits for a rendition.
+  final Duration videoWindow;
 
   final ConnectCatalog _catalog;
   final ConnectLibrary _library;
@@ -127,6 +134,19 @@ class ConnectRpcHandler {
           song: song,
           source: source,
           window: lyricsWindow,
+        ))
+            .toJson();
+
+      case RpcMethod.video:
+        final source = _video;
+        final current = _currentSong;
+        if (source == null || current == null) throw const _Unsupported();
+        final song = current();
+        return (await answerVideo(
+          track: song == null ? null : trackRefOf(song, deviceId: _deviceId),
+          song: song,
+          source: source,
+          window: videoWindow,
         ))
             .toJson();
 

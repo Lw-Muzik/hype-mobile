@@ -329,6 +329,31 @@ enum YtStreamFormat {
   dash,
 }
 
+/// One video-only rendition a browser can play with `<video src>` and no
+/// headers: H.264 in MP4. Carried beside a video's [StreamTarget] so Hype
+/// Connect can hand it to a web remote; the phone itself never plays it.
+///
+/// Plain fields only, so it crosses the worker isolate boundary.
+class WebVideoRendition {
+  final String url;
+
+  /// As YouTube gives it, e.g. `video/mp4; codecs="avc1.4d401f"`.
+  final String mimeType;
+  final int? width;
+  final int height;
+
+  /// Unix seconds, from the URL's own `expire=`; null when it carries none.
+  final int? expiresAt;
+
+  const WebVideoRendition({
+    required this.url,
+    required this.mimeType,
+    required this.height,
+    this.width,
+    this.expiresAt,
+  });
+}
+
 /// A playable target plus the headers it should be fetched with.
 class StreamTarget {
   /// The URL to play — or, when [format] is [YtStreamFormat.dash], the manifest
@@ -347,11 +372,16 @@ class StreamTarget {
   /// googlevideo issues these ~6 hours out, so the URL long outlives the track.
   final int? expiresAt;
 
+  /// For a video: the rendition a web remote can play. Null for audio and when
+  /// the response held no usable H.264 rendition.
+  final WebVideoRendition? webVideo;
+
   const StreamTarget({
     required this.url,
     required this.headers,
     this.expiresAt,
     this.format = YtStreamFormat.progressive,
+    this.webVideo,
   });
 
   /// Whether this target can still be handed to a player.

@@ -51,6 +51,11 @@ class VideoSource {
   /// Unix seconds after which the CDN stops honouring the URLs in [location].
   final int? expiresAt;
 
+  /// The H.264 rendition a web remote can play (Hype Connect v1.3), kept from
+  /// the same resolve. Null when the response offered none. The phone never
+  /// plays this; it is only handed out on request.
+  final WebVideoRendition? web;
+
   const VideoSource({
     required this.songId,
     required this.videoId,
@@ -58,6 +63,7 @@ class VideoSource {
     required this.format,
     required this.headers,
     this.expiresAt,
+    this.web,
   });
 
   /// Whether this can still be handed to a player.
@@ -204,6 +210,7 @@ class VideoRegistry extends ChangeNotifier {
       format: target.format,
       headers: target.headers,
       expiresAt: target.expiresAt,
+      web: target.webVideo,
     );
     register(source);
     return source;

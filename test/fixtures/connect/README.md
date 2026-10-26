@@ -1,6 +1,6 @@
 # Hype Connect protocol fixtures (copied, do not edit here)
 
-These 56 files are verbatim copies of the normative example frames in the
+These 56 files (plus 5 v1.3 video fixtures added here ahead of the backend copy: `state.player.video`, `hello.mobile.v13`, `rpc.video.from`, `rpc_result.video`, `rpc_result.video.none`; re-copy when the backend ships them) are verbatim copies of the normative example frames in the
 backend repository:
 
     hypemuzik-management/backend/connect-protocol/fixtures/

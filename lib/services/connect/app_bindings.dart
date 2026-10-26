@@ -27,6 +27,9 @@ import 'package:eq_app/data/library_repository.dart';
 import 'package:eq_app/helpers/audio_visualizer.dart';
 import 'package:eq_app/models/lyrics_model.dart';
 import 'package:eq_app/services/connect/connect_lyrics.dart';
+import 'package:eq_app/services/connect/connect_video.dart';
+import 'package:eq_app/services/video/video_registry.dart';
+import 'package:eq_app/models/track_extras.dart';
 import 'package:eq_app/services/connect/connect_viz.dart';
 import 'package:eq_app/visualizers/beat_frame.dart';
 import 'package:eq_app/services/connect/connect_executor.dart';
@@ -278,6 +281,10 @@ class AppConnectStateSource implements ConnectStateSource {
     // app notices, so without this the hub would keep the old value. (DVC gain
     // changes already arrive through [_app].)
     _volumeSub = _volume.changes.listen((_) => _poke());
+    // A video becomes a video asynchronously (its manifest is staged after the
+    // queue entry exists) and is dropped when a non-YouTube queue takes over;
+    // the `video` flag in a frame follows the registry.
+    VideoRegistry.instance.addListener(_poke);
   }
 
   final AppController _app;
@@ -311,6 +318,7 @@ class AppConnectStateSource implements ConnectStateSource {
       // null: while a crossfade runs each player's volume is a point on a
       // ramp, not what the user set, and the publisher repeats the last value.
       volume: _volume.read(),
+      video: hasTrack && picturePlaying(queue[index]),
       shuffle: _app.isShuffled,
       repeat: switch (handler.loopMode) {
         LoopMode.off => ConnectRepeat.off,
@@ -328,9 +336,75 @@ class AppConnectStateSource implements ConnectStateSource {
 
   void dispose() {
     _app.removeListener(_poke);
+    VideoRegistry.instance.removeListener(_poke);
     unawaited(_playback.cancel());
     unawaited(_volumeSub.cancel());
     unawaited(_changes.close());
+  }
+}
+
+/// Whether the player is showing [song]'s picture.
+///
+/// The same test the player card applies when it decides to build the video
+/// stage instead of the artwork: the song is the current queue entry and the
+/// [VideoRegistry] holds a source for it (a manifest staged, which is what makes
+/// the player load it as video). It is also required to be a YouTube video item
+/// (`isYtVideo` and a video id), so a stray registry entry for something else
+/// never marks a frame. Whether the picture is on screen, full screen, or in
+/// the pop-out does not matter: the picture is *playing* either way, and the
+/// remote mirrors playback, not this phone's layout.
+bool picturePlaying(SongModel song) =>
+    song.isYtVideo &&
+    song.ytVideoId != null &&
+    VideoRegistry.instance.sourceFor(song.id) != null;
+
+/// [ConnectVideoSource] over the video registry.
+///
+/// Hands out the rendition kept when the video was resolved. When that URL is
+/// stale it resolves the video again through the shared repository (the worker
+/// isolate, never the UI thread) and offers the fresh rendition; the registry
+/// and the player are left alone, as re-staging is the player's own business.
+class AppConnectVideo implements ConnectVideoSource {
+  AppConnectVideo(
+    this._app, {
+    this.resolveTimeout = const Duration(seconds: 8),
+  });
+
+  final AppController _app;
+  final Duration resolveTimeout;
+
+  @override
+  bool showsPicture(SongModel? song) {
+    if (song == null) return false;
+    final i = _app.songId;
+    final isCurrent =
+        i >= 0 && i < _app.songs.length && _app.songs[i].id == song.id;
+    return isCurrent && picturePlaying(song);
+  }
+
+  @override
+  Future<WebVideoRendition?> renditionFor(SongModel song) async {
+    final source = VideoRegistry.instance.sourceFor(song.id);
+    if (source == null) return null;
+    final kept = source.web;
+    if (kept != null && _isFresh(kept)) return kept;
+    final videoId = source.videoId;
+    try {
+      final target = await YtMusicRepository.instance
+          .videoTarget(videoId)
+          .timeout(resolveTimeout);
+      final fresh = target.webVideo;
+      return fresh != null && _isFresh(fresh) ? fresh : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _isFresh(WebVideoRendition r) {
+    final deadline = r.expiresAt;
+    if (deadline == null) return false;
+    return DateTime.now().millisecondsSinceEpoch ~/ 1000 <
+        deadline - videoExpiryHeadroom.inSeconds;
   }
 }
 

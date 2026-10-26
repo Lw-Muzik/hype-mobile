@@ -432,9 +432,9 @@ void main() {
       expect(socket.types, ['hello', 'ping', 'state']);
     });
 
-    test('advertises v1.1: lyrics and viz', () {
+    test('advertises v1.3: lyrics, viz and video', () {
       expect(HypeConnect.deviceCaps.map((c) => c.name),
-          ['player', 'yt', 'local', 'lyrics', 'viz']);
+          ['player', 'yt', 'local', 'lyrics', 'viz', 'video']);
     });
 
     test('answers the lyrics rpc end to end', () async {

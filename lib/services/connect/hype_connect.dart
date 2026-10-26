@@ -43,6 +43,7 @@ import 'package:eq_app/services/connect/connect_api.dart';
 import 'package:eq_app/services/connect/connect_client.dart';
 import 'package:eq_app/services/connect/connect_executor.dart';
 import 'package:eq_app/services/connect/connect_lyrics.dart';
+import 'package:eq_app/services/connect/connect_video.dart';
 import 'package:eq_app/services/connect/connect_notification.dart';
 import 'package:eq_app/services/connect/connect_service.dart';
 import 'package:eq_app/services/connect/connect_viz.dart';
@@ -171,6 +172,7 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
     required this.isMusicMode,
     required this.isPlaying,
     this.lyrics,
+    this.video,
     this.currentSong,
     this.vizFeed,
     this.position,
@@ -204,13 +206,14 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
     client.state.addListener(_onClientState);
   }
 
-  /// What this phone tells the hub it can do (protocol v1.1).
+  /// What this phone tells the hub it can do (protocol v1.3).
   static const List<ConnectCap> deviceCaps = [
     ConnectCap.player,
     ConnectCap.yt,
     ConnectCap.local,
     ConnectCap.lyrics,
     ConnectCap.viz,
+    ConnectCap.video,
   ];
 
   static const enabledKey = 'hype_connect.enabled';
@@ -268,6 +271,7 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
       isMusicMode: () => !app.isEqMode,
       isPlaying: () => app.handler.playbackState.value.playing,
       lyrics: AppConnectLyrics(app),
+      video: AppConnectVideo(app),
       currentSong: () {
         final i = app.songId;
         return i >= 0 && i < app.songs.length ? app.songs[i] : null;
@@ -304,6 +308,9 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Answers the `lyrics` rpc; without it the rpc is `unsupported`.
   final ConnectLyricsSource? lyrics;
+
+  /// Answers the `video` rpc (v1.3); without it the rpc is `unsupported`.
+  final ConnectVideoSource? video;
   final SongModel? Function()? currentSong;
 
   /// The native analysis for the visualiser stream, and the playback position.
@@ -415,6 +422,7 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
       library: _library,
       deviceId: deviceId,
       lyrics: lyrics,
+      video: video,
       currentSong: currentSong,
     );
     final feed = vizFeed;

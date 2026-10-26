@@ -1,0 +1,49 @@
+{
+  "t": "state",
+  "state": {
+    "seq": 42,
+    "track": {
+      "src": "yt",
+      "videoId": "dQw4w9WgXcQ",
+      "title": "Never Gonna Give You Up",
+      "artist": "Rick Astley",
+      "album": "Whenever You Need Somebody",
+      "durationMs": 213000,
+      "artUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+    },
+    "playing": true,
+    "positionMs": 61250,
+    "durationMs": 213000,
+    "volume": 0.8,
+    "shuffle": false,
+    "repeat": "off",
+    "queue": [
+      {
+        "uid": "q-7",
+        "track": {
+          "src": "yt",
+          "videoId": "kJQP7kiw5Fk",
+          "title": "Despacito",
+          "artist": "Luis Fonsi",
+          "album": null,
+          "durationMs": 229000,
+          "artUrl": "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg"
+        }
+      },
+      {
+        "uid": "q-8",
+        "track": {
+          "src": "local",
+          "deviceId": "6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b",
+          "id": "18342",
+          "title": "Sura Yako",
+          "artist": "Sauti Sol",
+          "album": "Midnight Train",
+          "durationMs": 201000,
+          "artUrl": null
+        }
+      }
+    ],
+    "video": true
+  }
+}

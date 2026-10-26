@@ -29,6 +29,7 @@ import 'parse/yt_misc.dart';
 import 'parse/yt_page.dart';
 import 'parse/yt_track_info.dart';
 import 'parse/yt_tracks.dart';
+import 'parse/yt_web_video.dart';
 import 'yt_innertube.dart';
 import 'yt_models.dart';
 
@@ -472,6 +473,8 @@ Future<StreamTarget> _resolveVideo(YtInnerTube api, String videoId) =>
           headers: headers,
           expiresAt: _expiryOf(hls),
           format: YtStreamFormat.hls,
+          // The same response may still list adaptive renditions.
+          webVideo: pickWebVideo(ptr(json, 'streamingData/adaptiveFormats')),
         );
       }
 
@@ -517,6 +520,7 @@ Future<StreamTarget> _resolveVideo(YtInnerTube api, String videoId) =>
         // The manifest is only as fresh as the URLs inside it.
         expiresAt: _expiryOf(video.first.url),
         format: YtStreamFormat.dash,
+        webVideo: pickWebVideo(formats),
       );
     });
 

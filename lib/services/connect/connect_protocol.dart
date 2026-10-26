@@ -124,8 +124,9 @@ enum DeviceKind { web, mobile, desktop }
 /// What a device can do. `player` obeys commands and publishes state; `yt` can
 /// play and search YouTube Music; `local` has an on-device library and answers
 /// the `library` rpc; `lyrics` answers the `lyrics` rpc and `viz` streams
-/// `viz` frames (both v1.1).
-enum ConnectCap { player, yt, local, lyrics, viz }
+/// `viz` frames (both v1.1); `video` answers the `video` rpc and marks state
+/// frames with `video:true` while a picture is showing (v1.3).
+enum ConnectCap { player, yt, local, lyrics, viz, video }
 
 enum ConnectRepeat { off, all, one }
 
@@ -156,7 +157,7 @@ enum RpcError implements WireEnum {
   final String wire;
 }
 
-enum RpcMethod { search, suggest, open, artist, library, lyrics }
+enum RpcMethod { search, suggest, open, artist, library, lyrics, video }
 
 /// The search filters a controller may ask for.
 enum ConnectSearchFilter { all, songs, videos, albums, artists, playlists }
@@ -367,6 +368,7 @@ class PlayerState {
     required this.shuffle,
     required this.repeat,
     required this.queue,
+    this.video = false,
   });
 
   /// Per-device and monotonic: receivers drop anything older than what they
@@ -387,6 +389,10 @@ class PlayerState {
   /// Upcoming items only — never the playing track — at most 50.
   final List<QueueEntry> queue;
 
+  /// `true` while the player is showing the current track's picture (a music
+  /// video), v1.3. On the wire the key is present only when true.
+  final bool video;
+
   static const maxQueue = 50;
 
   factory PlayerState.fromJson(Object? raw) {
@@ -402,6 +408,7 @@ class PlayerState {
       shuffle: _bool(json, 'shuffle'),
       repeat: _enum(ConnectRepeat.values, _str(json, 'repeat'), 'repeat'),
       queue: _list(json, 'queue', QueueEntry.fromJson),
+      video: json['video'] == true,
     );
   }
 
@@ -415,6 +422,7 @@ class PlayerState {
         'shuffle': shuffle,
         'repeat': repeat.name,
         'queue': [for (final entry in queue) entry.toJson()],
+        if (video) 'video': true,
       };
 
   PlayerState withSeq(int seq) => PlayerState(
@@ -427,6 +435,7 @@ class PlayerState {
         shuffle: shuffle,
         repeat: repeat,
         queue: queue,
+        video: video,
       );
 }
 
@@ -1076,6 +1085,66 @@ class LyricsResult {
         'synced': synced,
         'source': source,
         'lines': [for (final line in lines) line.toJson()],
+      };
+}
+
+// --- video (v1.3) ---
+
+/// The result of the `video` rpc: a browser-playable, video-only rendition of
+/// the picture this phone is showing. When [found] is false every other field
+/// except [track] is null.
+class VideoResult {
+  const VideoResult({
+    required this.track,
+    required this.found,
+    required this.url,
+    required this.mimeType,
+    required this.width,
+    required this.height,
+    required this.expiresAt,
+  });
+
+  /// No picture right now (audio track, nothing playing, stale or unresolved).
+  const VideoResult.none(this.track)
+      : found = false,
+        url = null,
+        mimeType = null,
+        width = null,
+        height = null,
+        expiresAt = null;
+
+  final TrackRef? track;
+  final bool found;
+  final String? url;
+  final String? mimeType;
+  final int? width;
+  final int? height;
+
+  /// Epoch milliseconds at which [url] stops working.
+  final int? expiresAt;
+
+  factory VideoResult.fromJson(Object? raw) {
+    final json = _asMap(raw, 'result');
+    final track = json['track'];
+    return VideoResult(
+      track: track == null ? null : TrackRef.fromJson(track),
+      found: _bool(json, 'found'),
+      url: _strOrNull(json, 'url'),
+      mimeType: _strOrNull(json, 'mimeType'),
+      width: _intOrNull(json, 'width'),
+      height: _intOrNull(json, 'height'),
+      expiresAt: _intOrNull(json, 'expiresAt'),
+    );
+  }
+
+  JsonMap toJson() => {
+        'track': track?.toJson(),
+        'found': found,
+        'url': url,
+        'mimeType': mimeType,
+        'width': width,
+        'height': height,
+        'expiresAt': expiresAt,
       };
 }
 

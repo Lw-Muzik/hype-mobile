@@ -1,0 +1,7 @@
+{
+  "t": "rpc",
+  "id": "r-9",
+  "from": "cm1webdevice0001abcdefgh",
+  "method": "video",
+  "params": {}
+}

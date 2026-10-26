@@ -68,6 +68,11 @@ const _frameTypes = <String, Type>{
   'rpc.search.to.json': RpcFrame,
   'rpc.suggest.from.json': RpcFrame,
   'rpc.lyrics.from.json': RpcFrame,
+  'rpc.video.from.json': RpcFrame,
+  'rpc_result.video.json': RpcResultFrame,
+  'rpc_result.video.none.json': RpcResultFrame,
+  'state.player.video.json': StateFrame,
+  'hello.mobile.v13.json': HelloFrame,
   'rpc_result.lyrics.json': RpcResultFrame,
   'rpc_result.lyrics.none.json': RpcResultFrame,
   'rpc_result.lyrics.plain.json': RpcResultFrame,
@@ -119,6 +124,7 @@ final _paramParsers = <String, Map<String, Object?> Function(Object?)>{
   'artist': (raw) => ArtistParams.fromJson(raw).toJson(),
   'library': (raw) => LibraryParams.fromJson(raw).toJson(),
   'lyrics': (raw) => Map<String, Object?>.of(raw as Map<String, Object?>),
+  'video': (raw) => Map<String, Object?>.of(raw as Map<String, Object?>),
 };
 
 /// The typed shape of each successful rpc result. The frame does not say which
@@ -132,6 +138,8 @@ final _resultParsers = <String, Map<String, Object?> Function(Object?)>{
   'rpc_result.lyrics.json': (raw) => LyricsResult.fromJson(raw).toJson(),
   'rpc_result.lyrics.none.json': (raw) => LyricsResult.fromJson(raw).toJson(),
   'rpc_result.lyrics.plain.json': (raw) => LyricsResult.fromJson(raw).toJson(),
+  'rpc_result.video.json': (raw) => VideoResult.fromJson(raw).toJson(),
+  'rpc_result.video.none.json': (raw) => VideoResult.fromJson(raw).toJson(),
 };
 
 void main() {
@@ -143,8 +151,8 @@ void main() {
       .toList()
     ..sort();
 
-  test('the folder holds the 56 fixtures the contract ships', () {
-    expect(names, hasLength(56));
+  test('the folder holds the 61 fixtures the contract ships (56 + 5 v1.3 video)', () {
+    expect(names, hasLength(61));
     // Every one is covered by exactly one of the two tables below, so a
     // fixture added upstream and re-copied here cannot slip through untested.
     for (final name in names) {
@@ -281,6 +289,48 @@ void main() {
         _load('hello.mobile.v11.json'),
         'hello v1.1',
       );
+    });
+  });
+
+  group('v1.3 video', () {
+    test('the cap is advertised and round-trips as the fixture does', () {
+      final frame = ConnectFrame.fromJson(_load('hello.mobile.v13.json'))
+          as HelloFrame;
+      expect(frame.device.caps.last, ConnectCap.video);
+      expect(ConnectCap.values.map((c) => c.name), contains('video'));
+    });
+
+    test('state.video is written only when true', () {
+      final on = ConnectFrame.fromJson(_load('state.player.video.json'))
+          as StateFrame;
+      expect(on.state.video, isTrue);
+      expect(on.toJson()['state'] as Map, containsPair('video', true));
+
+      final off =
+          ConnectFrame.fromJson(_load('state.player.json')) as StateFrame;
+      expect(off.state.video, isFalse);
+      expect((off.toJson()['state'] as Map).containsKey('video'), isFalse);
+      // `video:false` from a sender is read as false, and not echoed.
+      final raw = Map<String, Object?>.of(
+          (_load('state.player.json') as Map<String, Object?>)['state']!
+              as Map<String, Object?>)
+        ..['video'] = false;
+      expect(PlayerState.fromJson(raw).toJson().containsKey('video'), isFalse);
+    });
+
+    test('the video rpc is a known method', () {
+      final frame =
+          ConnectFrame.fromJson(_load('rpc.video.from.json')) as RpcFrame;
+      expect(frame.knownMethod, RpcMethod.video);
+    });
+
+    test('found:false keeps its null fields on the wire', () {
+      final raw = _load('rpc_result.video.none.json') as Map<String, Object?>;
+      final json = VideoResult.fromJson(raw['result']).toJson();
+      for (final key in ['url', 'mimeType', 'width', 'height', 'expiresAt']) {
+        expect(json.containsKey(key), isTrue, reason: key);
+        expect(json[key], isNull, reason: key);
+      }
     });
   });
 

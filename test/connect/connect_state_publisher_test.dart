@@ -30,6 +30,7 @@ class FakeSource implements ConnectStateSource {
   Duration position = Duration.zero;
   double? volume = 0.5;
   bool shuffle = false;
+  bool video = false;
   ConnectRepeat repeat = ConnectRepeat.off;
   List<UpcomingSong> upcoming = const [];
 
@@ -48,6 +49,7 @@ class FakeSource implements ConnectStateSource {
         shuffle: shuffle,
         repeat: repeat,
         upcoming: upcoming,
+        video: video,
       );
 }
 
@@ -226,6 +228,36 @@ void main() {
         async.elapse(const Duration(seconds: 1));
         expect(sent, hasLength(1));
       }, isOnline: () => online);
+    });
+  });
+
+  group('video flag (v1.3)', () {
+    test('a frame is sent when video flips, and the flag is in the state', () {
+      scenario((async, source, sent, publisher, _) {
+        source.poke();
+        async.elapse(const Duration(seconds: 1));
+        expect(sent, hasLength(1));
+        expect(sent.last.video, isFalse);
+        expect(sent.last.toJson().containsKey('video'), isFalse);
+
+        source.video = true;
+        source.poke();
+        async.elapse(const Duration(seconds: 1));
+        expect(sent, hasLength(2));
+        expect(sent.last.video, isTrue);
+        expect(sent.last.toJson()['video'], isTrue);
+
+        // Unchanged: nothing more to say.
+        source.poke();
+        async.elapse(const Duration(seconds: 1));
+        expect(sent, hasLength(2));
+
+        source.video = false;
+        source.poke();
+        async.elapse(const Duration(seconds: 1));
+        expect(sent, hasLength(3));
+        expect(sent.last.toJson().containsKey('video'), isFalse);
+      });
     });
   });
 

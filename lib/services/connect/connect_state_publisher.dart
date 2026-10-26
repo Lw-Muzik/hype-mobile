@@ -65,6 +65,7 @@ class ConnectSnapshot {
     required this.shuffle,
     required this.repeat,
     required this.upcoming,
+    this.video = false,
   });
 
   final SongModel? track;
@@ -82,6 +83,9 @@ class ConnectSnapshot {
   /// Everything after the playing track, in playing order. May be longer than
   /// the 50 a frame carries; the publisher cuts it.
   final List<UpcomingSong> upcoming;
+
+  /// Whether the player is showing the current track's picture (v1.3).
+  final bool video;
 }
 
 /// Where the publisher reads the player from.
@@ -228,6 +232,7 @@ class ConnectStatePublisher {
       volume: volume,
       shuffle: snapshot.shuffle,
       repeat: snapshot.repeat,
+      video: snapshot.video,
       queue: [
         for (final entry in snapshot.upcoming.take(PlayerState.maxQueue))
           QueueEntry(
