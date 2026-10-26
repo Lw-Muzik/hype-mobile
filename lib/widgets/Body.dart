@@ -5,6 +5,8 @@ import '/controllers/app_controller.dart';
 import '/exports/exports.dart';
 import '../helpers/visualizer_widget.dart';
 import '../visualizers/circular_bar_visualizer.dart';
+import '../player/remote/remote_player.dart' show RemoteBackdrop;
+import '../player/remote/remote_scope.dart' show RemoteBuilder;
 import 'artwork_widget.dart';
 
 /// The extra blur that used to be a second, stacked backdrop filter.
@@ -64,6 +66,41 @@ typedef _BgData = ({
 
 class _BodyBackground extends StatelessWidget {
   const _BodyBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    // Another device is the player: the backdrop follows ITS track, exactly as
+    // it follows local playback (RemoteBuilder is a pass-through with null
+    // outside remote mode).
+    return RemoteBuilder(
+      builder: (context, remote) => remote == null
+          ? const _LocalBodyBackground()
+          : RepaintBoundary(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  RemoteBackdrop(track: remote.track, fade: false),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color.fromARGB(92, 0, 0, 0),
+                          Color.fromARGB(179, 0, 0, 0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+class _LocalBodyBackground extends StatelessWidget {
+  const _LocalBodyBackground();
 
   @override
   Widget build(BuildContext context) {
@@ -155,9 +192,8 @@ class _BodyBackground extends StatelessWidget {
                   builder: (context, fft, _, rate) {
                     return CustomPaint(
                       painter: CircularBarVisualizer(
-                        color: Theme.of(
-                          context,
-                        ).primaryColorLight.withValues(alpha: 0.1),
+                        color: Theme.of(context).primaryColorLight
+                            .withValues(alpha: 0.1),
                         waveData: fft,
                         width: size.width,
                         height: size.height,

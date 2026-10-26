@@ -52,7 +52,7 @@ class RemotePlayerView extends StatelessWidget {
           final landscape = box.maxWidth > box.maxHeight;
           return Stack(
             children: [
-              Positioned.fill(child: _Backdrop(track: remote.track)),
+              Positioned.fill(child: RemoteBackdrop(track: remote.track)),
               SafeArea(
                 bottom: landscape,
                 child: landscape
@@ -72,18 +72,18 @@ class RemotePlayerView extends StatelessWidget {
 /// A tinted glow from the track's own colour, the blurred artwork over it, and
 /// the dark fade that keeps text legible. The glow is what stops an art-less
 /// local track from being flat black.
-class _Backdrop extends StatelessWidget {
-  const _Backdrop({required this.track});
+class RemoteBackdrop extends StatelessWidget {
+  const RemoteBackdrop({super.key, required this.track, this.fade = true});
 
   final TrackRef? track;
 
+  /// The dark fade keeping player text legible; pages with their own scrim
+  /// turn it off.
+  final bool fade;
+
   @override
   Widget build(BuildContext context) {
-    final artUrl = switch (track) {
-      YtTrackRef(:final artUrl) => artUrl,
-      OtherTrackRef(:final artUrl) => artUrl,
-      _ => null,
-    };
+    final artUrl = remoteArtUrlOf(track);
     final tint = Ember.accentFor(remoteTitleOf(track));
     return Stack(
       fit: StackFit.expand,
@@ -112,19 +112,20 @@ class _Backdrop extends StatelessWidget {
                   ),
                 ),
         ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Ember.ground.withValues(alpha: 0.55),
-                Ember.ground.withValues(alpha: 0.92),
-                Ember.ground,
-              ],
+        if (fade)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Ember.ground.withValues(alpha: 0.55),
+                  Ember.ground.withValues(alpha: 0.92),
+                  Ember.ground,
+                ],
+              ),
             ),
           ),
-        ),
       ],
     );
   }

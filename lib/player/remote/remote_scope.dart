@@ -1,6 +1,8 @@
 /// Shared plumbing for the remote-mode player UI.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:eq_app/services/connect/connect_protocol.dart';
@@ -51,11 +53,7 @@ class RemoteArt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = switch (track) {
-      YtTrackRef(:final artUrl) => artUrl,
-      OtherTrackRef(:final artUrl) => artUrl,
-      _ => null,
-    };
+    final url = remoteArtUrlOf(track);
     final placeholder = Container(
       width: size,
       height: size,
@@ -82,25 +80,86 @@ class RemoteArt extends StatelessWidget {
   }
 }
 
+/// Public artwork URL of a remote track; null for a `local` file (its art lives
+/// on the other device).
+String? remoteArtUrlOf(TrackRef? track) => switch (track) {
+  YtTrackRef(:final artUrl) => artUrl,
+  OtherTrackRef(:final artUrl) => artUrl,
+  _ => null,
+};
+
+/// Progress in 0..1 of a remote player, clamped; 0 when the length is unknown.
+double remoteProgressOf(RemoteNowPlaying now) {
+  final d = now.durationMs ?? 0;
+  if (d <= 0) return 0;
+  return (now.positionMs.clamp(0, d)) / d;
+}
+
+/// A thin live progress line for a remote player (mini players). Re-reads the
+/// session every 200 ms while playing, so it moves between state frames.
+class RemoteProgressLine extends StatefulWidget {
+  const RemoteProgressLine({super.key, required this.session, this.height = 2});
+
+  final ConnectRemoteSession session;
+  final double height;
+
+  @override
+  State<RemoteProgressLine> createState() => _RemoteProgressLineState();
+}
+
+class _RemoteProgressLineState extends State<RemoteProgressLine> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      final now = widget.session.nowPlaying();
+      if (mounted && now != null && now.playing) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = widget.session.nowPlaying();
+    final value = now == null ? 0.0 : remoteProgressOf(now);
+    return SizedBox(
+      height: widget.height,
+      child: LinearProgressIndicator(
+        value: value,
+        minHeight: widget.height,
+        backgroundColor: Ember.textTertiary.withValues(alpha: 0.25),
+        valueColor: const AlwaysStoppedAnimation(Ember.accent),
+      ),
+    );
+  }
+}
+
 String remoteTitleOf(TrackRef? track) => switch (track) {
-      YtTrackRef(:final title) => title,
-      LocalTrackRef(:final title) => title,
-      OtherTrackRef(:final title) => title,
-      null => 'Nothing playing',
-    };
+  YtTrackRef(:final title) => title,
+  LocalTrackRef(:final title) => title,
+  OtherTrackRef(:final title) => title,
+  null => 'Nothing playing',
+};
 
 String? remoteArtistOf(TrackRef? track) => switch (track) {
-      YtTrackRef(:final artist) => artist,
-      LocalTrackRef(:final artist) => artist,
-      OtherTrackRef(:final artist) => artist,
-      null => null,
-    };
+  YtTrackRef(:final artist) => artist,
+  LocalTrackRef(:final artist) => artist,
+  OtherTrackRef(:final artist) => artist,
+  null => null,
+};
 
 IconData iconForDevice(DeviceKind kind) => switch (kind) {
-      DeviceKind.web => Icons.language_rounded,
-      DeviceKind.desktop => Icons.desktop_mac_rounded,
-      DeviceKind.mobile => Icons.smartphone_rounded,
-    };
+  DeviceKind.web => Icons.language_rounded,
+  DeviceKind.desktop => Icons.desktop_mac_rounded,
+  DeviceKind.mobile => Icons.smartphone_rounded,
+};
 
 String formatMs(int ms) {
   final total = ms ~/ 1000;

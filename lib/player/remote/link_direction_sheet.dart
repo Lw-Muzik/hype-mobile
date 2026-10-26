@@ -53,7 +53,10 @@ class _DirectionSheetState extends State<_DirectionSheet> {
   void initState() {
     super.initState();
     _phonePlaying = _direction.phonePlaying();
-    _choice = preselectedChoice(phonePlaying: _phonePlaying, desktopPlaying: false);
+    _choice = preselectedChoice(
+      phonePlaying: _phonePlaying,
+      desktopPlaying: false,
+    );
     unawaited(_discover());
   }
 
@@ -78,7 +81,8 @@ class _DirectionSheetState extends State<_DirectionSheet> {
     if (desktop == null) {
       setState(() {
         _busy = false;
-        _error = '${widget.name} has not come online yet. Make sure Hype '
+        _error =
+            '${widget.name} has not come online yet. Make sure Hype '
             'Muzik is open on it, then try again.';
       });
       return;
@@ -110,7 +114,10 @@ class _DirectionSheetState extends State<_DirectionSheet> {
           children: [
             Text(
               'Where should music play?',
-              style: AppFonts.displayStyle(fontSize: 24, color: Ember.textPrimary),
+              style: AppFonts.displayStyle(
+                fontSize: 24,
+                color: Ember.textPrimary,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -129,9 +136,9 @@ class _DirectionSheetState extends State<_DirectionSheet> {
               onTap: _busy
                   ? null
                   : () => setState(() {
-                        _touched = true;
-                        _choice = LinkChoice.desktop;
-                      }),
+                      _touched = true;
+                      _choice = LinkChoice.desktop;
+                    }),
             ),
             const SizedBox(height: 10),
             _ChoiceCard(
@@ -143,9 +150,9 @@ class _DirectionSheetState extends State<_DirectionSheet> {
               onTap: _busy
                   ? null
                   : () => setState(() {
-                        _touched = true;
-                        _choice = LinkChoice.phone;
-                      }),
+                      _touched = true;
+                      _choice = LinkChoice.phone;
+                    }),
             ),
             if (_error != null) ...[
               const SizedBox(height: 14),
@@ -233,7 +240,11 @@ class _ChoiceCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(icon, size: 30, color: selected ? Ember.accent : Ember.textSecondary),
+              Icon(
+                icon,
+                size: 30,
+                color: selected ? Ember.accent : Ember.textSecondary,
+              ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -250,7 +261,10 @@ class _ChoiceCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      style: TextStyle(color: Ember.textSecondary, fontSize: 13),
+                      style: TextStyle(
+                        color: Ember.textSecondary,
+                        fontSize: 13,
+                      ),
                     ),
                     if (playingNow) ...[
                       const SizedBox(height: 6),
@@ -280,7 +294,9 @@ class _ChoiceCard extends StatelessWidget {
                 ),
               ),
               Icon(
-                selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                selected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_off_rounded,
                 color: selected ? Ember.accent : Ember.textTertiary,
               ),
             ],
