@@ -8,6 +8,14 @@
 #define MAX_SCRATCH_FRAMES 8192
 // Bass hops kept for the main thread: ~3 s, far more than a display tick needs.
 #define BASS_RING 512
+// Band levels for the radial's bars, as Android's FFTVisualizer computes them:
+// a 2048-point FFT of the newest full-rate mono audio, 64 power-curve bands.
+#define BAND_FFT_SIZE 2048
+#define BAND_LOG2N 11
+#define BAND_COUNT 64
+// Mono samples kept for that FFT. Room for the window plus the largest buffer
+// the audio thread writes (MAX_SCRATCH_FRAMES) while the main thread reads.
+#define BAND_RING 16384
 
 // Handed to tap_Init through clientInfo: the shared DSP engine plus this
 // item's URL, which identifies the track to the live-stem engine.
@@ -23,6 +31,15 @@ typedef struct {
     float *scratchBuffer;     // interleave buffer (MAX_SCRATCH_FRAMES * 2)
     int sampleRate;
     int channels;
+
+    // Live stems: where the next buffer starts, in frames at sampleRate.
+    // AVPlayer's per-buffer asset time is only good to a source packet (a
+    // 4096-frame buffer at 48 kHz moves it by 3906 or 4464), and the stem tap
+    // reads any step over 64 frames as a seek, so it would restart alignment
+    // on every buffer and never finish. The asset time sets the origin and
+    // catches seeks; the frames themselves count the rest.
+    int64_t stemNextFrame;
+    int stemFrameKnown;
 
     // Visualization capture (lock-free: audio thread writes, main thread reads)
     uint8_t vizWaveform[VIZ_CAPTURE_SIZE];
@@ -51,6 +68,10 @@ typedef struct {
     float bassHops[BASS_RING];
     int64_t bassWritten;      // atomic: hops written (audio thread)
     int64_t bassRead;         // hops taken (main thread only)
+
+    // Full-rate mono audio for the band levels (audio thread writes).
+    float bandRing[BAND_RING];
+    int64_t bandWritten;      // atomic: samples written
 } TapContext;
 
 static void designBassBiquad(double *c, int highPass, double fc, double fs) {
@@ -89,7 +110,10 @@ static void prepareBass(TapContext *ctx) {
 static void captureBass(TapContext *ctx, const float *interleaved, int numFrames) {
     if (ctx->bassHopSize <= 0) return;
     int64_t written = __atomic_load_n(&ctx->bassWritten, __ATOMIC_RELAXED);
+    const int64_t bandStart = __atomic_load_n(&ctx->bandWritten, __ATOMIC_RELAXED);
     for (int i = 0; i < numFrames; i++) {
+        const float mono = (interleaved[i * 2] + interleaved[i * 2 + 1]) * 0.5f;
+        ctx->bandRing[(bandStart + i) % BAND_RING] = mono;
         double y = 0.5 * ((double)interleaved[i * 2] + (double)interleaved[i * 2 + 1]);
         y = bassBiquad(ctx->bassState[0], ctx->bassCoef[0], y);
         y = bassBiquad(ctx->bassState[1], ctx->bassCoef[1], y);
@@ -102,7 +126,58 @@ static void captureBass(TapContext *ctx, const float *interleaved, int numFrames
             ctx->bassFill = 0;
         }
     }
+    __atomic_store_n(&ctx->bandWritten, bandStart + numFrames, __ATOMIC_RELEASE);
     __atomic_store_n(&ctx->bassWritten, written, __ATOMIC_RELEASE);
+}
+
+// The newest BAND_FFT_SIZE samples' level in each of Android's 64 bands, dBFS
+// (FFTVisualizer::computeBeat: same Hann window, power-curve edges and full-
+// scale reference), so Dart's RadialScene draws iOS bars the way it draws
+// Android's. Returns 0 until a window's worth has been heard. Main thread.
+static int writeBandsDb(TapContext *ctx, float *out) {
+    static FFTSetup setup;
+    static float window[BAND_FFT_SIZE];
+    static int edges[BAND_COUNT + 1];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        setup = vDSP_create_fftsetup(BAND_LOG2N, kFFTRadix2);
+        for (int i = 0; i < BAND_FFT_SIZE; i++) {
+            window[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (BAND_FFT_SIZE - 1)));
+        }
+        for (int b = 0; b <= BAND_COUNT; b++) {
+            const float t = (float)b / BAND_COUNT;
+            edges[b] = 1 + (int)(powf(t, 2.0f) * (BAND_FFT_SIZE / 2 - 1));
+        }
+        for (int b = 1; b <= BAND_COUNT; b++) {
+            if (edges[b] <= edges[b - 1]) edges[b] = edges[b - 1] + 1;
+        }
+    });
+    const int64_t end = __atomic_load_n(&ctx->bandWritten, __ATOMIC_ACQUIRE);
+    if (!setup || end < BAND_FFT_SIZE) return 0;
+
+    float windowed[BAND_FFT_SIZE];
+    for (int i = 0; i < BAND_FFT_SIZE; i++) {
+        windowed[i] = ctx->bandRing[(end - BAND_FFT_SIZE + i) % BAND_RING] * window[i];
+    }
+    float realp[BAND_FFT_SIZE / 2];
+    float imagp[BAND_FFT_SIZE / 2];
+    DSPSplitComplex split = { realp, imagp };
+    vDSP_ctoz((DSPComplex *)windowed, 2, &split, 1, BAND_FFT_SIZE / 2);
+    vDSP_fft_zrip(setup, &split, 1, BAND_LOG2N, FFT_FORWARD);
+
+    for (int b = 0; b < BAND_COUNT; b++) {
+        const int lo = edges[b];
+        const int hi = edges[b + 1];
+        float sum = 0;
+        for (int i = lo; i < hi; i++) {
+            // zrip returns twice the DFT; bins 1..N/2-1 only, so no packing.
+            sum += 0.5f * sqrtf(realp[i] * realp[i] + imagp[i] * imagp[i]);
+        }
+        const float mean = sum / (hi - lo > 1 ? hi - lo : 1);
+        // A full-scale sine peaks at N/4 through a Hann window.
+        out[b] = 20.0f * log10f(mean / (BAND_FFT_SIZE / 4) + 1e-9f);
+    }
+    return BAND_COUNT;
 }
 
 // Shared latest context (points to whichever tap is active)
@@ -157,6 +232,7 @@ static void tap_Prepare(MTAudioProcessingTapRef tap,
     }
     // Live stems work on stereo only; rate 0 keeps the tap idle otherwise.
     dsp_stem_tap_prepare(ctx->stemTap, ctx->channels == 2 ? ctx->sampleRate : 0);
+    ctx->stemFrameKnown = 0;
 
     prepareBass(ctx);
 
@@ -259,12 +335,25 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     int frames = (int)*numberFramesOut;
     if (frames <= 0 || !ctx->dspHandle) return;
 
-    // Asset time of the first frame tells the stem tap exactly which samples
-    // of the track this buffer holds; StartOfStream marks a seek.
-    const bool stemsKnowWhere = CMTIME_IS_NUMERIC(timeRange.start) && ctx->sampleRate > 0;
-    const int64_t framePos = stemsKnowWhere
-        ? (int64_t)llround(CMTimeGetSeconds(timeRange.start) * (double)ctx->sampleRate) : 0;
+    // Which samples of the track this buffer holds, for the stem tap: counted
+    // on from the last origin while the asset time agrees with the count to
+    // within its packet jitter (~200 frames seen); a seek moves it further.
+    // StartOfStream marks a seek too.
     const bool discontinuity = (*flagsOut & kMTAudioProcessingTapFlag_StartOfStream) != 0;
+    const bool timeKnown = CMTIME_IS_NUMERIC(timeRange.start) && ctx->sampleRate > 0;
+    const int64_t reported = timeKnown
+        ? (int64_t)llround(CMTimeGetSeconds(timeRange.start) * (double)ctx->sampleRate) : 0;
+    const int64_t resyncFrames = ctx->sampleRate / 20;  // 50 ms
+    const bool stemsKnowWhere = timeKnown || ctx->stemFrameKnown;
+    int64_t framePos = ctx->stemNextFrame;
+    if (timeKnown && (discontinuity || !ctx->stemFrameKnown ||
+                      llabs(reported - ctx->stemNextFrame) > resyncFrames)) {
+        framePos = reported;
+    }
+    if (stemsKnowWhere) {
+        ctx->stemNextFrame = framePos + frames;
+        ctx->stemFrameKnown = 1;
+    }
 
     if (bufferListInOut->mNumberBuffers == 1) {
         // Interleaved stereo float
@@ -429,8 +518,9 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     if (from > written) from = written;  // a new tap started its count again
     const int n = (int)(written - from);
     ctx->bassRead = written;
-    // The frame Dart's BeatFrame reads; no clock here, so unsynced, no bands.
-    NSMutableData *frame = [NSMutableData dataWithLength:(6 + n) * sizeof(float)];
+    // The frame Dart's BeatFrame reads; no clock here, so unsynced. The bands
+    // drive the radial's bars: without them they never move.
+    NSMutableData *frame = [NSMutableData dataWithLength:(6 + n + BAND_COUNT) * sizeof(float)];
     float *f = (float *)frame.mutableBytes;
     f[0] = 1.0f;
     f[1] = (float)ctx->sampleRate;
@@ -438,7 +528,9 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     f[3] = 0.0f;
     f[4] = (float)n;
     for (int i = 0; i < n; i++) f[5 + i] = ctx->bassHops[(from + i) % BASS_RING];
-    f[5 + n] = 0.0f;
+    const int m = writeBandsDb(ctx, f + 6 + n);
+    f[5 + n] = (float)m;
+    frame.length = (6 + n + m) * sizeof(float);
     return frame;
 }
 

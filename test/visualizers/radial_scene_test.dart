@@ -141,4 +141,34 @@ void main() {
     expect(scene.crown[5], greaterThan(0.9));
     expect(scene.crown.last, lessThan(0.1));
   });
+
+  test('the bars follow an iOS frame, which has bands but no heard time', () {
+    // Laid out as HypeAudioTap's takeBeatFrame writes it: a bare float list,
+    // unsynced, the hops then 64 band levels.
+    final hops = quiet();
+    final raw = Float32List.fromList([
+      1,
+      48000,
+      256 / 48000,
+      0,
+      hops.length.toDouble(),
+      ...hops,
+      64,
+      -60,
+      for (var b = 1; b < 64; b++) b < 8 ? -6 : -60,
+    ]);
+    final parsed = BeatFrame.parse(raw)!;
+    expect(parsed.synced, isFalse);
+    expect(parsed.heardAtUs, isNull);
+    expect(parsed.bandsDb, hasLength(64));
+
+    final scene = RadialScene();
+    const now = 40000000;
+    scene.addFrame(parsed, now);
+    for (var t = now; t <= now + 200000; t += 16667) {
+      scene.tick(t);
+    }
+    expect(scene.crown[5], greaterThan(0.9));
+    expect(scene.crown.last, lessThan(0.1));
+  });
 }

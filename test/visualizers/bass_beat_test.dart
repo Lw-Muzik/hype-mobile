@@ -184,7 +184,7 @@ void main() {
       expect(f.bandsDb, [-10, -20, -30]);
     });
 
-    test('iOS frames carry no bands and are not synced', () {
+    test('iOS frames are not synced, and have no bands until a window is heard', () {
       final f = BeatFrame.parse([1, 48000, 0.0058, 0, 1, 0.5, 0])!;
       expect(f.synced, isFalse);
       expect(f.hops, [0.5]);
