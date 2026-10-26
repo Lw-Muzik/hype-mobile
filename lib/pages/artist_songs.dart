@@ -61,11 +61,15 @@ class _ArtistSongsState extends State<ArtistSongs> {
       .read<LibraryRepository>()
       .watchArtistSongs(widget.artist);
 
-  /// Most played first; with nothing played yet, the library's own order.
+  /// Most played first; songs never played (or all of them, when nothing has
+  /// been) follow in the library's own order.
   List<SongModel> _top(List<SongModel> songs) {
-    final played = songs.where((s) => _plays(s) > 0).toList()
-      ..sort((a, b) => _plays(b).compareTo(_plays(a)));
-    return played.isEmpty ? songs : played;
+    final indexed = [for (var i = 0; i < songs.length; i++) (i, songs[i])];
+    indexed.sort((a, b) {
+      final byPlays = _plays(b.$2).compareTo(_plays(a.$2));
+      return byPlays != 0 ? byPlays : a.$1.compareTo(b.$1);
+    });
+    return [for (final e in indexed) e.$2];
   }
 
   List<_LocalAlbum> _albums(List<SongModel> songs) {

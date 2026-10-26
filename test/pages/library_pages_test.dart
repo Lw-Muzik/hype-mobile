@@ -73,8 +73,8 @@ class FakeController extends ChangeNotifier implements AppController {
   dynamic noSuchMethod(Invocation i) => null;
 }
 
-class _Platform extends OnAudioQueryPlatform {
-  _Platform(this.songs);
+class FakePlatform extends OnAudioQueryPlatform {
+  FakePlatform(this.songs);
   final List<SongModel> songs;
   @override
   Future<List<SongModel>> queryAudiosFrom(
@@ -89,8 +89,8 @@ class _Platform extends OnAudioQueryPlatform {
   dynamic noSuchMethod(Invocation i) => null;
 }
 
-class _Paths extends PathProviderPlatform {
-  _Paths(this.dir);
+class FakePaths extends PathProviderPlatform {
+  FakePaths(this.dir);
   final String dir;
   @override
   Future<String?> getTemporaryPath() async => dir;
@@ -134,6 +134,17 @@ SongModel model(
   'is_music': true,
 });
 
+/// A widget test that unmounts the page before it ends: drift schedules a
+/// zero-length timer when a stream is cancelled, which has to run inside the
+/// test rather than after it.
+void pageTest(String name, Future<void> Function(WidgetTester t) body) {
+  testWidgets(name, (t) async {
+    await body(t);
+    await t.pumpWidget(const SizedBox());
+    await t.pump(const Duration(milliseconds: 50));
+  });
+}
+
 void main() {
   late LibraryDatabase db;
   late LibraryRepository repo;
@@ -145,7 +156,7 @@ void main() {
     repo = LibraryRepository(db);
     controller = FakeController();
     tmp = Directory.systemTemp.createTempSync('library_pages');
-    PathProviderPlatform.instance = _Paths(tmp.path);
+    PathProviderPlatform.instance = FakePaths(tmp.path);
   });
 
   tearDown(() async {
@@ -190,7 +201,7 @@ void main() {
       await settle(tester);
     }
 
-    testWidgets('shows the album the way the YouTube one reads', (t) async {
+    pageTest('shows the album the way the YouTube one reads', (t) async {
       await open(t);
       expect(find.text('ALBUM'), findsOneWidget);
       expect(find.text('Night Drive'), findsWidgets);
@@ -200,7 +211,7 @@ void main() {
       expect(find.text('2'), findsOneWidget); // numbered like the sleeve
     });
 
-    testWidgets('Play, Shuffle, Play next and a row call the controller', (
+    pageTest('Play, Shuffle, Play next and a row call the controller', (
       t,
     ) async {
       await open(t);
@@ -216,7 +227,7 @@ void main() {
       expect(controller.calls.last, 'play:2:Outro');
     });
 
-    testWidgets('Play next queues the whole list after the playing track', (
+    pageTest('Play next queues the whole list after the playing track', (
       t,
     ) async {
       controller = FakeController(playing: 0, queue: [model(9, 'Else')]);
@@ -225,7 +236,7 @@ void main() {
       expect(controller.calls.last, 'next:3');
     });
 
-    testWidgets('an empty album says so', (t) async {
+    pageTest('an empty album says so', (t) async {
       await t.pumpWidget(
         host(const AlbumSongs(albumId: null, album: 'Nothing', songs: 0)),
       );
@@ -236,6 +247,10 @@ void main() {
 
   group('ArtistSongs', () {
     Future<void> open(WidgetTester tester) async {
+      // Tall enough that the albums shelf is built.
+      tester.view.physicalSize = const Size(390, 1900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await tester.runAsync(
         () => repo.upsertSongs([
           row(1, 'Quiet', plays: 1),
@@ -259,7 +274,7 @@ void main() {
       await settle(tester);
     }
 
-    testWidgets('top songs by plays, five at a time, and an albums shelf', (
+    pageTest('top songs by plays, five at a time, and an albums shelf', (
       t,
     ) async {
       await open(t);
@@ -273,7 +288,7 @@ void main() {
       expect(find.text('Show all 6'), findsOneWidget);
     });
 
-    testWidgets('Play, Shuffle, Play next and a top song', (t) async {
+    pageTest('Play, Shuffle, Play next and a top song', (t) async {
       await open(t);
       await tapIcon(t, 'Play');
       expect(controller.calls.last, startsWith('play:0:'));
@@ -289,8 +304,8 @@ void main() {
   });
 
   group('PlaylistSongs', () {
-    testWidgets('lists the device playlist with each track', (t) async {
-      OnAudioQueryPlatform.instance = _Platform([
+    pageTest('lists the device playlist with each track', (t) async {
+      OnAudioQueryPlatform.instance = FakePlatform([
         model(1, 'One'),
         model(2, 'Two', artist: 'Kay'),
       ]);
