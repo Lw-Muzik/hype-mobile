@@ -29,7 +29,7 @@ void main() {
     addTearDown(t.view.reset);
     await t.runAsync(() async {
       // preload mark image
-      final img = AssetImage('assets/icon.png');
+      final img = AssetImage('assets/mark.png');
       await t.pumpWidget(
         MaterialApp(
           home: RepaintBoundary(

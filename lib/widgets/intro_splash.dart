@@ -178,10 +178,8 @@ class _IntroSplashState extends State<IntroSplash>
                       width: m,
                       height: m,
                       child: Image.asset(
-                        'assets/icon.png',
+                        'assets/mark.png',
                         fit: BoxFit.contain,
-                        color: Ember.ground,
-                        colorBlendMode: BlendMode.plus,
                       ),
                     ),
                   ),
