@@ -15,10 +15,10 @@ library;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../../services/ytmusic/parse/yt_json.dart';
 import '../../../services/ytmusic/yt_models.dart';
+import 'media_widgets.dart';
 
 /// Artwork, fetched at the size it will be drawn.
 class YtArtwork extends StatelessWidget {
@@ -38,9 +38,7 @@ class YtArtwork extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final radius = circular
-        ? BorderRadius.circular(size)
-        : BorderRadius.circular(size < 80 ? 6 : 10);
+    final radius = mediaArtRadius(size, circular: circular);
     final devicePixels =
         (size * MediaQuery.devicePixelRatioOf(context)).round();
 
@@ -97,70 +95,44 @@ class YtTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final circular = item.kind == ExploreKind.artist;
-
-    return InkWell(
+    return MediaTile(
+      width: width,
+      circular: circular,
+      title: item.title,
+      subtitle: item.subtitle,
       onTap: onTap,
       onLongPress: onLongPress,
-      borderRadius: BorderRadius.circular(10),
-      child: SizedBox(
-        width: width,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Stack(
-              children: [
-                YtArtwork(
-                  url: item.thumbnail,
-                  size: width,
-                  circular: circular,
-                  placeholder: switch (item.kind) {
-                    ExploreKind.artist => Icons.person_rounded,
-                    ExploreKind.album => Icons.album_rounded,
-                    ExploreKind.playlist => Icons.queue_music_rounded,
-                    ExploreKind.video => Icons.play_circle_outline_rounded,
-                    ExploreKind.song => Icons.music_note_rounded,
-                  },
+      art: YtArtwork(
+        url: item.thumbnail,
+        size: width,
+        circular: circular,
+        placeholder: switch (item.kind) {
+          ExploreKind.artist => Icons.person_rounded,
+          ExploreKind.album => Icons.album_rounded,
+          ExploreKind.playlist => Icons.queue_music_rounded,
+          ExploreKind.video => Icons.play_circle_outline_rounded,
+          ExploreKind.song => Icons.music_note_rounded,
+        },
+      ),
+      badge: item.kind == ExploreKind.video
+          ? Positioned(
+              right: 6,
+              bottom: 6,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                if (item.kind == ExploreKind.video)
-                  Positioned(
-                    right: 6,
-                    bottom: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Icon(Icons.videocam_rounded,
-                          size: 13, color: Colors.white),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              item.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: circular ? TextAlign.center : TextAlign.start,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(fontWeight: FontWeight.w600, height: 1.25),
-            ),
-            if (item.subtitle case final subtitle?)
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: circular ? TextAlign.center : TextAlign.start,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                child: const Icon(
+                  Icons.videocam_rounded,
+                  size: 13,
+                  color: Colors.white,
                 ),
               ),
-          ],
-        ),
-      ),
+            )
+          : null,
     );
   }
 }
@@ -181,46 +153,22 @@ class YtShelfRow extends StatelessWidget {
     this.onHold,
   });
 
-  static const _tileWidth = 132.0;
-  static const _rowHeight = 196.0;
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
-          child: Text(
-            shelf.title,
-            style: theme.textTheme.titleSmall
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ),
-        SizedBox(
-          height: _rowHeight,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            // Bounded so scrolling the page doesn't decode a shelf's worth of
-            // images that were never on screen.
-            scrollCacheExtent: const ScrollCacheExtent.pixels(_tileWidth * 2),
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            itemCount: shelf.items.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              final item = shelf.items[index];
-              return YtTile(
-                item: item,
-                width: _tileWidth,
-                onTap: () => onOpen(item),
-                onLongPress:
-                    onHold != null && item.isPlayable ? () => onHold!(item) : null,
-              );
-            },
-          ),
-        ),
-      ],
+    return MediaShelf(
+      title: shelf.title,
+      count: shelf.items.length,
+      builder: (context, index, width) {
+        final item = shelf.items[index];
+        return YtTile(
+          item: item,
+          width: width,
+          onTap: () => onOpen(item),
+          onLongPress: onHold != null && item.isPlayable
+              ? () => onHold!(item)
+              : null,
+        );
+      },
     );
   }
 }
@@ -234,7 +182,7 @@ class YtTrackRow extends StatelessWidget {
 
   /// Fixed so the lists that hold these can use `itemExtent` — the difference
   /// between a hundred-track playlist laying out a dozen rows and all hundred.
-  static const height = 60.0;
+  static const height = MediaTrackRow.height;
 
   const YtTrackRow({
     super.key,
@@ -246,91 +194,16 @@ class YtTrackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final dimmed = !track.isAvailable;
-
-    return SizedBox(
-      height: height,
-      child: InkWell(
-        onTap: dimmed ? null : onTap,
-        child: Opacity(
-          opacity: dimmed ? 0.4 : 1,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              children: [
-                if (position case final index?) ...[
-                  SizedBox(
-                    width: 24,
-                    child: Text(
-                      '$index',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                YtArtwork(url: track.thumbnail, size: 44),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        track.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
-                      ),
-                      if (_byline case final byline?)
-                        Text(
-                          byline,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurface
-                                .withValues(alpha: 0.55),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (track.hasVideo)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Icon(
-                      Icons.videocam_rounded,
-                      size: 15,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                    ),
-                  ),
-                if (_duration case final duration?)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: Text(
-                      duration,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.45),
-                      ),
-                    ),
-                  ),
-                if (onMore != null)
-                  IconButton(
-                    icon: const Icon(Icons.more_vert_rounded, size: 18),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onMore,
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return MediaTrackRow(
+      art: YtArtwork(url: track.thumbnail, size: 44),
+      title: track.title,
+      byline: _byline,
+      duration: mediaClock(track.durationSecs),
+      hasVideo: track.hasVideo,
+      dimmed: !track.isAvailable,
+      position: position,
+      onTap: onTap,
+      onMore: onMore,
     );
   }
 
@@ -341,15 +214,6 @@ class YtTrackRow extends StatelessWidget {
       return '$artist • $album';
     }
     return artist ?? album;
-  }
-
-  String? get _duration {
-    final seconds = track.durationSecs;
-    if (seconds == null || seconds <= 0) return null;
-    final total = seconds.round();
-    final minutes = total ~/ 60;
-    final rest = (total % 60).toString().padLeft(2, '0');
-    return '$minutes:$rest';
   }
 }
 
