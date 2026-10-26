@@ -107,6 +107,7 @@ class YtSongTagger {
     LrcSource? lrclib,
     BytesSource? fetch,
     SongSearchSource? songSearch,
+    this.lyricsTimeout = defaultLyricsTimeout,
   }) : _trackInfo =
            trackInfo ?? ((id) => YtMusicRepository.instance.trackInfo(id)),
        _album =
@@ -117,6 +118,14 @@ class YtSongTagger {
        _lrclib = lrclib ?? LrclibResolver().resolve,
        _fetch = fetch ?? _get,
        _songSearch = songSearch ?? _searchSongs;
+
+  /// Lyrics are the slowest, least important part of a download's tags
+  /// (LRCLIB allows 15 s a request, with retries). They get their own bound,
+  /// so a slow lookup costs the lyrics and never the cover, album, year and
+  /// track number already found — which the download's overall bound would
+  /// otherwise throw away with them.
+  static const defaultLyricsTimeout = Duration(seconds: 8);
+  final Duration lyricsTimeout;
 
   final YtInfoSource _trackInfo;
   final YtAlbumSource _album;
@@ -184,7 +193,7 @@ class YtSongTagger {
       album: album,
       durationSecs: durationSecs,
       lyricsId: info?.lyricsId,
-    );
+    ).timeout(lyricsTimeout, onTimeout: () => (null, null));
 
     final page = await albumPage;
     final coverFile = await cover;

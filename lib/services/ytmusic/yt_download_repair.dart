@@ -220,6 +220,10 @@ class YtDownloadRepair {
             ),
           );
         } else {
+          debugPrint(
+            'YtDownloadRepair: ${c.name}: finisher failed: '
+            '${Channel.lastFinishError}',
+          );
           failed++;
           if (tags.coverPath != null) await _deleteQuietly(tags.coverPath!);
         }

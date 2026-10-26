@@ -28,7 +28,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../../Helpers/Channel.dart';
@@ -148,6 +148,11 @@ class YtDownloader {
       if (tagged) {
         await _deleteQuietly(raw);
       } else {
+        // The raw stream is kept as the song, with no cover or tags. Say why.
+        debugPrint(
+          'YtDownload: tagging ${track.videoId} failed, keeping the raw '
+          'stream: ${Channel.lastFinishError}',
+        );
         await _move(raw, finished);
       }
       raw = null;

@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 
 import '/Helpers/Channel.dart';
 import '/exports/exports.dart';
+import 'artwork_service.dart';
 
 /// Scans the app's Documents/Music directory for audio files on iOS.
 /// Creates SongModel objects from AVFoundation metadata extraction.
@@ -102,13 +103,21 @@ class LocalMusicScanner {
 
       try {
         final artworkDir = await getApplicationSupportDirectory();
-        final artPath = '${artworkDir.path}/artwork_$id.jpg';
+        final artPath = savedLocalArtworkPath(artworkDir.path, id);
 
         final meta = await Channel.extractAudioMetadata(
           url: path,
           artworkPath: artPath,
         );
         if (meta != null) {
+          // The native side only writes the file when the track has a cover;
+          // one left from an earlier version of the file must not outlive it.
+          if (meta['hasArtwork'] != true) {
+            try {
+              final stale = File(artPath);
+              if (stale.existsSync()) stale.deleteSync();
+            } catch (_) {}
+          }
           if (meta['title'] != null && (meta['title'] as String).isNotEmpty) {
             title = meta['title'] as String;
           }
