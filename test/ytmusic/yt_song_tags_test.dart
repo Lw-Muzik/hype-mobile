@@ -3,6 +3,7 @@
 /// title clean-up that real video titles from the test tablet's library need.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -368,6 +369,49 @@ void main() {
       expect(tags.title, 'Live at the Hall');
       expect(tags.album, isNull);
       expect(tags.cropCover, isTrue);
+    });
+
+    test('a lyrics lookup that never answers costs only the lyrics', () async {
+      final tagger = YtSongTagger(
+        lyricsTimeout: const Duration(milliseconds: 50),
+        trackInfo: (id) async => const YtTrackInfo(
+          videoId: 'v1',
+          title: 'Last Last',
+          artist: 'Burna Boy',
+          album: 'Love, Damini',
+          albumId: 'MPREb_x',
+          year: 2022,
+          thumbnail: 'https://yt3.googleusercontent.com/abc=w544-h544-l90-rj',
+          durationSecs: 172,
+          lyricsId: 'MPLYt_x',
+          isSong: true,
+        ),
+        album: (id, title) async => const YtTrackList(
+          title: 'Love, Damini',
+          artist: 'Burna Boy',
+          tracks: [
+            YtTrack(videoId: 'a', title: 'Glory'),
+            YtTrack(videoId: 'v1', title: 'Last Last'),
+          ],
+        ),
+        lrclib: ({required title, required artist, durationMs}) =>
+            Completer<String?>().future,
+        ytLyrics: (id) async => null,
+        fetch: fetch,
+      );
+      final tags = await tagger
+          .gather(
+            const YtTrack(videoId: 'v1', title: 'Last Last'),
+            workDir: work,
+          )
+          .timeout(const Duration(seconds: 5));
+      expect(tags.album, 'Love, Damini');
+      expect(tags.year, 2022);
+      expect(tags.trackNumber, 2);
+      expect(tags.coverPath, isNotNull);
+      expect(File(tags.coverPath!).lengthSync(), 4096);
+      expect(tags.lyrics, isNull);
+      expect(tags.lrc, isNull);
     });
 
     test('nothing answering still tags from the track row', () async {

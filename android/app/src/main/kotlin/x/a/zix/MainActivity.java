@@ -1501,7 +1501,8 @@ public class MainActivity extends AudioServiceFragmentActivity {
                                 String error = YtDownloadFinisher.finish(ytSrc, ytDst,
                                         ytTags == null ? new HashMap<>() : ytTags);
                                 if (error != null) Log.w("YtDownloadFinisher", "finish failed: " + error);
-                                runOnUiThread(() -> result.success(error == null));
+                                // true, or the reason it failed (Dart logs it).
+                                runOnUiThread(() -> result.success(error == null ? (Object) Boolean.TRUE : error));
                             }, "YtDownloadFinisher").start();
                             break;
                         }

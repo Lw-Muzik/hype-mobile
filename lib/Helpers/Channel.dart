@@ -591,19 +591,30 @@ class Channel {
 
   // ==================== YouTube downloads ====================
 
+  /// Why the last [finishYtDownload] failed (native text), null after a success.
+  static String? lastFinishError;
+
   /// Writes [src] (YouTube's untagged streaming MP4) to [dst] as a plain,
   /// tagged .m4a — the audio copied as is. [tags] is
-  /// `YtSongTags.toChannel()`. False when it couldn't; [dst] is then absent.
+  /// `YtSongTags.toChannel()`. False when it couldn't; [dst] is then absent
+  /// and [lastFinishError] holds the native reason.
   static Future<bool> finishYtDownload(
     String src,
     String dst,
     Map<String, Object?> tags,
   ) async {
-    return await _invokeRequired<bool>("finishYtDownload", false, {
+    // Native answers true, or the failure text.
+    final answer = await _invoke<Object>("finishYtDownload", {
       "src": src,
       "dst": dst,
       "tags": tags,
     });
+    if (answer == true) {
+      lastFinishError = null;
+      return true;
+    }
+    lastFinishError = answer is String ? answer : 'no answer from native';
+    return false;
   }
 
   /// Writes each `replacement` file over its `path` — another app's files

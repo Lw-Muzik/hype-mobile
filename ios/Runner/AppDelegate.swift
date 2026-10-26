@@ -545,7 +545,7 @@ import AVFoundation
             let tags = args?["tags"] as? [String: Any] ?? [:]
             YtDownloadFinisher.finish(src: src, dst: dst, tags: tags) { error in
                 if let error { NSLog("YtDownloadFinisher: \(error)") }
-                DispatchQueue.main.async { result(error == nil) }
+                DispatchQueue.main.async { result(error.map { $0 as Any } ?? true) }
             }
 
         case "replaceAudioFiles":

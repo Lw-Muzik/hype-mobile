@@ -8,6 +8,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '/data/library_repository.dart';
 
+/// Where [LocalMusicScanner] saves the cover it reads out of a local file
+/// (iOS, `Documents/Music`) — one fixed name per song id, so the scanner and
+/// [ArtworkService] agree without a lookup.
+String savedLocalArtworkPath(String supportDir, int id) =>
+    '$supportDir/artwork_$id.jpg';
+
 /// Resolves cover-art file paths on demand instead of extracting the whole
 /// library at launch. A path is served from (in order) an in-memory LRU, the
 /// song's `artworkPath` column, an existing temp PNG, or a fresh extraction
@@ -38,6 +44,30 @@ class ArtworkService {
   /// ArtworkWidget's 1600px decode ceiling so large views never upscale.
   static const int _sourceArtSize = 1600;
 
+  /// Test seams: the platform check and the app-support folder.
+  @visibleForTesting
+  bool Function() isIosForTest = () => Platform.isIOS;
+  @visibleForTesting
+  Future<String> Function() supportPathForTest = () async =>
+      (await getApplicationSupportDirectory()).path;
+
+  /// The cover [LocalMusicScanner] saved for a local file (iOS only).
+  ///
+  /// Files in `Documents/Music` are not in the Music library, and their ids
+  /// are `path.hashCode`, so `OnAudioQuery.queryArtwork` (which looks the id
+  /// up as a media-library persistent id) can never find them. The scanner
+  /// reads the embedded picture out of the file on every scan, to
+  /// `artwork_<id>.jpg`; this serves that file, and records it in the
+  /// `songs` row like any other extracted art.
+  Future<String?> _savedLocalArtwork(int id) async {
+    if (!isIosForTest()) return null;
+    final path = savedLocalArtworkPath(await supportPathForTest(), id);
+    final file = File(path);
+    if (!await file.exists() || await file.length() == 0) return null;
+    await _repo?.setArtworkPath(id, path);
+    return path;
+  }
+
   /// Wire the repository so AUDIO art paths persist in the `songs` table
   /// (survives restarts without re-extraction).
   void attachRepository(LibraryRepository repo) => _repo = repo;
@@ -48,9 +78,10 @@ class ArtworkService {
 
   /// Song id → the artwork the user picked for it ("Find artwork").
   ///
-  /// Kept apart from the extracted art and checked before it: a scan writes
-  /// the extracted path again (iOS does on every scan), and a choice the user
-  /// made must not be undone by the app rereading the file. Recorded in
+  /// Kept apart from the extracted art and checked before it: art is recorded
+  /// in the `songs` row again whenever it is re-read (iOS re-reads a local
+  /// file's cover on every scan), and a choice the user made must not be
+  /// undone by the app rereading the file. Recorded in
   /// `library_meta` as `art:<id>`; loaded once.
   Map<int, String>? _chosen;
   static const _chosenKey = 'art:';
@@ -132,6 +163,16 @@ class ArtworkService {
     if (memHit != null) {
       _touch(key);
       return memHit;
+    }
+
+    // iOS local files: the cover the scanner saved. Before the DB column so a
+    // stale or missing column never hides it.
+    if (type == ArtworkType.AUDIO) {
+      final saved = await _savedLocalArtwork(id);
+      if (saved != null) {
+        _remember(key, saved);
+        return saved;
+      }
     }
 
     // Persisted path for AUDIO tracks.

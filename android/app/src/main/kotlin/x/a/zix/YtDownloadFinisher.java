@@ -8,6 +8,7 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
+import android.util.Log;
 
 import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
@@ -52,6 +53,9 @@ public final class YtDownloadFinisher {
         File out = new File(dst);
         try {
             remux(src, dst);
+            // Samsung's muxer leaves boxes JAudioTagger can't parse; without
+            // this the tagger throws and the track would stay raw.
+            Log.i("YtDownloadFinisher", "moov: " + Mp4BoxRetyper.retype(out));
             tag(out, tags);
             return null;
         } catch (Throwable e) {
