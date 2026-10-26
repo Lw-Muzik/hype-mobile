@@ -8,6 +8,7 @@ import 'package:eq_app/services/connect/connect_protocol.dart';
 import 'package:eq_app/services/connect/hype_connect.dart';
 import 'package:eq_app/services/connect/remote/connect_ui_host.dart';
 import 'package:eq_app/themes/ember.dart';
+
 import 'remote_scope.dart';
 
 /// A Connect button; absent when Connect is off or no other player is online.
@@ -41,7 +42,8 @@ class ConnectPickerButton extends StatelessWidget {
                 icon: Icon(
                   kConnectGlyph,
                   size: size,
-                  color: color ??
+                  color:
+                      color ??
                       (session.isRemote ? Ember.accent : Ember.textSecondary),
                 ),
               ),
@@ -88,13 +90,15 @@ class _DevicePickerSheetState extends State<_DevicePickerSheet> {
       final target = id == connect.thisDeviceId
           ? 'this phone'
           : connect.devices
-                  .where((d) => d.id == id)
-                  .map((d) => d.name)
-                  .firstOrNull ??
-              'that device';
-      ConnectUiHost.instance.say(result.dropped == 1
-          ? "1 song couldn't move to $target."
-          : "${result.dropped} songs couldn't move to $target.");
+                    .where((d) => d.id == id)
+                    .map((d) => d.name)
+                    .firstOrNull ??
+                'that device';
+      ConnectUiHost.instance.say(
+        result.dropped == 1
+            ? "1 song couldn't move to $target."
+            : "${result.dropped} songs couldn't move to $target.",
+      );
     }
   }
 
@@ -120,7 +124,12 @@ class _DevicePickerSheetState extends State<_DevicePickerSheet> {
           );
           final devices = [phone, ...session.otherPlayers];
           return Padding(
-            padding: const EdgeInsets.fromLTRB(Ember.gutter, 0, Ember.gutter, 16),
+            padding: const EdgeInsets.fromLTRB(
+              Ember.gutter,
+              0,
+              Ember.gutter,
+              16,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -146,8 +155,7 @@ class _DevicePickerSheetState extends State<_DevicePickerSheet> {
                         ? remoteId == null
                         : device.id == remoteId,
                     playing: device.id == selfId
-                        ? remoteId == null &&
-                            (connect.isPlaying())
+                        ? remoteId == null && (connect.isPlaying())
                         : session.isPlaying(device.id),
                     busy: _moving == device.id,
                     onTap: _moving != null ? null : () => _pick(device.id),
@@ -184,8 +192,8 @@ class _PickerTile extends StatelessWidget {
     final status = playing
         ? 'Playing now'
         : active
-            ? 'Selected'
-            : 'Available';
+        ? 'Selected'
+        : 'Available';
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -233,9 +241,7 @@ class _PickerTile extends StatelessWidget {
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : (active
-                ? Icon(Icons.check_rounded, color: Ember.accent)
-                : null),
+            : (active ? Icon(Icons.check_rounded, color: Ember.accent) : null),
       ),
     );
   }
