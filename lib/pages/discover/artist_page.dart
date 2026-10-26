@@ -14,9 +14,6 @@
 /// button does.
 library;
 
-import 'package:eq_app/Themes/app_fonts.dart';
-import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +23,7 @@ import '../../services/ytmusic/yt_models.dart';
 import '../../services/ytmusic/yt_playback.dart';
 import '../../services/ytmusic/yt_repository.dart';
 import '../../themes/ember.dart';
+import 'widgets/media_widgets.dart';
 import 'widgets/yt_hero.dart';
 import 'widgets/yt_widgets.dart';
 import 'yt_open.dart';
@@ -44,26 +42,11 @@ class _YtArtistPageState extends State<YtArtistPage> {
   List<ExploreShelf> _shelves = const [];
   bool _loading = true;
   String? _error;
-  final _scroll = ScrollController();
-  bool _collapsed = false;
 
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_onScroll);
     _load();
-  }
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    final collapsed =
-        _scroll.offset > _heroHeight(context) - kToolbarHeight - 24;
-    if (collapsed != _collapsed) setState(() => _collapsed = collapsed);
   }
 
   Future<void> _load() async {
@@ -109,11 +92,6 @@ class _YtArtistPageState extends State<YtArtistPage> {
   List<YtTrack> get _tracks =>
       _tracksOf([for (final shelf in _shelves) ...shelf.items]);
 
-  double _heroHeight(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    return MediaQuery.paddingOf(context).top + math.min(width * 0.82, 440);
-  }
-
   void _radio() {
     final seed = _header?.radio;
     final tracks = _tracks;
@@ -131,41 +109,16 @@ class _YtArtistPageState extends State<YtArtistPage> {
   Widget build(BuildContext context) {
     final tracks = _tracks;
     final header = _header;
-    return Scaffold(
-      backgroundColor: Ember.ground,
-      body: CustomScrollView(
-        controller: _scroll,
-        slivers: [
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: _heroHeight(context),
-            backgroundColor: Ember.ground,
-            surfaceTintColor: Colors.transparent,
-            foregroundColor: Ember.textPrimary,
-            leading: const _BackButton(),
-            title: AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
-              opacity: _collapsed ? 1 : 0,
-              child: Text(
-                _name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            flexibleSpace: FlexibleSpaceBar(
-              collapseMode: CollapseMode.parallax,
-              background: _ArtistHero(
-                name: _name,
-                banner: header?.banner,
-                portrait: header?.avatar ?? widget.item.thumbnail,
-                stats: [?header?.subscribers, ?header?.audience].join(' • '),
-              ),
-            ),
-          ),
+    return MediaPageScaffold(
+      title: _name,
+      heroHeight: mediaArtistHeroHeight,
+      background: _ArtistHero(
+        name: _name,
+        banner: header?.banner,
+        portrait: header?.avatar ?? widget.item.thumbnail,
+        stats: [?header?.subscribers, ?header?.audience].join(' • '),
+      ),
+      slivers: [
           if (_loading)
             const SliverFillRemaining(hasScrollBody: false, child: YtSkeleton())
           else if (_error case final String message)
@@ -258,34 +211,7 @@ class _YtArtistPageState extends State<YtArtistPage> {
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Material(
-        color: Colors.black.withValues(alpha: 0.28),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: () => Navigator.of(context).maybePop(),
-          child: const SizedBox.square(
-            dimension: 40,
-            child: Icon(
-              Icons.arrow_back_ios_new_rounded,
-              size: 18,
-              color: Ember.textPrimary,
-            ),
-          ),
-        ),
-      ),
+      ],
     );
   }
 }
@@ -320,104 +246,34 @@ class _ArtistHero extends StatelessWidget {
         ),
       ),
     );
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (banner != null)
-          CachedNetworkImage(
-            imageUrl: banner,
-            fit: BoxFit.cover,
-            alignment: const Alignment(0, -0.35),
-            fadeInDuration: const Duration(milliseconds: 350),
-            placeholder: (_, _) => waiting,
-            errorWidget: (_, _, _) => waiting,
-          )
-        else if (portrait != null)
-          ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-            child: Opacity(
-              opacity: 0.55,
-              child: CachedNetworkImage(
-                imageUrl: thumbnailAt(portrait, 160),
-                fit: BoxFit.cover,
-                errorWidget: (_, _, _) => const SizedBox.shrink(),
-              ),
+    return MediaArtistHero(
+      name: name,
+      stats: stats,
+      banner: banner == null
+          ? null
+          : CachedNetworkImage(
+              imageUrl: banner,
+              fit: BoxFit.cover,
+              alignment: const Alignment(0, -0.35),
+              fadeInDuration: const Duration(milliseconds: 350),
+              placeholder: (_, _) => waiting,
+              errorWidget: (_, _, _) => waiting,
             ),
-          ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withValues(alpha: 0.35),
-                Colors.transparent,
-                Ember.ground.withValues(alpha: 0.6),
-                Ember.ground,
-              ],
-              stops: const [0, 0.3, 0.72, 1],
+      backdrop: portrait == null
+          ? null
+          : CachedNetworkImage(
+              imageUrl: thumbnailAt(portrait, 160),
+              fit: BoxFit.cover,
+              errorWidget: (_, _, _) => const SizedBox.shrink(),
             ),
-          ),
-        ),
-        if (banner == null && portrait != null)
-          Align(
-            alignment: const Alignment(0, -0.1),
-            child: Container(
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Color(0x99000000),
-                    blurRadius: 30,
-                    offset: Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: YtArtwork(
-                url: portrait,
-                size: 132,
-                circular: true,
-                placeholder: Icons.person_rounded,
-              ),
+      portrait: portrait == null
+          ? null
+          : YtArtwork(
+              url: portrait,
+              size: 132,
+              circular: true,
+              placeholder: Icons.person_rounded,
             ),
-          ),
-        Positioned(
-          left: 20,
-          right: 20,
-          bottom: 18,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppFonts.displayStyle(
-                  color: Ember.textPrimary,
-                  fontSize: 36,
-                  height: 1.05,
-                  letterSpacing: -1,
-                  shadows: const [
-                    Shadow(color: Color(0x66000000), blurRadius: 18),
-                  ],
-                ),
-              ),
-              if (stats.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  stats,
-                  style: TextStyle(
-                    color: Ember.textPrimary.withValues(alpha: 0.78),
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -514,13 +370,7 @@ class _SongListState extends State<_SongList> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
-          child: Text(
-            widget.title.toUpperCase(),
-            style: Ember.shelfTitle(context),
-          ),
-        ),
+        MediaListTitle(widget.title),
         AnimatedSize(
           duration: const Duration(milliseconds: 360),
           curve: Curves.easeOutCubic,
@@ -538,10 +388,10 @@ class _SongListState extends State<_SongList> {
           ),
         ),
         if (tracks.length > 5)
-          TextButton(
+          MediaShowAllButton(
+            all: _all,
+            total: tracks.length,
             onPressed: () => setState(() => _all = !_all),
-            style: TextButton.styleFrom(foregroundColor: Ember.textPrimary),
-            child: Text(_all ? 'Show less' : 'Show all ${tracks.length}'),
           ),
       ],
     );
