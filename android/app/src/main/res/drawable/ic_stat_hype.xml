@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar glyph of the Hype mark (ring + note), white on transparent as
+     Android requires. Used by pushes via the manifest default and by name from
+     FCM payloads (`icon: ic_stat_hype`); res/raw/keep.xml stops resource
+     shrinking from dropping it. Hand-built from assets/mark.png's shapes. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9.385,2.841 A9.3,9.3 0 1 0 20.3,12 L18.1,12 A7.1,7.1 0 1 1 9.767,5.008 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M8.1,12 A2.9,2.9 0 1 0 13.9,12 A2.9,2.9 0 1 0 8.1,12 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M13.9,12 L13.9,2.6 L16.1,2.6 L16.1,12 Z M16.1,2.6 L20.8,5.2 L20.8,7.6 L16.1,5 Z" />
+</vector>

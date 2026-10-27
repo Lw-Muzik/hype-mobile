@@ -22,6 +22,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_config.dart';
 import '../../widgets/update_dialog.dart';
 import '../connect/remote/connect_ui_host.dart';
+import '../install/install_reporter.dart';
+import '../news/news_push.dart';
 import 'app_version_policy.dart';
 
 class UpdateService with WidgetsBindingObserver {
@@ -79,12 +81,14 @@ class UpdateService with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(check());
       unawaited(_wirePush());
+      unawaited(InstallReporter.instance.report());
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || !_shellReady) return;
+    unawaited(InstallReporter.instance.report()); // throttled to 6 h inside
     final last = _lastCheck;
     if (last != null && _now().difference(last) < resumeThrottle) return;
     unawaited(check());
@@ -192,16 +196,22 @@ class UpdateService with WidgetsBindingObserver {
       final fm = FirebaseMessaging.instance;
       FirebaseMessaging.onMessage.listen((m) {
         if (m.data['type'] == 'APP_UPDATE') unawaited(check());
+        final news = _news(m);
+        if (news != null) NewsPush.instance.showBanner(news);
       });
       FirebaseMessaging.onMessageOpenedApp.listen((m) {
         if (m.data['type'] == 'APP_UPDATE') {
           unawaited(check(ignoreChoices: true));
         }
+        final news = _news(m);
+        if (news != null) unawaited(NewsPush.instance.handleTap(news));
       });
       final initial = await fm.getInitialMessage();
       if (initial?.data['type'] == 'APP_UPDATE') {
         unawaited(check(ignoreChoices: true));
       }
+      final initialNews = initial == null ? null : _news(initial);
+      if (initialNews != null) unawaited(NewsPush.instance.handleTap(initialNews));
 
       await _askNotificationPermission(fm);
       if (Platform.isIOS) {
@@ -212,10 +222,17 @@ class UpdateService with WidgetsBindingObserver {
         if (await fm.getAPNSToken() == null) return;
       }
       await fm.subscribeToTopic(topic);
+      await fm.subscribeToTopic(NewsPush.instance.topic);
     } catch (e) {
       debugPrint('Update push setup skipped: $e');
     }
   }
+
+  static NewsPayload? _news(RemoteMessage m) => NewsPayload.tryParse(
+        m.data,
+        title: m.notification?.title,
+        body: m.notification?.body,
+      );
 
   /// Android 13+ hides notifications until allowed. Hype Connect already asks
   /// when switched on; this asks once for users who never did, so update

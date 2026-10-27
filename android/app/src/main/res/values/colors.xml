@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Hype gold: tints the small notification icon. -->
+    <color name="hype_notification_color">#E8B04B</color>
+</resources>
