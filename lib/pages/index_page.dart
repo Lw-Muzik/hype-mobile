@@ -3,6 +3,7 @@ import 'package:eq_app/pages/home/home_shell.dart';
 import 'package:flutter_zoom_drawer/flutter_zoom_drawer.dart';
 
 import '../controllers/drawer_controller.dart';
+import '../services/update/update_service.dart';
 import 'menu_screen.dart';
 
 class IndexPage extends StatefulWidget {
@@ -18,6 +19,8 @@ class _IndexPageState extends State<IndexPage> {
   @override
   void initState() {
     super.initState();
+    // The main shell is up: update notices may now be shown.
+    UpdateService.instance.markShellReady();
     // Provide the controller to the provider immediately
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
