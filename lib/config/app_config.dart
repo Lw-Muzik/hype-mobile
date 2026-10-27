@@ -43,6 +43,14 @@ class AppConfig {
     defaultValue: 'hype-muzik.appspot.com',
   );
 
+  /// Must equal `storage_bucket` in android/app/google-services.json: the native
+  /// default app is built from that file, and FlutterFire refuses (duplicate-app)
+  /// options whose bucket differs from it.
+  static const String firebaseAndroidStorageBucket = String.fromEnvironment(
+    'FIREBASE_ANDROID_STORAGE_BUCKET',
+    defaultValue: 'hype-muzik.firebasestorage.app',
+  );
+
   // Wiredash
   static const String wiredashProjectId = String.fromEnvironment(
     'WIREDASH_PROJECT_ID',
