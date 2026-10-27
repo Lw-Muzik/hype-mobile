@@ -22,6 +22,7 @@ import '../player/lyrics_view.dart';
 import '../widgets/artwork_widget.dart';
 import '../widgets/listen_sheet.dart';
 import '../services/video/video_registry.dart';
+import '../services/ytmusic/yt_audio_source.dart';
 import '../services/ytmusic/yt_innertube.dart';
 import '../player/now_playing_hero.dart';
 import '../Themes/ember.dart';
@@ -554,7 +555,7 @@ Future<void> loadAudioSource(
     // Replay gain is read from ID3 tags, which a manifest has none of, so a
     // video always plays at unity — and must say so, or it inherits whatever
     // gain the last local file left behind.
-    handler.player.setVolume(1.0);
+    handler.setTrackGain(handler.player, 1.0);
     if (autoPlay) handler.player.play();
     return;
   }
@@ -572,11 +573,7 @@ Future<void> loadAudioSource(
         debugPrint('Streaming blocked: $blockReason');
         return;
       }
-      source = AudioSource.uri(
-        Uri.parse(item.id),
-        headers: YtInnerTube.audioPlaybackHeaders,
-        tag: item,
-      );
+      source = ytAudioSource(item.id, tag: item);
     } else {
       // Cloud storage (Google Drive / Dropbox)
       final cache = AppController.instance.cloudCache;
@@ -643,9 +640,9 @@ Future<void> loadAudioSource(
   // Replay gain only for local files (needs ID3 tags)
   if (replayGain && !isCloud) {
     final gain = await HypeAudioHandler.computeReplayGainVolume(song.data);
-    handler.player.setVolume(gain);
+    handler.setTrackGain(handler.player, gain);
   } else {
-    handler.player.setVolume(1.0);
+    handler.setTrackGain(handler.player, 1.0);
   }
 
   if (autoPlay) handler.player.play();

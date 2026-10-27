@@ -247,16 +247,15 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
     final bridge = Platform.isAndroid ? MethodChannelConnectService() : null;
     final volume = AppConnectDeviceVolume(
       bridge: bridge,
-      dvcEnabled: () => app.dvcEnabled,
+      // DVC exists only on Android; the iOS toggle drives native no-ops, so a
+      // remote's volume routed there would vanish.
+      dvcEnabled: () => Platform.isAndroid && app.dvcEnabled,
       dvcGainDb: () => app.dvcGain,
       setDvcGainDb: (db) => app.dvcGain = db,
-      legacyRead: () {
-        final handler = app.handler;
-        final player = handler.currentTrackPlayer;
-        // Mid-crossfade each player sits on a ramp: no real value.
-        return identical(player, handler.player) ? player.volume : null;
-      },
-      legacySet: (v) => app.handler.currentTrackPlayer.setVolume(v),
+      // The listener volume, not a player's gain: it survives loads and
+      // crossfades, and it has a real value even mid-fade.
+      legacyRead: () => app.handler.listenerVolume,
+      legacySet: (v) async => app.handler.setListenerVolume(v),
     );
     final connect = HypeConnect(
       prefs: prefs,

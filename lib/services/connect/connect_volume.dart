@@ -14,8 +14,10 @@
 ///   `ConnectVolume` over the Connect service channel (the headless engine
 ///   after a reboot has that channel too, unlike MainActivity-only ones).
 ///
-/// Where neither exists (iOS, or a test engine with no native side) the old
-/// behaviour stays: the player's own gain. It is the best that platform has.
+/// Where neither exists (iOS, or a test engine with no native side) it is the
+/// handler's **listener volume**: a gain every track gain is multiplied by, so
+/// ReplayGain, a crossfade or the next load no longer overwrite it. iOS offers
+/// no public way to set the system volume, so this is the best it has.
 ///
 /// The class takes small function seams rather than the whole `AppController`,
 /// so each routing rule is a unit test.
@@ -32,9 +34,8 @@ const double dvcMinDb = -30;
 
 /// This phone's output volume, as 0..1.
 abstract interface class ConnectDeviceVolume {
-  /// The current volume, or null when it cannot be read meaningfully right now
-  /// (mid-crossfade on the legacy player-gain path, where the publisher repeats
-  /// the last real value).
+  /// The current volume, or null when there is no real value to give (the
+  /// publisher then repeats the last one).
   double? read();
 
   /// Sets the volume; [value] is clamped to 0..1.
@@ -70,8 +71,8 @@ class AppConnectDeviceVolume implements ConnectDeviceVolume {
   final double Function() dvcGainDb;
   final void Function(double gainDb) setDvcGainDb;
 
-  /// The player's own gain: iOS today, and the answer wherever the native side
-  /// is missing. Null from [legacyRead] means "mid-crossfade, no real value".
+  /// The handler's listener volume: iOS today, and the answer wherever the
+  /// native side is missing. Null from [legacyRead] means "no real value".
   final double? Function() legacyRead;
   final Future<void> Function(double value) legacySet;
 
@@ -106,6 +107,10 @@ class AppConnectDeviceVolume implements ConnectDeviceVolume {
       return;
     }
     await legacySet(v);
+    // Nothing else in the app notices this one either. Unannounced, the next
+    // state went out only at the 15 s heartbeat, so the remote's overlay
+    // expired first and its slider jumped back to the old value.
+    if (!_changes.isClosed) _changes.add(null);
   }
 
   @override

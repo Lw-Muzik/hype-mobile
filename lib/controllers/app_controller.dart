@@ -32,6 +32,7 @@ import '../player/crossfade_trigger.dart';
 import '../player/playback_recovery.dart';
 import '../player/video/video_surface.dart';
 import '../services/video/video_registry.dart';
+import '../services/ytmusic/yt_audio_source.dart';
 import '../services/ytmusic/yt_innertube.dart';
 import '../services/ytmusic/yt_repository.dart';
 import '../models/lyrics_model.dart';
@@ -630,7 +631,7 @@ class AppController with ChangeNotifier implements StationSink {
     _replayGain = value;
     // Apply immediately if a song is loaded
     if (!value) {
-      handler.player.setVolume(1.0);
+      handler.setTrackGain(handler.player, 1.0);
     }
     notifyListeners();
   }
@@ -1075,10 +1076,7 @@ class AppController with ChangeNotifier implements StationSink {
         // cloud-cache branch below: these targets are single-use, keyed by
         // nothing the cache understands, and need no auth exchange.
         if (YtInnerTube.isStreamUrl(nextSong.data)) {
-          nextSource = AudioSource.uri(
-            Uri.parse(nextSong.data),
-            headers: YtInnerTube.audioPlaybackHeaders,
-          );
+          nextSource = ytAudioSource(nextSong.data);
         } else {
           final fileId = nextSong.id.toString();
           if (cloudCache.isCached(fileId)) {
@@ -1398,12 +1396,7 @@ class AppController with ChangeNotifier implements StationSink {
     if (VideoRegistry.instance.sourceFor(s.id) case final video?) {
       return video.toAudioSource();
     }
-    if (YtInnerTube.isStreamUrl(s.data)) {
-      return AudioSource.uri(
-        Uri.parse(s.data),
-        headers: YtInnerTube.audioPlaybackHeaders,
-      );
-    }
+    if (YtInnerTube.isStreamUrl(s.data)) return ytAudioSource(s.data);
     if (s.data.startsWith('/')) return AudioSource.file(s.data);
     return AudioSource.uri(Uri.parse(s.data));
   }
@@ -1464,12 +1457,7 @@ class AppController with ChangeNotifier implements StationSink {
         // the client that resolved it. Never cached: the target is single-use
         // and carries its own expiry.
         if (YtInnerTube.isStreamUrl(s.data)) {
-          sources.add(
-            AudioSource.uri(
-              Uri.parse(s.data),
-              headers: YtInnerTube.audioPlaybackHeaders,
-            ),
-          );
+          sources.add(ytAudioSource(s.data));
         } else {
           final fileId = s.id.toString();
           if (cloudCache.isCached(fileId)) {

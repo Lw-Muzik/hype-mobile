@@ -314,9 +314,7 @@ class AppConnectStateSource implements ConnectStateSource {
       playing: handler.playbackState.value.playing,
       position: player.position,
       duration: player.duration,
-      // DVC gain or system volume; only the legacy player-gain fallback can be
-      // null: while a crossfade runs each player's volume is a point on a
-      // ramp, not what the user set, and the publisher repeats the last value.
+      // DVC gain, system volume, or (iOS) the handler's listener volume.
       volume: _volume.read(),
       video: hasTrack && picturePlaying(queue[index]),
       shuffle: _app.isShuffled,

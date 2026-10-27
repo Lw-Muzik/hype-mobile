@@ -164,6 +164,27 @@ void main() {
       await r.volume.set(0.6);
       expect(r.legacy, 0.6);
     });
+
+    // Nothing else notices a player-gain change, so without this the phone
+    // published nothing, the remote's overlay expired after 3 s and its slider
+    // jumped back to the old value until the next 15 s heartbeat (iOS).
+    test('no bridge: the change is announced at once', () async {
+      final r = _Rig(withBridge: false);
+      var n = 0;
+      r.volume.changes.listen((_) => n++);
+      await r.volume.set(0.6);
+      expect(n, 1);
+      expect(r.volume.read(), 0.6);
+    });
+
+    test('native refusing: the player-gain change is announced too', () async {
+      final r = _Rig();
+      r.bridge!.setWorks = false;
+      var n = 0;
+      r.volume.changes.listen((_) => n++);
+      await r.volume.set(0.3);
+      expect(n, 1);
+    });
   });
 
   group('start / stop', () {

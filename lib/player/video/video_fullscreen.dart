@@ -91,7 +91,7 @@ class _VideoFullscreenPageState extends State<VideoFullscreenPage> {
   @override
   void initState() {
     super.initState();
-    _volume = _player.volume.clamp(0.0, 1.0);
+    _volume = _controller.handler.trackGainOf(_player).clamp(0.0, 1.0);
     unawaited(_readBrightness());
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     // Subscribed before the first check so a size arriving in between is not
@@ -245,7 +245,7 @@ class _VideoFullscreenPageState extends State<VideoFullscreenPage> {
       );
     } else {
       _volume = (_volume + change).clamp(0.0, 1.0);
-      _player.setVolume(_volume);
+      _controller.handler.setTrackGain(_player, _volume);
       _showFeedback(
         _volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
         _volume,

@@ -9,6 +9,7 @@ import 'package:id3tag/id3tag.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 
 import '../player/fade_cancellation.dart';
+import '../player/output_gain.dart';
 import 'index.dart';
 
 class HypeAudioHandler extends BaseAudioHandler {
@@ -71,6 +72,29 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// whenever that await happens to finish. Waking the fade is what makes a
   /// press of next act now rather than whenever the network comes back.
   FadeCancellation? _cancellation;
+
+  /// Every volume either player is given: its track gain times the listener
+  /// volume. See [OutputGain] — nothing writes a player's volume directly.
+  late final OutputGain<AudioPlayer> _gain = OutputGain(
+    (player, volume) => unawaited(player.setVolume(volume)),
+  );
+
+  /// Sets [player]'s track gain: ReplayGain, a crossfade step, unity for a
+  /// video. Applied under the listener volume, which it never overwrites.
+  void setTrackGain(AudioPlayer player, double gain) =>
+      _gain.setTrack(player, gain);
+
+  /// [player]'s track gain, before the listener volume.
+  double trackGainOf(AudioPlayer player) => _gain.trackOf(player);
+
+  /// How loud the listener wants it, 0..1 — where a Hype Connect remote's
+  /// volume lands on iOS. Survives loads and crossfades; 1 until set.
+  double get listenerVolume => _gain.listener;
+
+  /// Sets [listenerVolume] on both players, so a change mid-crossfade reaches
+  /// the outgoing track as well as the incoming one.
+  void setListenerVolume(double volume) =>
+      _gain.setListener(volume, [_playerA, _playerB]);
 
   /// The primary player used for playback controls (play/pause/stop/seek).
   AudioPlayer get player => _activePlayer;
@@ -304,7 +328,7 @@ class HypeAudioHandler extends BaseAudioHandler {
     _fadeDone = fadeDone;
     final cancellation = FadeCancellation();
     _cancellation = cancellation;
-    final origVolume = _activePlayer.volume;
+    final origVolume = trackGainOf(_activePlayer);
     var incomingStarted = false;
 
     try {
@@ -322,7 +346,7 @@ class HypeAudioHandler extends BaseAudioHandler {
       }
 
       await _inactivePlayer.setAudioSource(nextSource);
-      _inactivePlayer.setVolume(0.0);
+      setTrackGain(_inactivePlayer, 0.0);
       _inactivePlayer.play();
       incomingStarted = true;
       if (cancellation.isCancelled) {
@@ -356,7 +380,7 @@ class HypeAudioHandler extends BaseAudioHandler {
       final stepDuration = Duration(
         milliseconds: fadeDuration.inMilliseconds ~/ steps,
       );
-      final currentVolume = _activePlayer.volume;
+      final currentVolume = trackGainOf(_activePlayer);
 
       for (var i = 1; i <= steps; i++) {
         await cancellation.wait(stepDuration);
@@ -366,14 +390,14 @@ class HypeAudioHandler extends BaseAudioHandler {
         // step — which at a 20 s crossfade is a whole second of dead button.
         if (cancellation.isCancelled) break;
         final progress = i / steps;
-        _activePlayer.setVolume(currentVolume * (1.0 - progress));
-        _inactivePlayer.setVolume(targetVolume * progress);
+        setTrackGain(_activePlayer, currentVolume * (1.0 - progress));
+        setTrackGain(_inactivePlayer, targetVolume * progress);
       }
 
       // Stop old active player, snap incoming to target, swap
-      _inactivePlayer.setVolume(targetVolume);
+      setTrackGain(_inactivePlayer, targetVolume);
       await _activePlayer.stop();
-      _activePlayer.setVolume(1.0);
+      setTrackGain(_activePlayer, 1.0);
 
       final temp = _activePlayer;
       _activePlayer = _inactivePlayer;
@@ -388,7 +412,7 @@ class HypeAudioHandler extends BaseAudioHandler {
       // one so it can't keep playing invisibly; rethrow so the caller can
       // roll back its track state.
       _isCrossfading = false;
-      _activePlayer.setVolume(origVolume);
+      setTrackGain(_activePlayer, origVolume);
       if (incomingStarted) {
         try {
           await _inactivePlayer.stop();
@@ -416,7 +440,7 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// throw here reaches `AppController._beginCrossfade`'s catch, which rolls the
   /// track index back — undoing the very skip the user asked for.
   Future<void> _abandonSetup(double origVolume, bool incomingStarted) async {
-    _activePlayer.setVolume(origVolume);
+    setTrackGain(_activePlayer, origVolume);
     if (incomingStarted) {
       try {
         await _inactivePlayer.stop();
