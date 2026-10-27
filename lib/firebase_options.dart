@@ -56,7 +56,7 @@ class DefaultFirebaseOptions {
     appId: AppConfig.firebaseAppIdAndroid,
     messagingSenderId: AppConfig.firebaseMessagingSenderId,
     projectId: AppConfig.firebaseProjectId,
-    storageBucket: AppConfig.firebaseStorageBucket,
+    storageBucket: AppConfig.firebaseAndroidStorageBucket,
   );
 
   static FirebaseOptions get ios => FirebaseOptions(

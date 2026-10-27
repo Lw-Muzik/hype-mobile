@@ -8,6 +8,15 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Firebase for production builds. google-services turns google-services.json into
+// the resources native Analytics reads (without them it logs "Missing google_app_id"
+// and stays off), and Crashlytics adds the build id and uploads R8 mapping files.
+// Only x.a.zix is registered in Firebase, so dev copies (x.a.zix.dev) skip both.
+if (!project.hasProperty("dev")) {
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
