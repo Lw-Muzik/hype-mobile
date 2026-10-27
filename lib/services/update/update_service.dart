@@ -55,6 +55,10 @@ class UpdateService with WidgetsBindingObserver {
   static const _playFallback =
       'https://play.google.com/store/apps/details?id=x.a.zix';
 
+  /// App Store listing (same app id as hypemuzik.com); no region, so it opens
+  /// the user's own storefront.
+  static const _appStoreFallback = 'https://apps.apple.com/app/id6760889647';
+
   final String platform;
   final Duration resumeThrottle;
   final SharedPreferences? _prefsOverride;
@@ -181,7 +185,11 @@ class UpdateService with WidgetsBindingObserver {
       final u = Uri.tryParse(raw);
       if (u != null && u.hasScheme) return u;
     }
-    return platform == 'android' ? Uri.parse(_playFallback) : null;
+    return switch (platform) {
+      'android' => Uri.parse(_playFallback),
+      'ios' => Uri.parse(_appStoreFallback),
+      _ => null,
+    };
   }
 
   Future<SharedPreferences> _prefs() async =>
