@@ -102,6 +102,8 @@ dependencies:
   device_info_plus: ^13.2.0
   package_info_plus: ^10.2.1
   clock: ^1.1.2
+  firebase_messaging: ^16.7.1
+  url_launcher: ^6.3.3
 
 
 dev_dependencies:
