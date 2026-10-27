@@ -9,7 +9,7 @@ enum UpdateChoice { updateNow, later, skip }
 ///
 /// [blocking] shows only "Update now" and cannot be closed by back or a
 /// barrier tap. Otherwise the user also gets "Later" and "Skip this version".
-/// With no [canOpenStore] (iOS before the App Store link is configured) the
+/// With no [canOpenStore] (no store link known for the platform) the
 /// update button is replaced by a line telling the user where to go.
 class UpdateDialog extends StatelessWidget {
   const UpdateDialog({
