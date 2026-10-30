@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../Routes/routes.dart';
+import '../../config/app_config.dart';
 import '../../controllers/library_controller.dart';
 import '../../services/ytmusic/yt_download.dart';
 import '../../services/ytmusic/yt_downloads.dart';
@@ -64,7 +65,7 @@ void openExploreItem(
   }
 }
 
-/// The actions on a track: watch it, download it.
+/// The actions on a track: radio, watch it and, in the direct build, download it.
 ///
 /// Shown from the overflow on a row rather than on a long press, because a long
 /// press inside a scrolling list is a gesture people trigger by accident.
@@ -109,15 +110,16 @@ Future<void> showTrackActions(BuildContext context, YtTrack track) async {
                 YtPlayback.watch(context, track);
               },
             ),
-          ListTile(
-            leading: const Icon(Icons.download_rounded),
-            title: const Text('Download'),
-            subtitle: const Text('Saves to your music library'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              startDownload(context, track);
-            },
-          ),
+          if (AppConfig.directBuild)
+            ListTile(
+              leading: const Icon(Icons.download_rounded),
+              title: const Text('Download'),
+              subtitle: const Text('Saves to your music library'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                startDownload(context, track);
+              },
+            ),
           const SizedBox(height: 8),
         ],
       ),
@@ -139,6 +141,8 @@ void startDownload(
   YtTrack track, {
   bool showProgress = true,
 }) {
+  // Store builds hide every download button; this stops any caller added later.
+  if (!AppConfig.directBuild) return;
   final messenger = ScaffoldMessenger.of(context);
   if (YtDownloads.instance.isRunning(track.videoId)) {
     messenger.showSnackBar(
@@ -223,7 +227,7 @@ void startDownload(
 /// because a playlist where three videos are unavailable is the normal case
 /// rather than an error, and reporting it as a flat success would be a lie.
 void startPlaylistDownload(BuildContext context, List<YtTrack> tracks) {
-  if (tracks.isEmpty) return;
+  if (!AppConfig.directBuild || tracks.isEmpty) return;
 
   final messenger = ScaffoldMessenger.of(context);
   final library = context.read<LibraryController>();

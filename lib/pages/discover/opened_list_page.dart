@@ -24,6 +24,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../config/app_config.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/track_extras.dart';
 import '../../Routes/routes.dart';
@@ -280,11 +281,12 @@ class _Hero extends StatelessWidget {
               errorWidget: (_, _, _) => const SizedBox.shrink(),
             ),
       actions: [
-        YtRoundButton(
-          icon: Icons.download_rounded,
-          tooltip: 'Download all',
-          onTap: onDownload,
-        ),
+        if (AppConfig.directBuild)
+          YtRoundButton(
+            icon: Icons.download_rounded,
+            tooltip: 'Download all',
+            onTap: onDownload,
+          ),
         YtRoundButton(
           icon: Icons.play_arrow_rounded,
           tooltip: 'Play',

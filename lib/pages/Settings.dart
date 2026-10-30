@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wiredash/wiredash.dart';
 
+import '../config/app_config.dart';
 import '../models/eq_models.dart';
 import '../onboarding/coach_marks.dart';
 import '../onboarding/interactions_guide.dart';
@@ -132,8 +133,9 @@ const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('Rescan library', SettingsCategory.library, 'refresh songs missing'),
   SettingsEntry('Identify unknown tracks', SettingsCategory.library,
       'fingerprint tags artwork'),
-  SettingsEntry('Fix YouTube downloads', SettingsCategory.library,
-      'repair tags cover artwork lyrics album artist metadata'),
+  if (AppConfig.directBuild)
+    SettingsEntry('Fix YouTube downloads', SettingsCategory.library,
+        'repair tags cover artwork lyrics album artist metadata'),
   SettingsEntry('Cloud storage', SettingsCategory.devices, 'google drive dropbox'),
   SettingsEntry('Phone link', SettingsCategory.devices, 'upload transfer'),
   SettingsEntry('Stream to desktop', SettingsCategory.devices, 'cast'),
@@ -1707,8 +1709,10 @@ class _SettingsState extends State<Settings> {
               onTap: _startBatchScan,
             ),
           ],
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ..._buildRepairTiles(),
+          if (AppConfig.directBuild) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            ..._buildRepairTiles(),
+          ],
         ]),
       ],
     );

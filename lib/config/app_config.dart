@@ -5,6 +5,14 @@
 /// flutter run --dart-define=API_BASE_URL=https://production-api.com
 /// ```
 class AppConfig {
+  // Distribution channel. Store builds (Google Play, App Store) have no
+  // YouTube downloads and don't name YouTube Music in the player or in shared
+  // links; only the build handed out directly has them. Off by default, so a
+  // build that forgets the flag is a store build and can't ship downloads.
+  //
+  //   flutter build apk --release --dart-define=HYPE_DIRECT=true
+  static const bool directBuild = bool.fromEnvironment('HYPE_DIRECT');
+
   // Firebase Android
   static const String firebaseAndroidApiKey = String.fromEnvironment(
     'FIREBASE_ANDROID_API_KEY',

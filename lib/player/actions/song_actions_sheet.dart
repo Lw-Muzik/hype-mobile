@@ -27,6 +27,7 @@ import 'package:provider/provider.dart';
 
 import '../../Helpers/Channel.dart';
 import '../../Routes/routes.dart';
+import '../../config/app_config.dart';
 import '../../controllers/app_controller.dart';
 import '../../data/library_repository.dart';
 import '../../models/cloud_file.dart';
@@ -523,6 +524,13 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
   Widget _sourceChip() {
     final s = _subject;
     if (s.isYouTube) {
+      // Store builds don't name or colour the stream as YouTube's.
+      if (!AppConfig.directBuild) {
+        return SourceChip(
+          icon: s.isVideo ? Icons.smart_display_rounded : Icons.wifi_rounded,
+          label: s.isVideo ? 'Music video' : 'Streaming',
+        );
+      }
       return SourceChip(
         icon: s.isVideo
             ? Icons.smart_display_rounded
@@ -547,7 +555,7 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
   List<Widget> _quickActions() {
     final s = _subject;
     return [
-      if (s.isYouTube) _downloadAction(),
+      if (s.isYouTube && AppConfig.directBuild) _downloadAction(),
       QuickAction(
         icon: Icons.playlist_add_rounded,
         label: 'Playlist',
@@ -703,9 +711,12 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
     final bool shared;
     if (s.isYouTube) {
       final by = s.artist ?? _info?.artist;
+      final name = '${s.title}${by == null ? '' : ' — $by'}';
       shared = await Channel.shareText(
-        '${s.title}${by == null ? '' : ' — $by'}\n'
-        'https://music.youtube.com/watch?v=${s.videoId}',
+        AppConfig.directBuild
+            ? '$name\nhttps://music.youtube.com/watch?v=${s.videoId}'
+            // Store builds don't hand out YouTube links.
+            : '$name\nPlaying on HypeMuzik: https://hypemuzik.com',
       );
     } else {
       shared = await Channel.shareAudio(widget.song.data);
@@ -834,7 +845,9 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
       if (!mounted) return;
       setState(() => _findingArtist = null);
       if (item == null) {
-        _say("Couldn't find ${artist.name} on YouTube Music");
+        _say(AppConfig.directBuild
+            ? "Couldn't find ${artist.name} on YouTube Music"
+            : "Couldn't find ${artist.name}");
         return;
       }
     }
