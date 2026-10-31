@@ -33,6 +33,38 @@ To get started with Hype Muzik, follow these steps:
    git clone https://github.com/yourusername/hype-muzik.git
 ```
 
+## Building
+
+Two kinds of release build come from the same code, chosen by one compile-time flag. With no flag you get the store build, so a build that forgets the flag is always safe to upload to a store.
+
+| Build  | For                                     | Flag                             |
+| ------ | --------------------------------------- | -------------------------------- |
+| Store  | Google Play, App Store                  | none                             |
+| Direct | APKs and installs you hand out yourself | `--dart-define=HYPE_DIRECT=true` |
+
+### Store build
+
+```bash
+flutter build appbundle --release   # Google Play → build/app/outputs/bundle/release/app-release.aab
+flutter build ipa --release         # App Store   → build/ios/ipa/
+```
+
+### Direct build
+
+```bash
+# Android APK → build/app/outputs/flutter-apk/app-release.apk
+flutter build apk --release --dart-define=HYPE_DIRECT=true
+
+# Android, on a phone that already has the Play Store version: installs beside it
+# as "Hype Muzik Dev" (a Play-signed install can't be updated by a local APK)
+flutter build apk --release --dart-define=HYPE_DIRECT=true --android-project-arg=dev=true
+
+# iPhone, connected by cable (find the id with `flutter devices`)
+flutter run --release -d <device-id> --dart-define=HYPE_DIRECT=true
+```
+
+During development `flutter run` gives the store build; add `--dart-define=HYPE_DIRECT=true` for the direct one. The flag is read in `lib/config/app_config.dart` (`AppConfig.directBuild`).
+
 # Release Notes - Version v1.0.3
 
 ## 🎉 New Features & Enhancements 🎉
