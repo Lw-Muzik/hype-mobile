@@ -495,4 +495,52 @@ void main() {
       });
     });
   });
+  group('hubHasAnswered', () {
+    test('only once a list has arrived on a live connection', () {
+      scenario((async) {
+        final r = Rig();
+        expect(r.takeover.hubHasAnswered, isFalse);
+        r.takeover.onConnected();
+        expect(r.takeover.hubHasAnswered, isFalse, reason: 'no list yet');
+        r.takeover.onList([phone, desktop], null);
+        expect(r.takeover.hubHasAnswered, isTrue);
+        r.takeover.onDisconnected();
+        expect(r.takeover.hubHasAnswered, isFalse);
+        r.takeover.onConnected();
+        expect(r.takeover.hubHasAnswered, isFalse, reason: 'old list forgotten');
+      });
+    });
+  });
+
+  group('otherPlayerActive', () {
+    test('true only while another online player is the active device', () {
+      scenario((async) {
+        final r = Rig();
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'no session');
+
+        r.connect([phone, desktop], 'desk');
+        expect(r.takeover.otherPlayerActive, isTrue);
+
+        r.takeover.onList([phone, desktop], self);
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'this phone');
+
+        r.takeover.onList([phone, desktop], null);
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'nobody');
+
+        r.takeover.onList([phone, device('desk', online: false)], 'desk');
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'offline');
+
+        r.takeover.onList([
+          phone,
+          device('desk', caps: const [ConnectCap.yt]),
+        ], 'desk');
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'not a player');
+
+        r.takeover.onList([phone, desktop], 'desk');
+        expect(r.takeover.otherPlayerActive, isTrue);
+        r.takeover.onDisconnected();
+        expect(r.takeover.otherPlayerActive, isFalse, reason: 'socket gone');
+      });
+    });
+  });
 }

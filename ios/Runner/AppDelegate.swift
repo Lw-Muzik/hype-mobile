@@ -43,6 +43,9 @@ import AVFoundation
             // Live stems: engine init + status events (HypeDSP/src/stems)
             StemsBridge.shared.attach(messenger: controller.binaryMessenger)
 
+            // System volume (0...1) for pause/resume on volume.
+            SystemVolumeFeed.shared.attach(messenger: controller.binaryMessenger)
+
             // Screen brightness, for the swipe gesture on the video screen.
             //
             // iOS has no per-window override, so this is the device brightness
@@ -976,5 +979,47 @@ import AVFoundation
             top.present(sheet, animated: true)
             result(true)
         }
+    }
+}
+
+/// The system output volume (0...1) for Dart: `eq_app/system_volume`.
+/// Fed from the `outputVolume` observer in `DSPManager`; emits on change, and
+/// the current value when Dart starts listening.
+final class SystemVolumeFeed: NSObject, FlutterStreamHandler {
+    static let shared = SystemVolumeFeed()
+
+    private var sink: FlutterEventSink?
+    private var last: Float = 1
+    private let lock = NSLock()
+
+    func attach(messenger: FlutterBinaryMessenger) {
+        FlutterEventChannel(name: "eq_app/system_volume", binaryMessenger: messenger)
+            .setStreamHandler(self)
+    }
+
+    /// Called from the KVO callback (any thread).
+    func push(_ volume: Float) {
+        lock.lock()
+        last = volume
+        let s = sink
+        lock.unlock()
+        guard let s = s else { return }
+        DispatchQueue.main.async { s(Double(volume)) }
+    }
+
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        lock.lock()
+        sink = events
+        let v = last
+        lock.unlock()
+        events(Double(v))
+        return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        lock.lock()
+        sink = nil
+        lock.unlock()
+        return nil
     }
 }

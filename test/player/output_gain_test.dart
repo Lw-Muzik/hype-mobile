@@ -109,4 +109,43 @@ void main() {
       expect(gain.volumeOf('a'), 1.0);
     });
   });
+
+  group('duck', () {
+    test('multiplies every player it is given, and starts at unity', () {
+      expect(gain.duck, 1.0);
+      gain.setTrack('a', 1.0);
+      gain.setDuck(0.25, const ['a', 'b']);
+      expect(applied['a'], closeTo(0.25, 1e-9));
+      expect(applied['b'], closeTo(0.25, 1e-9));
+      expect(gain.duck, 0.25);
+    });
+
+    test('composes with the mix and the listener volume', () {
+      gain.setTrack('a', 1.0);
+      gain.setDuck(0.25, const ['a', 'b']);
+      gain.setMix('a', 0.5);
+      expect(applied['a'], closeTo(0.125, 1e-9));
+      gain.setListener(0.5, const ['a', 'b']);
+      expect(applied['a'], closeTo(0.0625, 1e-9));
+    });
+
+    test('a new track keeps the duck', () {
+      gain.setTrack('a', 1.0);
+      gain.setDuck(0.25, const ['a', 'b']);
+      gain.setMix('a', 0.5);
+      gain.setListener(0.5, const ['a', 'b']);
+      gain.setTrack('a', 1.0);
+      expect(applied['a'], closeTo(0.0625, 1e-9));
+      expect(gain.volumeOf('a'), closeTo(0.0625, 1e-9));
+    });
+
+    test('releasing the duck leaves the rest', () {
+      gain.setTrack('a', 1.0);
+      gain.setDuck(0.25, const ['a', 'b']);
+      gain.setMix('a', 0.5);
+      gain.setListener(0.5, const ['a', 'b']);
+      gain.setDuck(1.0, const ['a', 'b']);
+      expect(applied['a'], closeTo(0.25, 1e-9));
+    });
+  });
 }

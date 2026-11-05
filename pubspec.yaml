@@ -131,6 +131,10 @@ dev_dependencies:
 dependency_overrides:
   just_audio:
     path: packages/just_audio
+  # Vendored for one hook: raw media-key events reach Dart (see the header
+  # comment in packages/audio_service/android/.../AudioService.java).
+  audio_service:
+    path: packages/audio_service
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

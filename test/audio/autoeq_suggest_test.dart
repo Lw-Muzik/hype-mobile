@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:eq_app/audio/eq/autoeq_suggest.dart';
+import 'package:eq_app/audio/headset/output_kind.dart';
 import 'package:eq_app/models/speaker_profile.dart';
 import 'package:eq_app/services/autoeq_suggestions.dart';
 
@@ -78,7 +79,7 @@ void main() {
 
   group('autoEqSuggestion gating', () {
     OutputDeviceEvent bt([String n = 'WH-1000XM4']) =>
-        OutputDeviceEvent(name: n, kind: OutputKind.bluetooth);
+        OutputDeviceEvent(name: n, kind: AudioOutputKind.bluetooth);
     SpeakerProfile? run({
       OutputDeviceEvent? device,
       bool enabled = true,
@@ -111,12 +112,31 @@ void main() {
         run(
           device: const OutputDeviceEvent(
             name: 'WH-1000XM4',
-            kind: OutputKind.other,
+            kind: AudioOutputKind.other,
           ),
         ),
         isNull,
       ),
     );
+  });
+
+  group('wired and speaker outputs', () {
+    for (final k in [AudioOutputKind.wired, AudioOutputKind.speaker]) {
+      test('no suggestion for $k', () {
+        expect(
+          autoEqSuggestion(
+            device: OutputDeviceEvent(name: 'WH-1000XM4', kind: k),
+            enabled: true,
+            systemWide: false,
+            dismissed: const {},
+            askedThisSession: const {},
+            activeProfile: null,
+            profiles: [_p('Sony WH-1000XM4')],
+          ),
+          isNull,
+        );
+      });
+    }
   });
 
   group('AutoEqDismissals', () {
@@ -149,7 +169,7 @@ void autoEqLaunchTests() {
         navigatorKey: key,
         devices: const Stream.empty(),
         initialDevices: () async => const [
-          OutputDeviceEvent(name: 'WH-1000XM4', kind: OutputKind.bluetooth),
+          OutputDeviceEvent(name: 'WH-1000XM4', kind: AudioOutputKind.bluetooth),
         ],
         nextFrame: () {
           final c = Completer<void>();
@@ -195,7 +215,7 @@ void autoEqLaunchTests() {
         navigatorKey: GlobalKey<NavigatorState>(),
         devices: const Stream.empty(),
         initialDevices: () async => const [
-          OutputDeviceEvent(name: 'WH-1000XM4', kind: OutputKind.bluetooth),
+          OutputDeviceEvent(name: 'WH-1000XM4', kind: AudioOutputKind.bluetooth),
         ],
         nextFrame: () async => waits++,
       );

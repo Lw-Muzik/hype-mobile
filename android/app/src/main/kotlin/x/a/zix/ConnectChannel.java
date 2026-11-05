@@ -53,6 +53,8 @@ final class ConnectChannel {
     }
 
     static synchronized void attach(@NonNull FlutterEngine engine, @NonNull Context context) {
+        // The headset-button channels live on the same engines (see MediaButtonChannel).
+        MediaButtonChannel.attach(engine, context);
         BinaryMessenger messenger = engine.getDartExecutor().getBinaryMessenger();
         if (sChannel != null && sMessenger == messenger) return;
         if (sChannel != null) sChannel.setMethodCallHandler(null);

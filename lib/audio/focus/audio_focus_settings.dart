@@ -61,8 +61,7 @@ class AudioFocusSettings {
       resumeAfterCall: prefs.getBool(_kResumeAfterCall) ?? d.resumeAfterCall,
       resumeOnStart: prefs.getBool(_kResumeOnStart) ?? d.resumeOnStart,
       resumeOnReopen: prefs.getBool(_kResumeOnReopen) ?? d.resumeOnReopen,
-      shortFocusChange:
-          prefs.getBool(_kShortFocusChange) ?? d.shortFocusChange,
+      shortFocusChange: prefs.getBool(_kShortFocusChange) ?? d.shortFocusChange,
       pauseInCall: prefs.getBool(_kPauseInCall) ?? d.pauseInCall,
       resumeOnFocusGain:
           prefs.getBool(_kResumeOnFocusGain) ?? d.resumeOnFocusGain,

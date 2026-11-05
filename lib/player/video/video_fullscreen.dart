@@ -211,7 +211,12 @@ class _VideoFullscreenPageState extends State<VideoFullscreenPage> {
     } else if (position.dx > size.width - third) {
       _seekBy(_seekStep);
     } else {
-      _player.playing ? _player.pause() : _player.play();
+      // Through the handler, so a play asks for audio focus and a pause fades.
+      // A pause that is still fading out counts as paused, so a tap during it
+      // turns it round — see `HypeAudioHandler.pausing`.
+      _player.playing && !_controller.handler.pausing.value
+          ? _controller.handler.pause()
+          : _controller.handler.play();
     }
   }
 
@@ -494,25 +499,31 @@ class _FullscreenControls extends StatelessWidget {
                   },
                 ),
                 const SizedBox(width: 20),
-                StreamBuilder<bool>(
-                  stream: player.playingStream,
-                  initialData: player.playing,
-                  builder: (context, snapshot) {
-                    final playing = snapshot.data ?? false;
-                    return IconButton(
-                      iconSize: 62,
-                      icon: Icon(
-                        playing
-                            ? Icons.pause_circle_filled_rounded
-                            : Icons.play_circle_filled_rounded,
-                        color: Colors.white,
-                      ),
-                      onPressed: () {
-                        onInteraction();
-                        playing ? player.pause() : player.play();
-                      },
-                    );
-                  },
+                ValueListenableBuilder<bool>(
+                  // A fading pause counts as paused.
+                  valueListenable: controller.handler.pausing,
+                  builder: (context, pausing, _) => StreamBuilder<bool>(
+                    stream: player.playingStream,
+                    initialData: player.playing,
+                    builder: (context, snapshot) {
+                      final playing = (snapshot.data ?? false) && !pausing;
+                      return IconButton(
+                        iconSize: 62,
+                        icon: Icon(
+                          playing
+                              ? Icons.pause_circle_filled_rounded
+                              : Icons.play_circle_filled_rounded,
+                          color: Colors.white,
+                        ),
+                        onPressed: () {
+                          onInteraction();
+                          playing
+                              ? controller.handler.pause()
+                              : controller.handler.play();
+                        },
+                      );
+                    },
+                  ),
                 ),
                 const SizedBox(width: 20),
                 IconButton(

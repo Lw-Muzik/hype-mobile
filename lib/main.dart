@@ -30,6 +30,8 @@ import 'data/library_database.dart';
 import 'data/library_repository.dart';
 import 'firebase_options.dart';
 import 'helpers/audio_handler.dart';
+import 'player/remote_command_gate.dart';
+import 'services/audio_focus_service.dart';
 import 'widgets/connect_volume_hud.dart';
 import 'widgets/dvc_volume_overlay.dart';
 import 'player/video/picture_in_picture.dart';
@@ -42,6 +44,7 @@ import 'services/library_scanner.dart';
 import 'services/artwork_service.dart';
 import 'services/ytmusic/yt_downloads.dart';
 import 'services/share_service.dart';
+import 'widgets/volume_panel_overlay.dart';
 import 'services/connect/hype_connect.dart';
 import 'services/connect/remote/connect_ui_host.dart';
 
@@ -90,8 +93,18 @@ Future<void> main() async {
     }
   }
 
-  final handler = await AudioService.init<HypeAudioHandler>(
-    builder: () => HypeAudioHandler(),
+  // The handler is built first and wrapped in the remote-command gate, which
+  // is what the platform talks to: a headset, Bluetooth, notification or lock
+  // screen command passes Strict and the Bluetooth grace window before it
+  // reaches the handler. The app keeps the bare handler for its own buttons.
+  final handler = HypeAudioHandler();
+  // Until the focus service starts (below), a play asks the system for focus
+  // the way the service will: will-pause-when-ducked, and a release after a
+  // refusal. A handler with nothing set plays without asking — only a test
+  // should ever see that.
+  handler.onActivateSession = requestPlatformAudioFocus;
+  final gate = await AudioService.init<RemoteCommandGate>(
+    builder: () => RemoteCommandGate(handler),
     config: AudioServiceConfig(
       androidNotificationChannelId: 'com.ryanheise.bg_demo.channel.audio',
       androidNotificationChannelName: 'Audio playback',
@@ -147,7 +160,28 @@ Future<void> main() async {
   // Built here rather than by a lazy provider: after a reboot Hype Connect's
   // background service runs this main() with no screen, so no widget is ever
   // built to ask for the controller, and Hype Connect would never start.
-  final app = AppController(prefs, handler);
+  //
+  // The focus service is awaited first (it configures the audio session) and
+  // reads the app's settings lazily, so it can be built before the controller
+  // it answers to.
+  late final AppController app;
+  final audioFocus = await AudioFocusService.forPlatform(
+    target: handler,
+    settings: () => app.audioFocusSettings,
+    hasSession: () => app.canResumePlayback(),
+    // The resume after a call or a loss of focus happens in a process the
+    // listener never opened too, when the music there was started on purpose.
+    canResume: () => app.canResumePlayback(requireUiSeen: false),
+    connectAnswerPending: () => app.connectAnswerIsPending,
+    bindActivation: (activate) => handler.onActivateSession = activate,
+    // Per-output profile flags (read at each focus event).
+    noDuck: () => app.outputNoDuck,
+    ignoreFocus: () => app.outputIgnoreFocus,
+  );
+  // A stop (the notification's close included) ends whatever was waiting for a
+  // call to finish; it is no change of the playing state when already paused.
+  handler.onStopped = audioFocus.cancelHold;
+  app = AppController(prefs, handler, remote: gate, audioFocus: audioFocus);
   // Off unless the user has switched Hype Connect on; see HypeConnect.
   HypeConnect.attach(app, prefs);
 
@@ -205,6 +239,7 @@ Future<void> main() async {
                           children: [
                             child!,
                             const DvcVolumeOverlay(),
+                            VolumePanelOverlay(controller: app.volumePanel),
                             const ConnectVolumeHud(),
                             const VideoMiniPlayer(),
                           ],

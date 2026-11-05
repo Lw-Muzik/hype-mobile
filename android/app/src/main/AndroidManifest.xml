@@ -26,6 +26,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <!--end of bluetooth -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Headset button feedback: one short pulse per recognised command. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- ALSO ADD THIS PERMISSION IF TARGETING SDK 34 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
@@ -45,6 +47,15 @@
     <!-- GlobalEqService (system-wide equalizer) is a specialUse foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
 
+    <!-- Package visibility (API 30+): the proxy looks up the other apps that handle voice search. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.WEB_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
+        </intent>
+    </queries>
     <application android:name=".HypeApplication" android:enableOnBackInvokedCallback="true" android:icon="@mipmap/ic_launcher" android:label="${appLabel}" tools:ignore="ExtraText" android:requestLegacyExternalStorage="true" android:usesCleartextTraffic="true">
         <meta-data android:name="google_analytics_automatic_screen_reporting_enabled" android:value="true" />
         <!-- supportsPictureInPicture + resizeableActivity: watching a video and
@@ -75,6 +86,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="x.a.zix" android:host="oauth2" android:path="/dropbox" />
+            </intent-filter>
+        </activity>
+        <!-- Catches the system's voice-search request when a headset's play/pause
+             button is held, so Hype can use it as the long press. Off until
+             MediaButtonBridge.setPolicy turns it on; anything that is not that
+             long press is passed on to the other voice-search app. -->
+        <activity android:name=".VoiceSearchProxyActivity" android:enabled="false" android:exported="true" android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="" android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.speech.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
         <service android:name=".EngineService" android:enabled="true" android:exported="true" android:permission="android.permission.FOREGROUND_SERVICE" />

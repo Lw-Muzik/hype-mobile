@@ -54,3 +54,6 @@ android/.kotlin/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Gradle state inside vendored plugin packages
+packages/*/android/.gradle/

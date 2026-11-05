@@ -9,10 +9,13 @@
 ///   is the system media volume and this stays at 1; on iOS, which has no
 ///   public setter for the system volume, it is where a Hype Connect remote's
 ///   volume lands.
+/// * The **duck** — Hype's own dip while another app speaks over it. One
+///   factor for both players, because the listener hears one thing.
 ///
 /// They used to share the one player gain, so every load and every crossfade
 /// step wrote over what the remote had chosen, and a crossfade step wrote over
-/// ReplayGain. Here the player always gets `track × mix × fade × listener`, and
+/// ReplayGain. Here the player always gets `track × mix × fade × listener ×
+/// duck`, and
 /// each part can change without losing the others — a pause can fade out a
 /// track that is halfway through a crossfade, and the crossfade picks up where
 /// it was when play is pressed again.
@@ -33,9 +36,13 @@ class OutputGain<P> {
   final Map<P, double> _mix = Map.identity();
   final Map<P, double> _fade = Map.identity();
   double _listener = 1.0;
+  double _duck = 1.0;
 
   /// The listener volume, 0..1.
   double get listener => _listener;
+
+  /// The duck, 0..1; unity when nothing is speaking over the music.
+  double get duck => _duck;
 
   /// [player]'s own gain, before everything else; unity if never set.
   double trackOf(P player) => _track[player] ?? 1.0;
@@ -48,7 +55,7 @@ class OutputGain<P> {
 
   /// What [player] is actually set to.
   double volumeOf(P player) =>
-      trackOf(player) * mixOf(player) * fadeOf(player) * _listener;
+      trackOf(player) * mixOf(player) * fadeOf(player) * _listener * _duck;
 
   /// Sets [player]'s track gain.
   void setTrack(P player, double gain) {
@@ -72,6 +79,15 @@ class OutputGain<P> {
   /// all of them, so a change mid-crossfade reaches the outgoing track too.
   void setListener(double volume, Iterable<P> players) {
     _listener = volume;
+    for (final player in players) {
+      _write(player);
+    }
+  }
+
+  /// Sets the duck and re-applies it to every one of [players] — both, so the
+  /// outgoing side of a crossfade dips with the incoming one.
+  void setDuck(double gain, Iterable<P> players) {
+    _duck = gain;
     for (final player in players) {
       _write(player);
     }

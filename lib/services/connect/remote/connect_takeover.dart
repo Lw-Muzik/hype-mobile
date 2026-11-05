@@ -63,6 +63,7 @@ class ConnectTakeover {
   final Duration claimWindow;
 
   bool _connected = false;
+  bool _listed = false;
   bool _playing = false;
   bool _startedOffline = false;
   List<DeviceInfo> _devices = const [];
@@ -75,6 +76,22 @@ class ConnectTakeover {
   /// Whether a claim is waiting for the hub's answer.
   bool get claiming => _claiming;
 
+  /// Whether the hub has said, on this connection, which device is the active
+  /// player. Until it has, [otherPlayerActive] being false means "not heard
+  /// yet", not "nobody else is playing".
+  bool get hubHasAnswered => _connected && _listed;
+
+  /// Whether another online player is the active device, so this one is not
+  /// the one that should be making sound. The automatic resumes (start,
+  /// reopen, wired, Bluetooth, focus gain) stay quiet while this holds.
+  bool get otherPlayerActive {
+    if (!_connected) return false;
+    final active = _activeId;
+    if (active == null || active == selfId) return false;
+    final device = _deviceById(active);
+    return device != null && device.online && device.isPlayer;
+  }
+
   // -- Inputs ----------------------------------------------------------------
 
   /// The socket reached `welcome` (call [onList] with its contents too).
@@ -85,6 +102,7 @@ class ConnectTakeover {
   /// The socket went away. Whatever list we held is stale from here on.
   void onDisconnected() {
     _connected = false;
+    _listed = false;
     _devices = const [];
     _activeId = null;
     _endClaim();
@@ -100,6 +118,7 @@ class ConnectTakeover {
   }) {
     _devices = devices;
     _activeId = activeDeviceId;
+    _listed = true;
     if (!_connected) return;
 
     if (_claiming) {

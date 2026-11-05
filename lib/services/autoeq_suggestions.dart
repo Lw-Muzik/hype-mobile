@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../audio/eq/autoeq_suggest.dart';
+import '../audio/headset/output_kind.dart';
 import '../models/speaker_profile.dart';
 
 /// Offers an AutoEq headphone preset when a Bluetooth or USB output connects.
@@ -17,6 +18,7 @@ class AutoEqSuggestions {
     required this.profiles,
     required this.prefs,
     required this.navigatorKey,
+    this.onApplied,
     this.devices,
     this.initialDevices,
     this.nextFrame,
@@ -26,6 +28,10 @@ class AutoEqSuggestions {
   final bool Function() systemWide;
   final String? Function() activeProfile;
   final Future<void> Function(String profileName) apply;
+
+  /// Told after a profile was applied for a device, so it can be bound to
+  /// that device (see `OutputProfiles`).
+  final void Function(String profileName, OutputDeviceEvent device)? onApplied;
   final Future<List<SpeakerProfile>> Function() profiles;
   final SharedPreferences prefs;
   final GlobalKey<NavigatorState> navigatorKey;
@@ -74,8 +80,8 @@ class AutoEqSuggestions {
     final all = await session.getDevices(includeInputs: false);
     return all
         // ignore: experimental_member_use
-        .map((d) => OutputDeviceEvent(name: d.name, kind: _kind(d.type)))
-        .where((e) => e.kind != OutputKind.other)
+        .map((d) => OutputDeviceEvent(name: d.name, kind: outputKindOf(d.type)))
+        .where(_isHeadphoneKind)
         .toList();
   }
 
@@ -85,26 +91,13 @@ class AutoEqSuggestions {
       (change) => change.devicesAdded
           .where((d) => d.isOutput)
           // ignore: experimental_member_use
-          .map((d) => OutputDeviceEvent(name: d.name, kind: _kind(d.type)))
-          .where((e) => e.kind != OutputKind.other),
+          .map((d) => OutputDeviceEvent(name: d.name, kind: outputKindOf(d.type)))
+          .where(_isHeadphoneKind),
     );
   }
 
-  // ignore: experimental_member_use
-  static OutputKind _kind(AudioDeviceType t) {
-    switch (t) {
-      // ignore: experimental_member_use
-      case AudioDeviceType.bluetoothA2dp:
-      // ignore: experimental_member_use
-      case AudioDeviceType.bluetoothLe:
-        return OutputKind.bluetooth;
-      // ignore: experimental_member_use
-      case AudioDeviceType.usbAudio:
-        return OutputKind.usb;
-      default:
-        return OutputKind.other;
-    }
-  }
+  static bool _isHeadphoneKind(OutputDeviceEvent e) =>
+      e.kind == AudioOutputKind.bluetooth || e.kind == AudioOutputKind.usb;
 
   Future<void> _onDevice(OutputDeviceEvent e) async {
     var waits = 0;
@@ -166,6 +159,7 @@ class AutoEqSuggestions {
       if (choice == _Choice.apply) {
         try {
           await apply(match.name);
+          onApplied?.call(match.name, e);
         } catch (err) {
           debugPrint('AutoEq apply failed: $err');
         }

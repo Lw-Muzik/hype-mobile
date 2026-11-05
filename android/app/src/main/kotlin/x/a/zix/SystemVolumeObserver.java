@@ -13,6 +13,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 
+import io.flutter.plugin.common.EventChannel;
+
 /**
  * Feeds the music stream's output level (dB) to every audio engine so the
  * "smooth equalizer/tone gains" follow the volume keys without a Dart round
@@ -28,6 +30,9 @@ public final class SystemVolumeObserver {
     private static AudioManager audioManager;
     private static boolean started;
     private static float lastPushedDb = Float.NaN;
+    private static float lastFeedFraction = Float.NaN;
+    private static EventChannel.EventSink feedSink;
+    private static final Handler FEED_HANDLER = new Handler(Looper.getMainLooper());
 
     private SystemVolumeObserver() {}
 
@@ -80,6 +85,51 @@ public final class SystemVolumeObserver {
         refresh();
     }
 
+    /** Dart-facing feed: the music stream as 0...1, on change (EventChannel eq_app/system_volume). */
+    public static void setupEventChannel(EventChannel channel) {
+        channel.setStreamHandler(new EventChannel.StreamHandler() {
+            @Override
+            public void onListen(Object arguments, EventChannel.EventSink events) {
+                synchronized (LOCK) {
+                    feedSink = events;
+                    lastFeedFraction = Float.NaN;
+                }
+                refresh();
+            }
+
+            @Override
+            public void onCancel(Object arguments) {
+                synchronized (LOCK) {
+                    feedSink = null;
+                }
+            }
+        });
+    }
+
+    /** The music stream's index over its maximum, 0...1. */
+    public static float currentFraction(AudioManager am) {
+        if (am == null) return 1f;
+        int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        return Math.max(0f, Math.min(1f, am.getStreamVolume(AudioManager.STREAM_MUSIC) / (float) max));
+    }
+
+    private static void pushFeed(AudioManager am) {
+        final EventChannel.EventSink sink;
+        final float fraction = currentFraction(am);
+        synchronized (LOCK) {
+            sink = feedSink;
+            if (sink == null || fraction == lastFeedFraction) return;
+            lastFeedFraction = fraction;
+        }
+        FEED_HANDLER.post(() -> {
+            try {
+                sink.success((double) fraction);
+            } catch (RuntimeException ignored) {
+                // The Dart side went away between the check and the post.
+            }
+        });
+    }
+
     /** Re-reads the volume and pushes it if it moved by more than 0.01 dB. */
     public static void refresh() {
         final AudioManager am;
@@ -87,6 +137,7 @@ public final class SystemVolumeObserver {
             if (!started) return;
             am = audioManager;
         }
+        pushFeed(am);
         final float db = currentMusicDb(am);
         synchronized (LOCK) {
             if (!Float.isNaN(lastPushedDb) && Math.abs(db - lastPushedDb) <= MIN_STEP_DB) return;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -30,6 +31,11 @@ import '../services/ytmusic/yt_download_repair.dart';
 import '/controllers/library_controller.dart';
 import 'package:just_audio/just_audio.dart' show UriAudioSource;
 import '../themes/ember.dart';
+import 'audio_focus_settings_section.dart';
+import 'headset_settings_section.dart';
+import 'dvc_settings_section.dart';
+import 'advanced_settings_section.dart';
+import 'output_profiles_page.dart';
 
 /// One group of settings, and the sections it gathers.
 ///
@@ -46,9 +52,12 @@ enum SettingsCategory {
   appMode('App Mode', Icons.swap_horiz_rounded,
       'Full player, or equalizer only', _SettingsGroup.playback),
   playback('Playback', Icons.play_circle_outline_rounded,
-      'Replay gain, autoplay', _SettingsGroup.playback),
+      'Replay gain, audio focus, autoplay', _SettingsGroup.playback),
   crossfade('Crossfade & Gapless', Icons.compare_arrows_rounded,
       'Fading between tracks, on skip, pause and seek', _SettingsGroup.playback),
+  headset('Headset & Bluetooth', Icons.headset_rounded,
+      'Resume on connect, pause on disconnect, headset buttons',
+      _SettingsGroup.playback),
   streaming('Streaming', Icons.wifi_rounded,
       'Data saver and cellular limits', _SettingsGroup.playback),
 
@@ -72,11 +81,17 @@ enum SettingsCategory {
   about('About & Support', Icons.info_outline_rounded,
       'App info, guides, report a bug', _SettingsGroup.system);
 
-  const SettingsCategory(this.title, this.icon, this.summary, this.group);
+  const SettingsCategory(this.title, this.icon, this._summary, this.group);
 
   final String title;
   final IconData icon;
-  final String summary;
+  final String _summary;
+
+  /// The one-line description. Headset buttons do not exist on iOS, so the
+  /// Headset & Bluetooth summary leaves them out there.
+  String get summary => this == headset && Platform.isIOS
+      ? 'Resume on connect, pause on disconnect'
+      : _summary;
   final _SettingsGroup group;
 }
 
@@ -100,12 +115,24 @@ enum _SettingsGroup {
 /// built lazily per category — nothing can be searched that has not been built,
 /// and the whole point is to find a setting without knowing where it is.
 class SettingsEntry {
-  const SettingsEntry(this.label, this.category, [this.keywords = '']);
+  const SettingsEntry(this.label, this.category, [this.keywords = ''])
+      : androidOnly = false;
+
+  /// A setting iOS does not have: hidden there, and left out of its search.
+  const SettingsEntry.android(this.label, this.category,
+      [this.keywords = ''])
+      : androidOnly = true;
+
   final String label;
   final SettingsCategory category;
 
   /// Extra words someone might reach for. "loudness" finds Replay Gain.
   final String keywords;
+
+  /// True for a setting only Android has.
+  final bool androidOnly;
+
+  bool availableOn({required bool isAndroid}) => isAndroid || !androidOnly;
 
   bool matches(String query) {
     final q = query.trim().toLowerCase();
@@ -162,6 +189,50 @@ const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('Source', SettingsCategory.playback, 'replay gain album track'),
   SettingsEntry('RG preamp', SettingsCategory.playback, 'replay gain preamp loudness db'),
   SettingsEntry('Preamp for songs without RG info', SettingsCategory.playback, 'replay gain untagged no tags db'),
+  SettingsEntry('Resume after call', SettingsCategory.playback,
+      'audio focus phone call carry on'),
+  SettingsEntry('Resume on start', SettingsCategory.playback,
+      'audio focus launch open app automatically play'),
+  SettingsEntry('Resume on reopen', SettingsCategory.playback,
+      'audio focus return come back launcher automatically play'),
+  SettingsEntry.android('Short audio focus change / calls',
+      SettingsCategory.playback, 'audio focus transient interruption phone call'),
+  SettingsEntry.android('Pause in call', SettingsCategory.playback,
+      'audio focus phone ringing'),
+  SettingsEntry.android('Resume on focus gain', SettingsCategory.playback,
+      'audio focus carry on after interruption'),
+  SettingsEntry.android('Duck volume', SettingsCategory.playback,
+      'audio focus lower quieter notification navigation'),
+  SettingsEntry.android('Permanent audio focus change',
+      SettingsCategory.playback, 'audio focus another app takes over pause'),
+  SettingsEntry('Resume on wired headset', SettingsCategory.headset,
+      'plug headphones jack automatically play'),
+  SettingsEntry('Resume on Bluetooth', SettingsCategory.headset,
+      'connect headphones speaker car automatically play'),
+  SettingsEntry('Pause on headset disconnect', SettingsCategory.headset,
+      'unplug headphones noisy bluetooth disconnect'),
+  SettingsEntry.android('Pause on USB DAC connection', SettingsCategory.headset,
+      'usb audio device plug dongle'),
+  SettingsEntry.android('Respond to buttons', SettingsCategory.headset,
+      'headset media keys remote earbuds'),
+  SettingsEntry.android('Wired headset buttons', SettingsCategory.headset,
+      'single double triple long press next previous'),
+  SettingsEntry.android('Bluetooth buttons', SettingsCategory.headset,
+      'single double triple long press next previous earbuds'),
+  SettingsEntry('Strict resume/pause/stop', SettingsCategory.headset,
+      'redundant play pause commands toggle'),
+  SettingsEntry('Ignore Bluetooth commands', SettingsCategory.headset,
+      'connect seconds delay accidental car'),
+  SettingsEntry('Ignore repeat/shuffle', SettingsCategory.headset,
+      'remote control car mode'),
+  SettingsEntry.android('Beep', SettingsCategory.headset,
+      'headset button feedback sound'),
+  SettingsEntry.android('Beep more', SettingsCategory.headset,
+      'headset button feedback sound single press'),
+  SettingsEntry.android('Vibrate', SettingsCategory.headset,
+      'headset button feedback haptic'),
+  SettingsEntry.android('Disable default long press', SettingsCategory.headset,
+      'voice search assistant google'),
   SettingsEntry('Bass', SettingsCategory.tone, 'low end boost'),
   SettingsEntry('Treble', SettingsCategory.tone, 'high end'),
   SettingsEntry('Audio enhancement', SettingsCategory.tone, 'effects reverb virtualizer'),
@@ -169,8 +240,27 @@ const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('Mono', SettingsCategory.tone, 'mix down single channel'),
   SettingsEntry('Tempo', SettingsCategory.tone, 'speed faster slower playback rate'),
   SettingsEntry('Limiter', SettingsCategory.tone, 'clipping distortion peaks output'),
+  SettingsEntry.android('Enable direct volume control', SettingsCategory.tone,
+      'dvc direct volume control maximum bypass'),
+  SettingsEntry.android('No DVC for Bluetooth absolute volume',
+      SettingsCategory.tone, 'dvc bluetooth absolute volume'),
   SettingsEntry('No DVC – preamp reduction', SettingsCategory.tone,
       'headroom volume lower clipping attenuation'),
+  SettingsEntry.android('Volume', SettingsCategory.tone, 'dvc volume level'),
+  SettingsEntry.android('Volume levels', SettingsCategory.tone,
+      'volume steps fine coarse buttons'),
+  SettingsEntry.android('Volume panel', SettingsCategory.tone,
+      'volume overlay hud'),
+  SettingsEntry('Pause/resume on volume', SettingsCategory.tone,
+      'pause zero volume resume'),
+  SettingsEntry.android('MusicFX', SettingsCategory.tone,
+      'system audio effects panel'),
+  SettingsEntry.android('Force audio on audio focus change',
+      SettingsCategory.tone, 'audio stops notification restart'),
+  SettingsEntry('Restore reverb presets', SettingsCategory.tone,
+      'reverb room presets reset'),
+  SettingsEntry('Outputs', SettingsCategory.tone,
+      'per output speaker headphones bluetooth usb profile preset'),
   SettingsEntry('Theme', SettingsCategory.appearance, 'dark light fancy colour'),
   SettingsEntry('Blur', SettingsCategory.appearance, 'background artwork'),
   SettingsEntry('Visualizer', SettingsCategory.visualizer, 'spectrum waveform bars'),
@@ -224,6 +314,7 @@ class _SettingsState extends State<Settings> {
   @override
   void initState() {
     super.initState();
+    unawaited(context.read<AppController>().refreshMusicFxAvailable());
     // The Autoplay switch below reads a field that starts at its default, so
     // without this it shows "on" to a user who turned it off in an earlier
     // session and never opened Discover this run.
@@ -305,7 +396,9 @@ class _SettingsState extends State<Settings> {
       final reachable = visible.toSet();
       final matches = [
         for (final entry in kSettingsIndex)
-          if (reachable.contains(entry.category) && entry.matches(_query))
+          if (reachable.contains(entry.category) &&
+              entry.availableOn(isAndroid: !Platform.isIOS) &&
+              entry.matches(_query))
             entry,
       ];
       return ListView(
@@ -453,6 +546,11 @@ class _SettingsState extends State<Settings> {
       SettingsCategory.crossfade => CrossfadeSettingsSection(
           settings: controller.fadeSettings,
           onChanged: (value) => controller.fadeSettings = value,
+        ),
+      SettingsCategory.headset => HeadsetSettingsSection(
+          settings: controller.headsetSettings,
+          onChanged: (v) => controller.headsetSettings = v,
+          isIos: Platform.isIOS,
         ),
       SettingsCategory.streaming => _buildStreamingSection(),
       SettingsCategory.equalizer => Column(children: [
@@ -622,6 +720,12 @@ class _SettingsState extends State<Settings> {
             },
           ),
         ]),
+        const SizedBox(height: 12),
+        AudioFocusSettingsSection(
+          settings: controller.audioFocusSettings,
+          onChanged: (v) => controller.audioFocusSettings = v,
+          isIos: Platform.isIOS,
+        ),
       ],
     );
   }
@@ -629,153 +733,74 @@ class _SettingsState extends State<Settings> {
   // -- Audio Enhancement Section --
 
   Widget _buildAudioEnhancementSection(AppController controller) {
+    final isIos = Platform.isIOS;
+    final reason = controller.systemWideDisabledReason;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader(Icons.tune, "Audio Enhancement"),
-        _buildSectionCard([
-          if (Platform.isAndroid) ...[
-          SwitchListTile.adaptive(
-            value: controller.dvcEnabled,
-            title: const Text("Direct volume control"),
-            subtitle: Text(
-              controller.systemWideDisabledReason ??
-                  "Bypasses system volume for higher fidelity audio output",
-            ),
-            onChanged: controller.systemWideActive
-                ? null
-                : (enabled) {
-                    if (enabled && !controller.dvcEnabled) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("System volume will be set to maximum"),
-                          duration: Duration(seconds: 3),
-                        ),
-                      );
-                    }
-                    controller.dvcEnabled = enabled;
-                  },
+        _buildSectionHeader(Icons.tune, "Direct volume control"),
+        if (reason != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(reason,
+                style: Theme.of(context).textTheme.bodySmall),
           ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ],
-          _buildNoDvcPreamp(controller),
-          if (Platform.isAndroid && controller.dvcEnabled) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            ListTile(
-              enabled: !controller.systemWideActive,
-              title: const Text("DVC Volume"),
-              subtitle: Text(
-                controller.systemWideDisabledReason ??
-                    "${((controller.dvcGain + 30) / 30 * 100).round()}%",
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  const Text("0%"),
-                  Expanded(
-                    child: Slider.adaptive(
-                      value: controller.dvcGain,
-                      min: -30,
-                      max: 0,
-                      divisions: 20,
-                      label:
-                          "${((controller.dvcGain + 30) / 30 * 100).round()}%",
-                      onChanged: controller.systemWideActive
-                          ? null
-                          : (value) => controller.dvcGain = value,
+        // Locked while the equalizer applies to all apps: DVC is suspended
+        // and the platform equalizer carries the headroom then.
+        IgnorePointer(
+          ignoring: controller.systemWideActive,
+          child: Opacity(
+            opacity: controller.systemWideActive ? 0.5 : 1.0,
+            child: DvcSettingsSection(
+              settings: controller.dvcSettings,
+              onChanged: (v) => controller.dvcSettings = v,
+              dvcEnabled: controller.dvcEnabled,
+              onDvcEnabled: (enabled) {
+                if (enabled && !controller.dvcEnabled) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("System volume will be set to maximum"),
+                      duration: Duration(seconds: 3),
                     ),
-                  ),
-                  const Text("100%"),
-                ],
-              ),
+                  );
+                }
+                controller.dvcEnabled = enabled;
+              },
+              dvcGainDb: controller.dvcGain,
+              onDvcGainDb: (v) => controller.dvcGain = v,
+              headroomDb: controller.dspCore.headroomDb,
+              onHeadroomDb: (v) => controller.dspCore =
+                  controller.dspCore.copyWith(headroomDb: v),
+              isIos: isIos,
+              dvcRunning: controller.dvcRunning,
             ),
-            // The note is about DVC holding the system volume at max: not true
-            // while DVC is suspended by system-wide mode.
-            if (controller.dvcRunning) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 16,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      "System volume set to MAX. Use hardware buttons or this slider to control volume.",
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withValues(alpha: 0.5),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildSectionHeader(Icons.settings_suggest_outlined, "Advanced tweaks"),
+        AdvancedSettingsSection(
+          settings: controller.advancedSettings,
+          onChanged: (v) => controller.advancedSettings = v,
+          isIos: isIos,
+          musicFxAvailable: controller.musicFxAvailable,
+          onOpenMusicFx: () => controller.openMusicFx(),
+          onRestoreEqPresets: controller.restoreEqPresets,
+          onRestoreReverbPresets: controller.restoreReverbPresets,
+        ),
+        const SizedBox(height: 12),
+        _buildSectionCard([
+          ListTile(
+            leading: const Icon(Icons.speaker_group_outlined),
+            title: const Text("Outputs"),
+            subtitle: const Text(
+                "EQ preset and options per speaker, headphones, Bluetooth and USB device"),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OutputProfilesPage()),
             ),
-            ],
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            SwitchListTile.adaptive(
-              value: controller.dvcFineSteps,
-              title: const Text("Fine volume steps"),
-              subtitle: Text(
-                controller.systemWideDisabledReason ??
-                    "1% steps instead of 5% (hardware buttons)",
-              ),
-              onChanged: controller.systemWideActive
-                  ? null
-                  : (value) => controller.dvcFineSteps = value,
-            ),
-          ],
+          ),
         ]),
       ],
-    );
-  }
-
-  /// Headroom ahead of the effects, for when direct volume control is off.
-  Widget _buildNoDvcPreamp(AppController controller) {
-    // Not in effect while the equalizer applies to all apps: the platform
-    // equalizer applies this headroom then.
-    final dvc = controller.dvcRunning;
-    final db = controller.dspCore.headroomDb;
-    return Opacity(
-      opacity: dvc ? 0.5 : 1.0,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            title: const Text("No DVC – preamp reduction"),
-            subtitle: Text(
-              dvc
-                  ? "Not used while direct volume control is on"
-                  : "Lowers the level before effects so boosts do not clip",
-            ),
-            trailing: Text("${db.toStringAsFixed(1)} dB"),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Slider.adaptive(
-              value: db,
-              min: -10,
-              max: 0,
-              divisions: 20,
-              label: "${db.toStringAsFixed(1)} dB",
-              onChanged: dvc
-                  ? null
-                  : (v) => controller.dspCore =
-                        controller.dspCore.copyWith(headroomDb: v),
-            ),
-          ),
-        ],
-      ),
     );
   }
 

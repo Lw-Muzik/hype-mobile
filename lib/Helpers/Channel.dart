@@ -131,6 +131,19 @@ class Channel {
     return await _invokeRequired<int>("getSystemMaxVolume", 15);
   }
 
+  /// Whether an app on this phone answers the system audio effects panel
+  /// (MusicFX). Android only.
+  static Future<bool> hasMusicFx() async {
+    return await _invokeRequired<bool>("hasMusicFx", false);
+  }
+
+  /// Opens the system audio effects panel for [sessionId]. False when nothing
+  /// answered. Android only.
+  static Future<bool> openMusicFx(int sessionId) async {
+    return await _invoke<bool>("openMusicFx", {"sessionId": sessionId}) ??
+        false;
+  }
+
   /// EventChannel for hardware volume button events when DVC is active.
   /// Emits "up" or "down" strings.
   static const EventChannel _dvcVolumeButtonChannel = EventChannel(
@@ -594,6 +607,23 @@ class Channel {
     return await _invokeRequired<String>("getAudioOutputType", "speaker");
   }
 
+  /// Android's "Disable absolute volume" developer option: true when on, false
+  /// when off, null when unknown (unreadable, or no platform side).
+  static Future<bool?> isBtAbsoluteVolumeDisabled() async {
+    return await _invoke<bool>("isBtAbsoluteVolumeDisabled");
+  }
+
+  /// What the player's engine reports right now, for the Audio Info page:
+  /// `{sampleRate, channels, codec, bitrate, limiterReductionDb}` — any key
+  /// may be missing; null when there is no platform side or no engine yet.
+  static Future<Map<String, dynamic>?> getAudioInfo(String playerId) async {
+    final raw = await _invoke<Map<dynamic, dynamic>>(
+      "getAudioInfo",
+      {"playerId": playerId},
+    );
+    return raw?.map((k, v) => MapEntry(k.toString(), v));
+  }
+
   static void setSessionId(int sessionId) async {
     await _invoke("init", {"sessionId": sessionId});
   }
@@ -794,5 +824,95 @@ class Channel {
       "filePath": filePath,
       "lyrics": lyrics,
     });
+  }
+
+  // ==================== Headset / Bluetooth media keys (Android) ====================
+
+  static const EventChannel _mediaButtonChannel = EventChannel(
+    'eq_app/media_buttons',
+  );
+  static const MethodChannel _mediaButtonControl = MethodChannel(
+    'eq_app/media_buttons_ctl',
+  );
+
+  /// How long to wait before asking again for a media-button handler that is
+  /// not registered yet.
+  @visibleForTesting
+  static Duration mediaButtonRetryDelay = const Duration(seconds: 1);
+
+  /// Raw media-key events (`keyCode`, `down`, `repeat`, `deviceId`,
+  /// `deviceName`, `btOutput`, or `longPress`) from the platform, preceded by
+  /// one `{connected: true}` marker once the handler is found.
+  ///
+  /// The native handlers are registered on the engine before Dart runs, but
+  /// not on every engine at once (the one Hype Connect starts without an
+  /// activity gets them from its own attach), so a handler that is not there
+  /// yet is asked for again rather than failing: nothing is thrown, and no
+  /// events come until it exists.
+  static Stream<Map<Object?, Object?>> get mediaButtonEvents async* {
+    for (var attempt = 0; attempt < 30; attempt++) {
+      try {
+        await _mediaButtonControl.invokeMethod<bool>('attached');
+      } on MissingPluginException {
+        await Future<void>.delayed(mediaButtonRetryDelay);
+        continue;
+      } on PlatformException catch (e) {
+        debugPrint('Media buttons unavailable: ${e.message}');
+        return;
+      }
+      // Tells the listener the handler exists now, so it can send what it
+      // could not while the handler was missing.
+      yield const {'connected': true};
+      yield* _mediaButtonChannel
+          .receiveBroadcastStream()
+          .where((event) => event is Map)
+          .map((event) => Map<Object?, Object?>.from(event as Map));
+      return;
+    }
+  }
+
+  /// Tells the platform whether to answer headset keys, whether Hype is
+  /// playing, and whether it should take over the system's long-press voice
+  /// search ([longPressProxy]), and for which output: a hold on a source that
+  /// does not want it goes on to voice search.
+  static Future<void> setButtonPolicy({
+    required bool respond,
+    required bool playing,
+    required bool longPressProxy,
+    required bool wiredLongPress,
+    required bool bluetoothLongPress,
+  }) async {
+    try {
+      await _mediaButtonControl.invokeMethod<void>('setButtonPolicy', {
+        'respond': respond,
+        'playing': playing,
+        'longPressProxy': longPressProxy,
+        'wiredLongPress': wiredLongPress,
+        'bluetoothLongPress': bluetoothLongPress,
+      });
+    } on MissingPluginException {
+      debugPrint('Media button policy: no handler yet');
+    } on PlatformException catch (e) {
+      debugPrint('Media button policy failed: ${e.message}');
+    }
+  }
+
+  /// Beeps and/or a short buzz for a recognised headset command.
+  static Future<void> buttonFeedback({
+    required int beeps,
+    required int toneVolume,
+    required bool vibrate,
+  }) async {
+    try {
+      await _mediaButtonControl.invokeMethod<void>('buttonFeedback', {
+        'beeps': beeps,
+        'toneVolume': toneVolume,
+        'vibrate': vibrate,
+      });
+    } on MissingPluginException {
+      debugPrint('Button feedback: no handler yet');
+    } on PlatformException catch (e) {
+      debugPrint('Button feedback failed: ${e.message}');
+    }
   }
 }

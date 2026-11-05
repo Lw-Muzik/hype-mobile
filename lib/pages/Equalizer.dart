@@ -128,12 +128,21 @@ class _EqualizerState extends State<Equalizer> with TickerProviderStateMixin {
               : null,
           title: Text(_isEqMode ? "Hype EQ" : "Sound Effects"),
           actions: [
+            if (appController.musicFxVisible)
+              IconButton(
+                tooltip: 'MusicFX',
+                icon: const Icon(Icons.graphic_eq_rounded, size: 22),
+                onPressed: () => appController.openMusicFx(),
+              ),
             _EqPowerAction(
               enabled: appController.graphicEqEnabled,
               onToggle: () {
                 final newValue = !appController.graphicEqEnabled;
                 appController.graphicEqEnabled = newValue;
-                Channel.enableEq(newValue);
+                // Unless the active output bypasses the EQ.
+                Channel.enableEq(
+                  newValue && !appController.activeOutputProfile.noEqTone,
+                );
               },
             ),
             if (_isEqMode)

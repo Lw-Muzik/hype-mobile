@@ -7,13 +7,16 @@ import 'package:just_audio/just_audio.dart';
 import 'package:just_audio/video.dart';
 
 import '../Helpers/Channel.dart';
+import '../audio/focus/focus_policy.dart';
+import '../audio/focus/playback_target.dart';
 import '../player/engine_track_gain.dart';
 import '../player/fade_cancellation.dart';
 import '../player/fade_curve.dart';
 import '../player/fade_settings.dart';
 import '../player/output_gain.dart';
+import '../player/remote_commands.dart';
 
-class HypeAudioHandler extends BaseAudioHandler {
+class HypeAudioHandler extends BaseAudioHandler implements PlaybackTarget {
   /// Data-conscious streaming configuration (Spotify-style drip-feed):
   /// - Android: drip-feed buffer (min == max at 30s) prevents bursty over-download.
   ///   ExoPlayer downloads in ~1MB chunks; 30s is enough for smooth playback
@@ -47,13 +50,24 @@ class HypeAudioHandler extends BaseAudioHandler {
   // uses `AVURLAssetHTTPHeaderFieldsKey`, so the player talks to the CDN
   // directly — no extra hop, native Range and seek, and no dependence on
   // cleartext traffic being permitted.
+  //
+  // Interruptions and session activation are switched off on both players: audio
+  // focus is Hype's, not just_audio's. just_audio would pause on every
+  // interruption and resume on its own, and let the system duck Hype on top of
+  // Hype's own duck; neither can follow the Audio Focus settings. The handler
+  // asks for focus itself, in [play] and [startPlayback] — see
+  // [onActivateSession].
   final AudioPlayer _playerA = AudioPlayer(
     audioLoadConfiguration: _streamingLoadConfig,
     useProxyForRequestHeaders: false,
+    handleInterruptions: false,
+    handleAudioSessionActivation: false,
   );
   final AudioPlayer _playerB = AudioPlayer(
     audioLoadConfiguration: _streamingLoadConfig,
     useProxyForRequestHeaders: false,
+    handleInterruptions: false,
+    handleAudioSessionActivation: false,
   );
   late AudioPlayer _activePlayer;
   late AudioPlayer _inactivePlayer;
@@ -195,8 +209,28 @@ class HypeAudioHandler extends BaseAudioHandler {
 
   Future<void> setLoopMode(LoopMode mode) async {
     _loopMode = mode;
+    // Told to the lock screen and Bluetooth displays at once, not when the
+    // platform has answered.
+    _republish();
     await Future.wait([_playerA.setLoopMode(mode), _playerB.setLoopMode(mode)]);
   }
+
+  bool _shuffleEnabled = false;
+
+  bool get shuffleEnabled => _shuffleEnabled;
+
+  /// Whether the queue is shuffled — kept here only to be published as the
+  /// remote shuffle mode; the queue itself is the controller's.
+  set shuffleEnabled(bool value) {
+    if (value == _shuffleEnabled) return;
+    _shuffleEnabled = value;
+    _republish();
+  }
+
+  /// Publishes the playback state again from the active player, for a change
+  /// (repeat, shuffle) that produces no player event of its own.
+  void _republish() =>
+      playbackState.add(_transformEvent(_activePlayer.playbackEvent));
 
   VoidCallback? onSkipToNext;
   VoidCallback? onSkipToPrevious;
@@ -422,6 +456,7 @@ class HypeAudioHandler extends BaseAudioHandler {
   Future<void> play() async {
     final before = onBeforePlay;
     if (before != null) await before();
+    if (!await _activateSession()) return;
     final players = _audiblePlayers;
     final target = currentTrackPlayer;
     final interruptedPause = pausing.value;
@@ -459,6 +494,44 @@ class HypeAudioHandler extends BaseAudioHandler {
     await playing;
   }
 
+  /// Asks the system for audio focus, if set. True when playback may start.
+  ///
+  /// Awaited by [play] after [onBeforePlay] and before anything changes, and by
+  /// [startPlayback] before the player starts: those are the two paths every
+  /// play goes through. Crossfades and gapless advances run while focus is
+  /// already held, so they do not ask. Null means yes — a handler with no focus
+  /// service (a test) just plays.
+  Future<bool> Function()? onActivateSession;
+
+  /// Bumped by every pause, stop and new start. A play that is still waiting
+  /// for focus when it changes has been overtaken and must not start.
+  int _playEpoch = 0;
+
+  /// Asks [onActivateSession]; a refusal, or a throw (iOS reports a failed
+  /// activation as a PlatformException), is a denial.
+  Future<bool> _askForFocus() async {
+    final activate = onActivateSession;
+    if (activate == null) return true;
+    try {
+      if (await activate()) return true;
+      debugPrint('Audio focus was not granted; not playing.');
+    } catch (e) {
+      debugPrint('Audio focus request failed ($e); not playing.');
+    }
+    return false;
+  }
+
+  /// Asks for focus; false if it was refused or a pause came first. On true
+  /// the epoch has moved on, so a start still waiting for its own grant gives
+  /// way to this play rather than cutting its fade-in short.
+  Future<bool> _activateSession() async {
+    final epoch = _playEpoch;
+    if (!await _askForFocus()) return false;
+    if (epoch != _playEpoch) return false;
+    _playEpoch++;
+    return true;
+  }
+
   /// Run after playback pauses, if set.
   ///
   /// The mirror of [onBeforePlay], and here for the same reason: this is the one
@@ -469,12 +542,20 @@ class HypeAudioHandler extends BaseAudioHandler {
 
   /// Pauses, fading out first; the player pauses once the fade has finished.
   /// Switched off, the pause is immediate.
+  ///
+  /// [fade] false pauses at once, cutting short a fade already running — for
+  /// the system having taken the audio away already.
   @override
-  Future<void> pause() async {
-    if (pausing.value) return; // already on its way out
+  Future<void> pause({bool fade = true}) async {
+    _playEpoch++;
+    if (pausing.value && fade) return; // already on its way out
     final players = _audiblePlayers;
     final target = currentTrackPlayer;
-    final fadeMs = fades.playPauseMs;
+    final fadeMs = fade ? fades.playPauseMs : 0;
+    if (!fade) {
+      _cancelTransport(players);
+      pausing.value = false;
+    }
     if (fadeMs > 0 && target.playing) {
       pausing.value = true;
       _publishPausedIntent();
@@ -501,9 +582,16 @@ class HypeAudioHandler extends BaseAudioHandler {
     onPaused?.call();
   }
 
+  /// Run when a stop begins (the notification's close included). A stop is not
+  /// a change of the playing state when the player was already paused, yet it
+  /// ends whatever was waiting to resume.
+  void Function()? onStopped;
+
   /// Stops, fading out first like a pause. Switched off, a hard stop.
   @override
   Future<void> stop() async {
+    _playEpoch++;
+    onStopped?.call();
     final fadeMs = fades.playPauseMs;
     if (fadeMs > 0 && isAudible) {
       pausing.value = true;
@@ -592,11 +680,29 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// [fadeInMs] (zero for none).
   ///
   /// Every load that is not a crossfade starts through here.
+  ///
+  /// Asks for audio focus first ([onActivateSession]) and starts the player
+  /// only once it is granted — unless a pause, a stop or a newer start came in
+  /// the meantime, which win. With no focus service it starts at once.
   void startPlayback({int fadeInMs = 0}) {
     final p = _activePlayer;
     pausing.value = false;
     _cancelTransport([p]);
     _gain.setMix(p, 1.0);
+    final epoch = ++_playEpoch;
+    unawaited(_startAfterFocus(p, fadeInMs, epoch));
+  }
+
+  Future<void> _startAfterFocus(AudioPlayer p, int fadeInMs, int epoch) async {
+    if (onActivateSession != null) {
+      if (!await _askForFocus()) return;
+      // Overtaken while it waited: paused, stopped, started again, or the
+      // player it was for has been handed over.
+      if (epoch != _playEpoch || !identical(p, _activePlayer)) return;
+      pausing.value = false;
+      _cancelTransport([p]);
+      _gain.setMix(p, 1.0);
+    }
     if (fadeInMs > 0) {
       _gain.setFade(p, 0.0);
       unawaited(p.play());
@@ -622,6 +728,64 @@ class HypeAudioHandler extends BaseAudioHandler {
     if (done == null) return;
     _cancellation?.cancel();
     await done.future;
+  }
+
+  // ---------------------------------------------------------------------------
+  // What the audio-focus and headset logic sees
+  // ---------------------------------------------------------------------------
+
+  @override
+  bool get playing => playbackState.value.playing;
+
+  @override
+  Stream<bool> get playingStream =>
+      playbackState.map((s) => s.playing).distinct();
+
+  /// The glide the duck is on, if any. A new duck cancels it and carries on
+  /// from wherever the level had got to, so a duck and its release never jump.
+  FadeCancellation? _duckGlide;
+
+  /// How far the music is ducked, 1 for not at all.
+  double get duckLevel => _gain.duck;
+
+  /// Ducks the music to [level] (clamped 0..1): down over [kDuckDownMs], back
+  /// up over [kDuckUpMs] while playing, at once when nothing is playing.
+  ///
+  /// Hype's own factor on both players, under the crossfade, the play/pause
+  /// fade and the listener volume — it survives all of them.
+  @override
+  Future<void> setDuck(double level) async {
+    final to = level.clamp(0.0, 1.0);
+    _duckGlide?.cancel();
+    _duckGlide = null;
+    final from = _gain.duck;
+    final players = enginePlayers;
+    if (to == from) return;
+    if (!currentTrackPlayer.playing) {
+      _gain.setDuck(to, players);
+      return;
+    }
+    final glide = FadeCancellation();
+    _duckGlide = glide;
+    await runRamp(
+      from: from,
+      to: to,
+      duration: Duration(milliseconds: to < from ? kDuckDownMs : kDuckUpMs),
+      cancel: glide,
+      apply: (g) {
+        if (identical(_duckGlide, glide)) _gain.setDuck(g, players);
+      },
+    );
+    if (identical(_duckGlide, glide)) _duckGlide = null;
+  }
+
+  /// Stops without a fade and plays again — for a route change that stopped
+  /// the platform player behind Hype's back, so the music comes back on the
+  /// new route fading in rather than not at all.
+  @override
+  Future<void> restartPlayback() async {
+    await pause(fade: false);
+    await play();
   }
 
   @override
@@ -801,6 +965,20 @@ class HypeAudioHandler extends BaseAudioHandler {
         return;
       }
 
+      // A track ending on its own whose successor was slow to open: the
+      // listener may have paused during the load, or a call or another app
+      // taken the audio — a pause on its way out counts. The blend would start
+      // the next song into that, so give it up: the successor stays loaded and
+      // stopped, and the outgoing track stays paused, at its own level, for
+      // play to carry on from. (Judged by state rather than by the play-epoch,
+      // so a pause that was turned round again before this point still blends.)
+      if ((startAt != null || startAtEnd) &&
+          (!outgoing.playing || pausing.value)) {
+        await _abandonSetup(incoming);
+        _gain.setMix(outgoing, outFrom);
+        return;
+      }
+
       // The blend.
       final outLevel = outgoingFinished() ? 0.0 : _gain.mixOf(outgoing);
       final startPosition = incoming.position;
@@ -937,6 +1115,8 @@ class HypeAudioHandler extends BaseAudioHandler {
         MediaAction.seek,
         MediaAction.seekForward,
         MediaAction.seekBackward,
+        MediaAction.setRepeatMode,
+        MediaAction.setShuffleMode,
       },
       androidCompactActionIndices: const [0, 1, 2],
       processingState: const {
@@ -951,6 +1131,10 @@ class HypeAudioHandler extends BaseAudioHandler {
       bufferedPosition: _activePlayer.bufferedPosition,
       speed: _activePlayer.speed,
       queueIndex: event.currentIndex,
+      repeatMode: remoteRepeatModeOf(_loopMode),
+      shuffleMode: _shuffleEnabled
+          ? AudioServiceShuffleMode.all
+          : AudioServiceShuffleMode.none,
     );
   }
 }

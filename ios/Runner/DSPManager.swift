@@ -72,6 +72,7 @@ class DSPManager {
         ) { _, change in
             guard let v = change.newValue else { return }
             DSPManager.shared.setSystemVolumeDb(SystemVolume.db(fromOutputVolume: v))
+            SystemVolumeFeed.shared.push(v)
         }
     }
 

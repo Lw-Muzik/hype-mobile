@@ -285,6 +285,8 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
       serviceBridge: bridge,
       requestNotifications: Platform.isAndroid ? _requestNotifications : null,
     );
+    app.connectYielded = () => connect.yieldedToOtherDevice;
+    app.connectAnswerPending = () => connect.hubAnswerPending;
     app.addListener(connect.inputsChanged);
     app.handler.playbackState.listen((_) => connect.inputsChanged());
     connect.start();
@@ -349,6 +351,15 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
   ConnectStatePublisher? _publisher;
   ConnectRemoteSession? _session;
   ConnectTakeover? _takeover;
+
+  /// Another device is the active player, so this phone must not start music
+  /// on its own (an automatic resume).
+  bool get yieldedToOtherDevice => _takeover?.otherPlayerActive ?? false;
+
+  /// Hype Connect is on but the hub has not yet said which device is the active
+  /// player, so "no other device is playing" cannot be trusted yet.
+  bool get hubAnswerPending =>
+      _enabled && !(_takeover?.hubHasAnswered ?? false);
   ConnectTransfer? _transfer;
   ConnectLinkDirection? _direction;
   StreamSubscription<RemoteEvent>? _remoteEvents;

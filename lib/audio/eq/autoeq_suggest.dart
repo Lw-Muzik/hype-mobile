@@ -1,13 +1,12 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/speaker_profile.dart';
-
-enum OutputKind { bluetooth, usb, other }
+import '../headset/output_kind.dart';
 
 class OutputDeviceEvent {
   const OutputDeviceEvent({required this.name, required this.kind});
   final String name;
-  final OutputKind kind;
+  final AudioOutputKind kind;
 }
 
 /// Lower case, parenthesised text removed, only `[a-z0-9]` kept.
@@ -78,7 +77,13 @@ SpeakerProfile? autoEqSuggestion({
   required String? activeProfile,
   required List<SpeakerProfile> profiles,
 }) {
-  if (!enabled || systemWide || device.kind == OutputKind.other) return null;
+  // Only headphones that name themselves: Bluetooth and USB.
+  if (!enabled ||
+      systemWide ||
+      (device.kind != AudioOutputKind.bluetooth &&
+          device.kind != AudioOutputKind.usb)) {
+    return null;
+  }
   final key = normaliseDeviceName(device.name);
   if (dismissed.contains(key) || askedThisSession.contains(key)) return null;
   final match = matchAutoEqProfile(device.name, profiles);

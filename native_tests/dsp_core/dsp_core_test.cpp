@@ -342,6 +342,27 @@ static void fresh_stages_snap_to_target_after_reset() {
     CHECK(near(buf[0], std::pow(10.0f, -12.0f / 20.0f), 1e-6f));
 }
 
+static void limiter_reduction_db_reports_gain_reduction() {
+    std::printf("limiter reduction dB: >0 while limiting, 0 when off or quiet\n");
+    RoomDSPEngine e;
+    e.init(48000, 2);
+    e.setLimiterEnabled(true);
+    std::vector<float> buf(4800 * 2);
+    auto fill = [&](float amp) {
+        for (int i = 0; i < 4800; i++)
+            buf[2 * i] = buf[2 * i + 1] = amp * std::sin(2.0f * 3.14159265f * 1000.0f * i / 48000.0f);
+    };
+    CHECK(e.limiterReductionDb() == 0.0f);
+    for (int k = 0; k < 4; k++) { fill(2.0f); e.process(buf.data(), 4800); }  // +6 dBFS
+    const float db = e.limiterReductionDb();
+    CHECK(db > 0.5f && db < 12.5f);
+    e.setLimiterEnabled(false);
+    CHECK(e.limiterReductionDb() == 0.0f);
+    e.setLimiterEnabled(true);
+    for (int k = 0; k < 20; k++) { fill(0.1f); e.process(buf.data(), 4800); }  // quiet, recovers
+    CHECK(e.limiterReductionDb() == 0.0f);
+}
+
 int main() {
     gain_stage_glides_without_clicks();
     master_volume_floor_is_silence();
@@ -352,6 +373,7 @@ int main() {
     limiter_recovers_in_341ms();
     limiter_slopes_scale_with_rate();
     chain_order();
+    limiter_reduction_db_reports_gain_reduction();
     preamp_counts_only_while_an_eq_is_on();
     speaker_preamp_is_clamped_and_headroom_unaffected();
     mono_toggle_does_not_click();

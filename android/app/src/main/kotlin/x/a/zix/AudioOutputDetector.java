@@ -4,6 +4,7 @@ import android.content.Context;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
+import android.provider.Settings;
 
 public class AudioOutputDetector {
 
@@ -41,5 +42,22 @@ public class AudioOutputDetector {
         }
 
         return "speaker";
+    }
+
+    /**
+     * Whether the "Disable absolute volume" developer option is on
+     * ({@code Settings.Global bluetooth_disable_absolute_volume == 1}).
+     * An unset option means absolute volume is in use (false). Null when the
+     * setting cannot be read, which callers treat as unknown.
+     */
+    public static Boolean isBtAbsoluteVolumeDisabled(Context context) {
+        if (context == null) return null;
+        try {
+            return Settings.Global.getInt(
+                    context.getContentResolver(),
+                    "bluetooth_disable_absolute_volume", 0) == 1;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 }

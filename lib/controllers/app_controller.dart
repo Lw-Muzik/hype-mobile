@@ -1,17 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:audio_session/audio_session.dart' show AudioSession;
 import 'package:eq_app/global/index.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 
 import '/exports/exports.dart';
 
+import '../audio/advanced/advanced_settings.dart';
 import '../audio/dsp_core.dart';
+import '../audio/dvc/dvc_settings.dart';
 import '../audio/eq/eq_layout.dart';
 import '../audio/eq/eq_presets.dart';
 import '../audio/eq/autoeq_suggest.dart';
 import '../audio/eq/eq_sync.dart';
 import '../audio/eq/equalizer_settings.dart';
+import '../audio/focus/audio_focus_settings.dart';
+import '../audio/headset/button_presses.dart';
+import '../audio/headset/headset_settings.dart';
+import '../audio/headset/output_kind.dart';
+import '../audio/output/output_profiles.dart';
 import '../data/library_repository.dart';
 import '../helpers/audio_handler.dart';
 import '../player/queue_sync.dart';
@@ -44,6 +52,13 @@ import '../services/streaming_data_guard.dart';
 import '../player/crossfade_trigger.dart';
 import '../player/fade_settings.dart';
 import '../player/playback_recovery.dart';
+import '../player/remote_command_gate.dart';
+import '../services/audio_focus_service.dart';
+import '../services/volume_feed.dart';
+import '../widgets/volume_panel_overlay.dart';
+import '../services/headset_service.dart';
+import '../services/output_profile_service.dart';
+import '../services/media_button_service.dart';
 import '../player/video/video_surface.dart';
 import '../services/video/video_registry.dart';
 import '../services/ytmusic/yt_audio_source.dart';
@@ -135,6 +150,144 @@ class AppController with ChangeNotifier implements StationSink {
 
   final HypeAudioHandler _handler;
   HypeAudioHandler get handler => _handler;
+
+  /// What headset, Bluetooth, notification and lock-screen commands pass
+  /// through on their way to the handler; null in a test.
+  final RemoteCommandGate? _remote;
+
+  /// Audio focus (calls, other apps, resume on start); null in a test.
+  final AudioFocusService? _audioFocus;
+
+  /// Headset plugs, unplugs and Bluetooth connects.
+  HeadsetService? _headset;
+
+  /// Headset and Bluetooth media keys (Android only; null elsewhere).
+  MediaButtonService? _mediaButtons;
+
+  AudioFocusSettings _audioFocusSettings = const AudioFocusSettings();
+  HeadsetSettings _headsetSettings = const HeadsetSettings();
+
+  AudioFocusSettings get audioFocusSettings => _audioFocusSettings;
+  set audioFocusSettings(AudioFocusSettings value) {
+    _audioFocusSettings = value;
+    unawaited(value.save(_prefs));
+    notifyListeners();
+  }
+
+  AdvancedSettings _advanced = const AdvancedSettings();
+  AdvancedSettings get advancedSettings => _advanced;
+  set advancedSettings(AdvancedSettings value) {
+    _advanced = value;
+    unawaited(value.save(_prefs));
+    if (value.musicFx) unawaited(refreshMusicFxAvailable());
+    notifyListeners();
+  }
+
+  /// Hype's own volume panel (Advanced tweaks → Volume panel).
+  final volumePanel = VolumePanelController();
+  PauseOnVolume? _pauseOnVolume;
+  StreamSubscription<double>? _volumePanelSub;
+  int? _audioSessionId;
+
+  /// Whether an app answers the system audio effects panel (MusicFX).
+  bool musicFxAvailable = false;
+
+  /// Whether the MusicFX button shows (Android, switched on, and answered).
+  bool get musicFxVisible =>
+      Platform.isAndroid && _advanced.musicFx && musicFxAvailable;
+
+  Future<void> refreshMusicFxAvailable() async {
+    if (!Platform.isAndroid) return;
+    final ok = await Channel.hasMusicFx();
+    if (ok == musicFxAvailable) return;
+    musicFxAvailable = ok;
+    notifyListeners();
+  }
+
+  Future<bool> openMusicFx() => Channel.openMusicFx(_audioSessionId ?? 0);
+
+  /// Brings the current room preset back to Hype's factory values; a sound the
+  /// listener shaped themselves ("Custom") is kept.
+  void restoreReverbPresets() {
+    final p = reverbPresetToRestore(_activeRoomPresetName);
+    if (p != null) applyRoomPreset(p);
+  }
+
+  /// The system volume feed: pause/resume on volume (both platforms) and
+  /// Hype's volume panel (Android). Absent in tests and on desktop hosts.
+  void _bindVolumeFeed() {
+    if (!(Platform.isAndroid || Platform.isIOS)) return;
+    final feed = VolumeFeed.stream.asBroadcastStream();
+    _pauseOnVolume?.dispose();
+    _pauseOnVolume = PauseOnVolume(
+      volume: feed,
+      playingChanges: _handler.playingStream,
+      isPlaying: () => _handler.playing,
+      enabled: () => _advanced.pauseResumeOnVolume,
+      visible: () =>
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed ||
+          _handler.playbackState.value.processingState !=
+              AudioProcessingState.idle,
+      pause: () => _handler.pause(),
+      play: () => _handler.play(),
+    )..start();
+    _volumePanelSub?.cancel();
+    var first = true;
+    _volumePanelSub = feed.listen((v) {
+      // The first value is the starting level, not a change.
+      if (first) {
+        first = false;
+        return;
+      }
+      if (Platform.isAndroid &&
+          _advanced.volumePanel &&
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        volumePanel.show(v);
+      }
+    });
+    _audioFocus?.configureForceAudio(
+      enabled: () => Platform.isAndroid && _advanced.forceAudioOnFocusChange,
+      position: () => _handler.player.position,
+      seekInPlace: () => _handler.player.seek(_handler.player.position),
+    );
+  }
+
+  HeadsetSettings get headsetSettings => _headsetSettings;
+  set headsetSettings(HeadsetSettings value) {
+    _headsetSettings = value;
+    _remote?.settings = value;
+    unawaited(_mediaButtons?.pushPolicy());
+    unawaited(value.save(_prefs));
+    notifyListeners();
+  }
+
+  /// Whether another Hype Connect device is the active player. Set by
+  /// [HypeConnect.attach].
+  bool Function()? connectYielded;
+
+  /// Whether Hype Connect is on and has not yet heard from the hub which device
+  /// is the active player. Set by [HypeConnect.attach].
+  bool Function()? connectAnswerPending;
+
+  /// [connectAnswerPending], false when Hype Connect is not in use.
+  bool get connectAnswerIsPending => connectAnswerPending?.call() ?? false;
+
+  /// Whether Hype may start music on its own (resume on start, reopen, wired,
+  /// Bluetooth, focus gain): there is a queue to resume, the app is a music
+  /// player, and no other Connect device is the one that should be playing.
+  ///
+  /// With [requireUiSeen] (the default) it is also false in a process whose UI
+  /// has never been in the foreground (Hype Connect's background service,
+  /// started by a reboot or a car's Bluetooth). The resume after a call or a
+  /// loss of focus passes false: its hold exists only because the listener
+  /// started the music there.
+  bool canResumePlayback({bool requireUiSeen = true}) => mayResumeAutomatically(
+    eqMode: isEqMode,
+    hasQueue: songs.isNotEmpty,
+    otherDeviceActive: connectYielded?.call() ?? false,
+    uiSeen: _audioFocus?.uiHasBeenForeground ?? true,
+    requireUiSeen: requireUiSeen,
+  );
   int _selectedRoomPreset = -1;
 
   // MBC compressor settings (routed to C++ pipeline)
@@ -148,6 +301,21 @@ class AppController with ChangeNotifier implements StationSink {
   FadeSettings _fades = const FadeSettings();
   ReplayGainSettings _replayGain = ReplayGainSettings();
   bool _dvcEnabled = false;
+  DvcSettings _dvcSettings = const DvcSettings();
+
+  // What DVC knows about the route: on Bluetooth, and whether the headset's
+  // absolute volume is off (null = unknown). See [dvcAllowedOnRoute].
+  bool _routeBluetooth = false;
+  bool? _btAbsoluteVolumeOff;
+
+  // DVC does not start until the route has been read once, so a start on
+  // Bluetooth with absolute volume never raises the system volume.
+  bool _routeProbed = false;
+  // The output profile's "No DVC", as last applied by [_refreshDvcRoute], so
+  // a change of it runs the same safe steps as a route change.
+  bool _perOutputNoDvcApplied = false;
+  StreamSubscription<dynamic>? _dvcRouteSub;
+  Future<void> _dvcRouteQueue = Future<void>.value();
   double _dvcGain = -30.0; // dB, range -30 to 0 (0% to 100%)
   bool _dvcFineSteps = false; // false=1.5dB (5%), true=0.3dB (1%)
 
@@ -176,6 +344,20 @@ class AppController with ChangeNotifier implements StationSink {
   bool _graphicEqEnabled = false;
   String _lastOutputDevice = 'speaker';
   bool _linkAllDevices = true;
+
+  // Per-output profiles (EQ preset, bypass, focus, DVC and headroom flags per
+  // output kind and named device). See `lib/audio/output/output_profiles.dart`.
+  OutputProfiles _outputProfiles = const OutputProfiles();
+  OutputProfile _outputEffective = const OutputProfile();
+  OutputProfileService? _outputService;
+  final List<StreamSubscription<dynamic>> _outputRouteSubs = [];
+  EqCurve? _outputAppliedCurve;
+  String _outputAppliedName = '';
+  static const _kOutputLastRoute = 'outputLastRoute';
+
+  /// Told when the active output's No DVC flag changes, so the DVC gate can
+  /// take the route into account at once.
+  VoidCallback? onPerOutputNoDvcChanged;
 
   // Parametric EQ state
   List<ParametricPoint> _parametricPoints = [];
@@ -233,6 +415,7 @@ class AppController with ChangeNotifier implements StationSink {
     systemWide: () => systemWideActive,
     activeProfile: () => _activeSpeakerProfile,
     apply: applySpeakerProfile,
+    onApplied: _bindAutoEqToDevice,
     profiles: () async {
       if (_speakerProfileService.profiles.isEmpty) {
         await _speakerProfileService.load();
@@ -411,12 +594,49 @@ class AppController with ChangeNotifier implements StationSink {
   /// Brings back every factory preset at its factory curve.
   void restoreEqPresets() => _setEq(_eq.restoreFactory());
 
+  /// Android headset and Bluetooth keys: the platform forwards them raw and
+  /// [MediaButtonService] recognises the presses and runs the commands through
+  /// the remote gate. Beep volume follows DVC, which holds the system volume
+  /// at maximum, so the beep stays 20 dB under the music.
+  void _startMediaButtons() {
+    final remote = _remote;
+    if (remote == null || !Platform.isAndroid) return;
+    _mediaButtons = MediaButtonService(
+      events: Channel.mediaButtonEvents,
+      execute: remote.execute,
+      settings: () => _headsetSettings,
+      playing: () => _handler.playbackState.value.playing,
+      playingStream: _handler.playbackState
+          .map((s) => s.playing)
+          .distinct(),
+      feedback: (f, toneVolume) => Channel.buttonFeedback(
+        beeps: f.beeps,
+        toneVolume: toneVolume,
+        vibrate: f.vibrate,
+      ),
+      toneVolume: () =>
+          beepToneVolume(dvcInEffect: dvcRunning, dvcGainDb: _dvcGain),
+      pushPolicy: Channel.setButtonPolicy,
+    )..start();
+  }
+
   /// Forgets the devices the user said "Don't ask" for.
   Future<void> resetAutoEqSuggestions() => AutoEqDismissals.reset(_prefs);
 
   @override
   void dispose() {
+    _audioFocus?.dispose();
+    _pauseOnVolume?.dispose();
+    _volumePanelSub?.cancel();
+    volumePanel.dispose();
+    _headset?.dispose();
+    _outputService?.dispose();
+    for (final sub in _outputRouteSubs) {
+      unawaited(sub.cancel());
+    }
+    _mediaButtons?.dispose();
     _globalEqStoppedSub?.cancel();
+    _dvcRouteSub?.cancel();
     unawaited(_autoEq.dispose());
     super.dispose();
   }
@@ -482,7 +702,7 @@ class AppController with ChangeNotifier implements StationSink {
   set toneEnabled(bool value) {
     _toneEnabled = value;
     _prefs.setBool("toneEnabled", value);
-    Channel.dspSetToneEnabled(value);
+    Channel.dspSetToneEnabled(value && !_outputEffective.noEqTone);
     notifyListeners();
   }
 
@@ -537,7 +757,13 @@ class AppController with ChangeNotifier implements StationSink {
   /// system-wide mode DVC is suspended, so the headroom is the user's again
   /// (the platform equalizer applies it to everything).
   void _pushHeadroom() => Channel.dspSetHeadroomDb(
-    headroomFor(dvcActive: dvcRunning, headroomDb: _dspCore.headroomDb),
+    headroomFor(
+      dvcActive: dvcRunning,
+      // The active output's "No headroom gain reduction" skips it.
+      headroomDb: _outputEffective.noHeadroomReduction
+          ? 0.0
+          : _dspCore.headroomDb,
+    ),
   );
 
   void _pushTempo() =>
@@ -605,6 +831,7 @@ class AppController with ChangeNotifier implements StationSink {
   set graphicEqEnabled(bool value) {
     _prefs.setBool("graphicEqEnabled", value);
     _graphicEqEnabled = value;
+    Channel.enableEq(value && !_outputEffective.noEqTone);
     notifyListeners();
   }
 
@@ -678,41 +905,239 @@ class AppController with ChangeNotifier implements StationSink {
     );
   }
 
+  /// Notes the output now in use (the legacy `lastOutputDevice`) and has the
+  /// output profile service look at the route: the per-device curve of the
+  /// old "link all devices" switch is a kind's EQ preset now, applied there.
   Future<void> detectAndApplyDevicePreset() async {
-    final device = await Channel.getAudioOutputType();
-    if (device != _lastOutputDevice && !_linkAllDevices) {
-      // Keep the current curve for the old device, as a hidden preset.
-      final oldKey = '_device_$_lastOutputDevice';
-      final saved = EqPreset(
-        name: oldKey,
-        curve: _eq.live,
-        preampDb: _dspCore.preampDb,
-        parametric: [for (final p in _parametricPoints) p.copyWith()],
-        deviceType: _lastOutputDevice,
+    _lastOutputDevice = await Channel.getAudioOutputType();
+    _prefs.setString("lastOutputDevice", _lastOutputDevice);
+    await _outputService?.refresh();
+    notifyListeners();
+  }
+
+  // -- Per-output profiles ---------------------------------------------------
+
+  OutputProfiles get outputProfiles => _outputProfiles;
+
+  /// The output audio is going to now; null before the first reading.
+  ActiveRoute? get activeOutputRoute => _outputService?.route;
+
+  /// The profile of the active output.
+  OutputProfile get activeOutputProfile => _outputEffective;
+
+  /// The EQ presets an output can be given.
+  List<String> get outputPresetNames => _eq.visibleNames;
+
+  /// The active output's flags; read at each audio focus event.
+  bool get outputNoDuck => _outputEffective.noDuck;
+  bool get outputIgnoreFocus => _outputEffective.ignoreFocus;
+
+  /// True on Android while the active output has No DVC; the DVC gate reads
+  /// it (DVC stays off on that route, the stored setting is untouched).
+  bool get perOutputNoDvc => Platform.isAndroid && _outputEffective.noDvc;
+
+  void setOutputKindProfile(AudioOutputKind kind, OutputProfile p) {
+    _outputProfiles = _outputProfiles.withKind(kind, p);
+    _commitOutputProfiles();
+  }
+
+  /// [p] null: the device follows its kind again.
+  void setOutputDeviceProfile(
+    String name,
+    AudioOutputKind kind,
+    OutputProfile? p,
+  ) {
+    _outputProfiles = _outputProfiles.withDevice(name, kind, p);
+    _commitOutputProfiles();
+  }
+
+  void forgetOutputDevice(String name) {
+    _outputProfiles = _outputProfiles.forgetDevice(name);
+    _commitOutputProfiles();
+  }
+
+  void _commitOutputProfiles() {
+    unawaited(_outputProfiles.save(_prefs));
+    notifyListeners();
+    unawaited(_outputService?.refresh());
+  }
+
+  /// An AutoEq profile applied for a device belongs to that device from now
+  /// on (it starts with the kind's settings when the device had none).
+  void _bindAutoEqToDevice(String profileName, OutputDeviceEvent device) {
+    final own = _outputProfiles.devices[normaliseDeviceName(device.name)]
+        ?.profile;
+    final base =
+        own ?? resolveProfile(_outputProfiles, kind: device.kind);
+    setOutputDeviceProfile(
+      device.name,
+      device.kind,
+      base.copyWith(autoEq: profileName),
+    );
+  }
+
+  void _loadOutputProfiles() {
+    final had = _prefs.containsKey(OutputProfiles.prefKey);
+    _outputProfiles = OutputProfiles.load(_prefs);
+    if (!had) {
+      // First run with profiles: the curves the old per-device switch kept are
+      // the matching kinds' EQ presets.
+      _outputProfiles = migrateLegacyDevicePresets(
+        _outputProfiles,
+        [for (final p in _eq.presets) p.name],
       );
-      final kept = EqState(
+      unawaited(_outputProfiles.save(_prefs));
+    }
+  }
+
+  void _startOutputProfiles() {
+    final c = StreamController<void>.broadcast();
+    AudioSession.instance
+        .then((s) {
+          void ping(Object? _) => c.add(null);
+          _outputRouteSubs
+            ..add(s.devicesChangedEventStream.listen(ping, onError: (_) {}))
+            ..add(s.becomingNoisyEventStream.listen(ping, onError: (_) {}));
+        })
+        .catchError((Object e) => debugPrint('Output route events: $e'));
+    _outputRouteSubs.add(c.stream.listen(null)); // keeps [c] alive to close
+    // An output's "No DVC" goes through the DVC route check (safe steps).
+    onPerOutputNoDvcChanged ??= () => unawaited(refreshDvcRoute());
+    final service = OutputProfileService(
+      profiles: () => _outputProfiles,
+      readRoute: _readOutputRoute,
+      routeEvents: c.stream,
+      applyEqPreset: _applyOutputEqPreset,
+      curveEdited: _outputCurveEdited,
+      applySpeakerProfile: applySpeakerProfile,
+      clearSpeakerProfile: clearSpeakerProfile,
+      activeSpeakerProfile: () => _activeSpeakerProfile,
+      onEffective: _onOutputEffective,
+      onRoute: _onOutputRoute,
+      beforeRouteChange: _keepLegacyDeviceCurve,
+      lastRouteKey: _prefs.getString(_kOutputLastRoute),
+    );
+    _outputService = service;
+    unawaited(
+      service.start().catchError(
+        (Object e) => debugPrint('Output profiles start failed: $e'),
+      ),
+    );
+  }
+
+  Future<ActiveRoute> _readOutputRoute() async {
+    final type = await Channel.getAudioOutputType();
+    var outs = <({String name, AudioOutputKind kind})>[];
+    try {
+      final devices = await (await AudioSession.instance).getDevices(
+        includeInputs: false,
+      );
+      outs = [
+        for (final d in devices)
+          if (d.isOutput)
+            // ignore: experimental_member_use
+            (name: d.name, kind: outputKindOf(d.type)),
+      ];
+    } catch (e) {
+      debugPrint('Listing the outputs failed: $e');
+    }
+    return activeRouteOf(type, outs);
+  }
+
+  /// Applies an output's EQ preset. A hidden `_device_` curve (kept by the old
+  /// per-device switch) goes in unnamed and unsaved, as it always did, so Auto
+  /// save cannot write it into whichever preset was selected.
+  void _applyOutputEqPreset(String name) {
+    final p = _eq.preset(name);
+    if (p == null) return;
+    if (name.startsWith('_device_')) {
+      _setEq(_eq.withDeviceCurve(p.curve), notify: false);
+      final points = p.parametric;
+      if (points != null) _restoreParametric(points);
+      dspCore = _dspCore.copyWith(preampDb: p.preampDb ?? 0.0);
+      _outputAppliedName = '';
+    } else {
+      applyEqPreset(name);
+      _outputAppliedName = name;
+    }
+    _outputAppliedCurve = _eq.live;
+    notifyListeners();
+  }
+
+  /// The listener changed the curve (or chose another preset) since the
+  /// output's preset was applied.
+  bool _outputCurveEdited() {
+    final applied = _outputAppliedCurve;
+    if (applied == null) return false;
+    return _eq.selected != _outputAppliedName || !_eq.live.sameAs(applied);
+  }
+
+  /// With "link all devices" off, the curve in use is kept for the output
+  /// being left, as a hidden preset that becomes its EQ preset (when it has
+  /// none, or already uses one).
+  void _keepLegacyDeviceCurve(ActiveRoute? prev, ActiveRoute next) {
+    if (prev == null || _linkAllDevices) return;
+    final key = '_device_${prev.legacyType}';
+    final current = resolveProfile(
+      _outputProfiles,
+      kind: prev.kind,
+      deviceName: prev.deviceName,
+    ).eqPreset;
+    if (current != null && current != key) return;
+    final saved = EqPreset(
+      name: key,
+      curve: _eq.live,
+      preampDb: _dspCore.preampDb,
+      parametric: [for (final p in _parametricPoints) p.copyWith()],
+      deviceType: prev.legacyType,
+    );
+    _setEq(
+      EqState(
         presets: [
           for (final p in _eq.presets)
-            if (p.name != oldKey) p,
+            if (p.name != key) p,
           saved,
         ],
         selected: _eq.selected,
         dirty: _eq.dirty,
         live: _eq.live,
+      ),
+      notify: false,
+    );
+    if (current == null) {
+      final base = _outputProfiles.kinds[prev.kind] ?? const OutputProfile();
+      _outputProfiles = _outputProfiles.withKind(
+        prev.kind,
+        base.copyWith(eqPreset: key),
       );
-      _setEq(kept, notify: false);
+      unawaited(_outputProfiles.save(_prefs));
+    }
+  }
 
-      // Load the curve for the new device if there is one.
-      final devicePreset = _eq.preset('_device_$device');
-      if (devicePreset != null) {
-        _setEq(_eq.withDeviceCurve(devicePreset.curve), notify: false);
-        final points = devicePreset.parametric;
-        if (points != null) _restoreParametric(points);
-        dspCore = _dspCore.copyWith(preampDb: devicePreset.preampDb ?? 0.0);
+  void _onOutputRoute(ActiveRoute route) {
+    unawaited(_prefs.setString(_kOutputLastRoute, route.key));
+    final name = route.deviceName;
+    if (name != null) {
+      final next = _outputProfiles.rememberDevice(name, route.kind);
+      if (!identical(next, _outputProfiles)) {
+        _outputProfiles = next;
+        unawaited(_outputProfiles.save(_prefs));
       }
     }
-    _lastOutputDevice = device;
-    _prefs.setString("lastOutputDevice", device);
+  }
+
+  void _onOutputEffective(OutputProfile profile, ActiveRoute route) {
+    final old = _outputEffective;
+    _outputEffective = profile;
+    if (old.noEqTone != profile.noEqTone) {
+      // The engine's own enable paths ramp the change.
+      Channel.enableEq(_graphicEqEnabled && !profile.noEqTone);
+      Channel.dspSetToneEnabled(_toneEnabled && !profile.noEqTone);
+    }
+    if (old.noHeadroomReduction != profile.noHeadroomReduction) {
+      _pushHeadroom();
+    }
+    if (old.noDvc != profile.noDvc) onPerOutputNoDvcChanged?.call();
     notifyListeners();
   }
 
@@ -744,7 +1169,80 @@ class AppController with ChangeNotifier implements StationSink {
         isAndroid: Platform.isAndroid,
         dvcEnabled: _dvcEnabled,
         systemWide: systemWideActive,
-      );
+      ) &&
+      _dvcRouteAllowed;
+
+  /// Whether the current route lets DVC run (not on Bluetooth with absolute
+  /// volume while "No DVC for Bluetooth absolute volume" is on).
+  bool get _dvcRouteAllowed =>
+      !Platform.isAndroid ||
+      (_routeProbed &&
+          !_perOutputNoDvcApplied &&
+          dvcAllowedOnRoute(
+            isAndroid: true,
+            dvcEnabled: true,
+            onBluetooth: _routeBluetooth,
+            btAbsoluteVolumeOff: _btAbsoluteVolumeOff,
+            noDvcForBtAbsolute: _dvcSettings.noDvcForBluetoothAbsoluteVolume,
+            systemWide: false,
+          ));
+
+  DvcSettings get dvcSettings => _dvcSettings;
+  set dvcSettings(DvcSettings value) {
+    _dvcSettings = value;
+    unawaited(value.save(_prefs));
+    unawaited(refreshDvcRoute());
+    notifyListeners();
+  }
+
+  /// Reads the output route and the Bluetooth absolute-volume flag, and, if
+  /// that changes whether DVC may run, runs the usual safe steps (disabling
+  /// restores the system volume first) without touching [dvcEnabled].
+  Future<void> refreshDvcRoute() {
+    if (!Platform.isAndroid) return Future<void>.value();
+    return _dvcRouteQueue = _dvcRouteQueue.then((_) => _refreshDvcRoute());
+  }
+
+  Future<void> _refreshDvcRoute() async {
+    try {
+      final type = await Channel.getAudioOutputType();
+      final off = await Channel.isBtAbsoluteVolumeDisabled();
+      final before = dvcRunning;
+      _routeBluetooth = type == 'bluetooth';
+      _btAbsoluteVolumeOff = off;
+      _routeProbed = true;
+      _perOutputNoDvcApplied = perOutputNoDvc;
+      final after = dvcRunning;
+      if (before == after) return;
+      final gen = ++_dvcToggleGen;
+      unawaited(_runDvcSteps(
+        dvcToggleSteps(enable: after),
+        gen,
+        stillWanted: () => dvcRunning == after,
+      ));
+      _pushHeadroom();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('DVC route check failed: $e');
+    }
+  }
+
+  /// Route changes (Bluetooth connecting or leaving) re-evaluate DVC.
+  void _bindDvcRoute() {
+    if (!Platform.isAndroid) return;
+    unawaited(refreshDvcRoute());
+    unawaited(() async {
+      try {
+        final session = await AudioSession.instance;
+        _dvcRouteSub = session.devicesChangedEventStream.listen(
+          (_) => unawaited(refreshDvcRoute()),
+          onError: (Object e) => debugPrint('DVC route events: $e'),
+        );
+      } catch (e) {
+        debugPrint('DVC route events unavailable: $e');
+      }
+    }());
+  }
 
   /// The reason shown beside controls system-wide mode disables; null when
   /// they are usable.
@@ -1049,11 +1547,16 @@ class AppController with ChangeNotifier implements StationSink {
     final gen = ++_dvcToggleGen;
     // Suspended while the equalizer applies to all apps: only the setting
     // changes, and the steps run when system-wide mode ends.
-    if (!systemWideActive) {
+    // A route DVC may not run on (Bluetooth absolute volume) is left alone
+    // too: it starts when the route allows.
+    if (!systemWideActive && (!value || _dvcRouteAllowed)) {
       unawaited(_runDvcSteps(
         dvcToggleSteps(enable: value),
         gen,
-        stillWanted: () => _dvcEnabled == value && !systemWideActive,
+        stillWanted: () =>
+            _dvcEnabled == value &&
+            !systemWideActive &&
+            (!value || _dvcRouteAllowed),
       ));
     }
     _pushHeadroom();
@@ -1114,6 +1617,11 @@ class AppController with ChangeNotifier implements StationSink {
   set dvcFineSteps(bool value) {
     _prefs.setBool("dvcFineSteps", value);
     _dvcFineSteps = value;
+    // The old switch is now the Volume levels setting: fine 100, coarse 30.
+    _advanced = _advanced.copyWith(
+      volumeLevels: value ? VolumeLevels.l100 : VolumeLevels.l30,
+    );
+    unawaited(_advanced.save(_prefs));
     notifyListeners();
   }
 
@@ -1125,7 +1633,10 @@ class AppController with ChangeNotifier implements StationSink {
     // so the system volume is back before the platform equalizer starts;
     // going off, the equalizer stops first.
     final dvcSteps = Platform.isAndroid
-        ? systemWideDvcSteps(systemWideOn: value, dvcEnabled: _dvcEnabled)
+        ? systemWideDvcSteps(
+            systemWideOn: value,
+            dvcEnabled: _dvcEnabled && (value || _dvcRouteAllowed),
+          )
         : const <DvcStep>[];
     if (value) _globalEqRequestedAt = DateTime.now();
     _dvcResumePending = false;
@@ -1173,17 +1684,46 @@ class AppController with ChangeNotifier implements StationSink {
   /// Runs the DVC steps that were held back when system-wide mode ended in the
   /// background. Called when Hype plays and when it comes to the foreground.
   void resumeDvcIfPending() {
-    if (!_dvcResumePending) return;
+    if (!_dvcResumePending) {
+      unawaited(_ensureDvcNative());
+      return;
+    }
     _dvcResumePending = false;
-    if (systemWideActive || !_dvcEnabled || !Platform.isAndroid) return;
+    if (systemWideActive ||
+        !_dvcEnabled ||
+        !Platform.isAndroid ||
+        !_dvcRouteAllowed) {
+      return;
+    }
     final gen = ++_dvcToggleGen;
     unawaited(_runDvcSteps(
       dvcToggleSteps(enable: true),
       gen,
-      stillWanted: () => _dvcEnabled && !systemWideActive,
+      stillWanted: () => _dvcEnabled && !systemWideActive && _dvcRouteAllowed,
     ));
     _pushHeadroom();
     notifyListeners();
+  }
+
+  /// After a headless start (Hype Connect after a reboot) the DVC start-up ran
+  /// with no activity to answer, so the native side never came up. When the
+  /// activity attaches (first resume), or Hype plays, bring it up if DVC should
+  /// be running and is not.
+  Future<void> _ensureDvcNative() async {
+    if (!Platform.isAndroid || !dvcRunning) return;
+    final gen = _dvcToggleGen;
+    try {
+      if (await Channel.isDvcActive()) return;
+    } catch (_) {
+      return;
+    }
+    if (gen != _dvcToggleGen || !dvcRunning) return;
+    unawaited(_runDvcSteps(
+      dvcToggleSteps(enable: true),
+      gen,
+      stillWanted: () => dvcRunning,
+    ));
+    _pushHeadroom();
   }
 
   Future<void> refreshPlayingApps() async {
@@ -1305,7 +1845,16 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
-  AppController(this._prefs, this._handler) {
+  AppController(
+    this._prefs,
+    this._handler, {
+    RemoteCommandGate? remote,
+    AudioFocusService? audioFocus,
+    // The fields are private, so a named parameter cannot initialise them.
+    // ignore: prefer_initializing_formals
+  }) : _remote = remote,
+       // ignore: prefer_initializing_formals
+       _audioFocus = audioFocus {
     _loadSettings();
     _loadPlayCounts();
 
@@ -1324,6 +1873,14 @@ class AppController with ChangeNotifier implements StationSink {
     // swipe-kill loses up to its whole interval. The store debounces, so this
     // costs one write.
     _handler.onPaused = _saveSession;
+    // What reaches the app from outside is judged by the gate; it asks for the
+    // modes the app keeps.
+    final remote = _remote;
+    if (remote != null) {
+      remote.settings = _headsetSettings;
+      remote.onRemoteRepeat = (mode) => unawaited(setLoopMode(mode));
+      remote.onRemoteShuffle = (on) => unawaited(setShuffled(on));
+    }
     unawaited(_restoreSession());
     _startSessionTicker();
 
@@ -1341,10 +1898,9 @@ class AppController with ChangeNotifier implements StationSink {
     _handler.onPlayerSwapped = _rebindPlayerStreams;
 
     // Apply DVC state on startup (not while the equalizer applies to all apps)
-    if (dvcRunning) {
-      _pushMasterVolume(); // before DVC raises the system stream
-      Channel.enableDvc();
-    }
+    // DVC starts once the route is known ([_bindDvcRoute] reads it first and
+    // runs the enable steps, master volume before the system raise).
+    _bindDvcRoute();
 
     // Global EQ: check availability and restore state
     _initGlobalEq();
@@ -1353,6 +1909,27 @@ class AppController with ChangeNotifier implements StationSink {
     unawaited(_autoEq.start().catchError(
       (Object e) => debugPrint('AutoEq start failed: $e'),
     ));
+
+    // After the handler callbacks above: the focus service answers to the
+    // handler (its play asks it for focus) and the headset service to the
+    // gate's settings.
+    _audioFocus?.start();
+    _bindVolumeFeed();
+    _headset = HeadsetService.forPlatform(
+      target: _handler,
+      onBluetoothConnected: (nowMs) => _remote?.bluetoothConnectedAtMs = nowMs,
+      settings: () => _headsetSettings,
+      canResume: () => canResumePlayback(),
+      waitingForFocus: () => _audioFocus?.waitingForFocus ?? false,
+      onCancelHold: () => _audioFocus?.cancelHold(),
+    );
+    unawaited(
+      _headset!.start().catchError(
+        (Object e) => debugPrint('Headset service start failed: $e'),
+      ),
+    );
+    _startOutputProfiles();
+    _startMediaButtons();
 
     _bindDvcVolumeButtons();
     _bindGainRecovery();
@@ -1392,6 +1969,7 @@ class AppController with ChangeNotifier implements StationSink {
       sessionId,
     ) {
       if (sessionId != null) {
+        _audioSessionId = sessionId;
         Channel.setSessionId(sessionId);
       }
     });
@@ -1404,7 +1982,7 @@ class AppController with ChangeNotifier implements StationSink {
     _dvcVolumeSub?.cancel();
     _dvcVolumeSub = Channel.dvcVolumeButtonStream.listen((direction) {
       if (!dvcRunning) return;
-      final step = _dvcFineSteps ? 0.3 : 1.5;
+      final step = _advanced.volumeLevels.dvcStepDb;
       if (direction == "up") {
         dvcGain = (_dvcGain + step).clamp(-30.0, 0.0);
       } else if (direction == "down") {
@@ -2286,6 +2864,7 @@ class AppController with ChangeNotifier implements StationSink {
     // `limiterEnabled`): a fresh install must still read as fresh here.
     _eqSettings = EqualizerSettings.load(_prefs);
     _eq = EqState.load(_prefs, centres: bandCentres(_eqSettings));
+    _loadOutputProfiles();
     // Pin what the loads decided so it survives later launches. Without it a
     // fresh install would read as existing from its second launch
     // (`detectAndApplyDevicePreset` writes the legacy `lastOutputDevice` on
@@ -2299,6 +2878,12 @@ class AppController with ChangeNotifier implements StationSink {
     _selectedPreset = _prefs.getInt("selectedPreset") ?? 0;
     _isFancy = _prefs.getBool("fancyMode") ?? false;
     _isShuffled = _prefs.getBool("isShuffled") ?? false;
+    _handler.shuffleEnabled = _isShuffled;
+    _audioFocusSettings = AudioFocusSettings.load(_prefs);
+    _headsetSettings = HeadsetSettings.load(_prefs);
+    _advanced = AdvancedSettings.load(_prefs);
+    // Pin the migrated volume levels so the legacy switch is read only once.
+    if (!_prefs.containsKey('advVolumeLevels')) unawaited(_advanced.save(_prefs));
     // Repeat is restored the same way shuffle always has been. Applied to the
     // players rather than merely remembered, or the button would show a mode
     // nothing is obeying. Stored as the enum index, clamped in case a future
@@ -2329,6 +2914,7 @@ class AppController with ChangeNotifier implements StationSink {
     _handler.fades = _fades;
     _replayGain = ReplayGainSettings.load(_prefs);
     _dvcEnabled = _prefs.getBool("dvcEnabled") ?? false;
+    _dvcSettings = DvcSettings.load(_prefs);
     _dvcGain = _prefs.getDouble("dvcGain") ?? -30.0;
     _dvcFineSteps = _prefs.getBool("dvcFineSteps") ?? false;
     _globalEqEnabled = _prefs.getBool("globalEqEnabled") ?? false;
@@ -3004,7 +3590,7 @@ class AppController with ChangeNotifier implements StationSink {
       applySpeakerProfile(_activeSpeakerProfile!);
     }
     // EQ
-    Channel.enableEq(_graphicEqEnabled);
+    Channel.enableEq(_graphicEqEnabled && !_outputEffective.noEqTone);
     Channel.setPreamp(_dspCore.preampDb);
     // Layout and gains in one call, even when it is the legacy grid, so both
     // platforms run the same Q-from-spacing layout from the first track.
@@ -3031,7 +3617,7 @@ class AppController with ChangeNotifier implements StationSink {
     Channel.dspSetSurround3dParams(_surround3dIntensity, _surround3dSubwoofer);
     _pushSurroundSpeakers();
     // Tone controls
-    Channel.dspSetToneEnabled(_toneEnabled);
+    Channel.dspSetToneEnabled(_toneEnabled && !_outputEffective.noEqTone);
     Channel.dspSetBassGain(_bassGain);
     Channel.dspSetBassFreq(_eqSettings.bassFreq);
     Channel.dspSetBassQ(_eqSettings.bassQ);
@@ -3235,6 +3821,16 @@ class AppController with ChangeNotifier implements StationSink {
   /// Deliberately silent about playback: a restored session is paused. An app
   /// that starts making noise because it was opened is a bad guest.
   Future<void> _restoreSession() async {
+    try {
+      await _readSavedSession();
+    } finally {
+      // Every way out, including "nothing saved": a resume on start that came
+      // first has been waiting for this to know whether there is a queue.
+      _audioFocus?.sessionRestored();
+    }
+  }
+
+  Future<void> _readSavedSession() async {
     final session = await PlaybackSessionStore.instance.load();
     if (session == null) return;
     // The user was faster than the disk and has already started something.
@@ -3243,6 +3839,7 @@ class AppController with ChangeNotifier implements StationSink {
 
     _songs = List<SongModel>.of(session.songs);
     _isShuffled = session.shuffled;
+    _handler.shuffleEnabled = _isShuffled;
     _shuffledSongs = session.effectiveQueue;
     _songId = session.index.clamp(0, songs.length - 1);
     if (songs.isNotEmpty) _artWorkId = songs[_songId].id;
@@ -3537,6 +4134,7 @@ class AppController with ChangeNotifier implements StationSink {
     // loading tracks.
     final wasQueue = _gaplessQueue;
     _isShuffled = value;
+    _handler.shuffleEnabled = value;
     unawaited(_prefs.setBool('isShuffled', value));
 
     _songId = QueueOrder.indexOf(songs, playing);

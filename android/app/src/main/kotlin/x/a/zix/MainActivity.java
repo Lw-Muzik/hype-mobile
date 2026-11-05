@@ -255,7 +255,6 @@ public class MainActivity extends AudioServiceFragmentActivity {
         super.onCreate(savedInstance);
         // Tapped from the Hype Connect notification? (A re-launch arrives in onNewIntent.)
         ConnectChannel.handleLaunchIntent(getIntent());
-        new HeadphoneService();
         // Initialize AudioProcessor singletons so just_audio can discover them
         RoomEffectsProcessor.getInstance();
         VisualizerTapProcessor.getInstance();
@@ -351,6 +350,17 @@ public class MainActivity extends AudioServiceFragmentActivity {
         );
     }
 
+    /** The system audio effects panel for Hype's session, or null when nothing answers. */
+    private Intent musicFxIntent(int sessionId) {
+        Intent fx = new Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL);
+        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_PACKAGE_NAME, getPackageName());
+        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_AUDIO_SESSION, sessionId);
+        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_CONTENT_TYPE,
+                android.media.audiofx.AudioEffect.CONTENT_TYPE_MUSIC);
+        if (fx.resolveActivity(getPackageManager()) == null) return null;
+        return fx;
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         // Phone as a remote: the keys step the playing device's volume, not
@@ -388,10 +398,18 @@ public class MainActivity extends AudioServiceFragmentActivity {
         super.configureFlutterEngine(flutterEngine);
 
         SystemVolumeObserver.start(getApplicationContext());
+        // The music volume as 0...1 for Dart (pause/resume on volume, panel).
+        SystemVolumeObserver.setupEventChannel(new EventChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(), "eq_app/system_volume"));
 
         // Hype Connect's background service channel. Also attached by
         // ConnectService itself when it creates this engine with no activity.
         ConnectChannel.attach(flutterEngine, this);
+
+        // Headset / Bluetooth media keys: the raw-key EventChannel, the policy
+        // and feedback methods, and the AudioService interceptor. Also
+        // attached through ConnectChannel for the engine with no activity.
+        MediaButtonChannel.attach(flutterEngine, this);
 
         // DVC init & EventChannel
         DvcController.init(this);
@@ -718,6 +736,24 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         case "getSystemMaxVolume":
                             result.success(DvcController.getMaxVolume());
                             break;
+                        case "hasMusicFx":
+                            result.success(musicFxIntent(0) != null);
+                            break;
+                        case "openMusicFx": {
+                            Integer fxSession = call.argument("sessionId");
+                            Intent fx = musicFxIntent(fxSession == null ? 0 : fxSession);
+                            boolean opened = false;
+                            if (fx != null) {
+                                try {
+                                    startActivity(fx);
+                                    opened = true;
+                                } catch (RuntimeException e) {
+                                    Log.w("MainActivity", "MusicFX did not open", e);
+                                }
+                            }
+                            result.success(opened);
+                            break;
+                        }
 
                         // ==================== MBC Compressor Settings ====================
                         case "setDspNoiseThreshold": {
@@ -1341,6 +1377,10 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             String outputType = AudioOutputDetector.getAudioOutputType(getApplicationContext());
                             result.success(outputType);
                             break;
+                        case "isBtAbsoluteVolumeDisabled":
+                            // true/false, or null when the setting is unreadable
+                            result.success(AudioOutputDetector.isBtAbsoluteVolumeDisabled(getApplicationContext()));
+                            break;
 
                         // ==================== Audio Metadata Extraction ====================
                         case "extractAudioMetadata": {
@@ -1733,34 +1773,6 @@ public class MainActivity extends AudioServiceFragmentActivity {
 
     protected void showMessage(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-    }
-
-    private class HeadphoneService extends BroadcastReceiver {
-        private static final long DOUBLE_CLICK_TIME_THRESHOLD = 500; // Time threshold for a double click in
-                                                                     // milliseconds
-        private long lastClickTime = 0;
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent.getAction() != null && intent.getAction().equals(AudioManager.ACTION_HEADSET_PLUG)) {
-                long currentTime = System.currentTimeMillis();
-
-                // Check for a double click by comparing the time between two clicks
-                if (currentTime - lastClickTime < DOUBLE_CLICK_TIME_THRESHOLD) {
-                    // Double click detected, perform your action here (e.g., play the next track)
-                    playNextTrack();
-                }
-
-                lastClickTime = currentTime;
-            }
-        }
-
-        private void playNextTrack() {
-            // Add your logic to play the next track here
-            Toast.makeText(getApplicationContext(), "Playing next track", Toast.LENGTH_SHORT).show();
-            // Implement the code to start playing the next track, e.g., with a media player
-            // or your audio playback logic.
-        }
     }
 
     /** A method-channel list of numbers as a float[] (a null entry reads as 0). */
