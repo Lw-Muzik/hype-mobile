@@ -21,6 +21,7 @@ import '../services/connect/hype_connect.dart';
 import 'crossfade_settings_section.dart';
 import 'hype_connect_page.dart';
 import 'stream_server.dart';
+import 'volume_controls.dart';
 
 import '/widgets/bottom_player.dart';
 import '../services/radio/radio_queue.dart';
@@ -144,6 +145,12 @@ const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('Bass', SettingsCategory.tone, 'low end boost'),
   SettingsEntry('Treble', SettingsCategory.tone, 'high end'),
   SettingsEntry('Audio enhancement', SettingsCategory.tone, 'effects reverb virtualizer'),
+  SettingsEntry('Balance', SettingsCategory.tone, 'left right pan stereo'),
+  SettingsEntry('Mono', SettingsCategory.tone, 'mix down single channel'),
+  SettingsEntry('Tempo', SettingsCategory.tone, 'speed faster slower playback rate'),
+  SettingsEntry('Limiter', SettingsCategory.tone, 'clipping distortion peaks output'),
+  SettingsEntry('No DVC – preamp reduction', SettingsCategory.tone,
+      'headroom volume lower clipping attenuation'),
   SettingsEntry('Theme', SettingsCategory.appearance, 'dark light fancy colour'),
   SettingsEntry('Blur', SettingsCategory.appearance, 'background artwork'),
   SettingsEntry('Visualizer', SettingsCategory.visualizer, 'spectrum waveform bars'),
@@ -441,6 +448,8 @@ class _SettingsState extends State<Settings> {
             const SizedBox(height: 12),
           ],
           _buildToneSection(controller),
+          const SizedBox(height: 12),
+          _buildVolumeSection(controller),
         ]),
       SettingsCategory.appearance => _buildAppearanceSection(controller),
       SettingsCategory.visualizer => _buildVisualizerSection(controller),
@@ -595,6 +604,7 @@ class _SettingsState extends State<Settings> {
       children: [
         _buildSectionHeader(Icons.tune, "Audio Enhancement"),
         _buildSectionCard([
+          if (Platform.isAndroid) ...[
           SwitchListTile.adaptive(
             value: controller.dvcEnabled,
             title: const Text("Direct volume control"),
@@ -613,7 +623,10 @@ class _SettingsState extends State<Settings> {
               controller.dvcEnabled = enabled;
             },
           ),
-          if (controller.dvcEnabled) ...[
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          ],
+          _buildNoDvcPreamp(controller),
+          if (Platform.isAndroid && controller.dvcEnabled) ...[
             const Divider(height: 1, indent: 16, endIndent: 16),
             ListTile(
               title: const Text("DVC Volume"),
@@ -676,6 +689,65 @@ class _SettingsState extends State<Settings> {
               onChanged: (value) => controller.dvcFineSteps = value,
             ),
           ],
+        ]),
+      ],
+    );
+  }
+
+  /// Headroom ahead of the effects, for when direct volume control is off.
+  Widget _buildNoDvcPreamp(AppController controller) {
+    final dvc = Platform.isAndroid && controller.dvcEnabled;
+    final db = controller.dspCore.headroomDb;
+    return Opacity(
+      opacity: dvc ? 0.5 : 1.0,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            title: const Text("No DVC – preamp reduction"),
+            subtitle: Text(
+              dvc
+                  ? "Not used while direct volume control is on"
+                  : "Lowers the level before effects so boosts do not clip",
+            ),
+            trailing: Text("${db.toStringAsFixed(1)} dB"),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Slider.adaptive(
+              value: db,
+              min: -10,
+              max: 0,
+              divisions: 20,
+              label: "${db.toStringAsFixed(1)} dB",
+              onChanged: dvc
+                  ? null
+                  : (v) => controller.dspCore =
+                        controller.dspCore.copyWith(headroomDb: v),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -- Volume (balance, mono, tempo) --
+
+  Widget _buildVolumeSection(AppController controller) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader(Icons.volume_up, "Volume"),
+        _buildSectionCard([
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: VolumeControls(
+              settings: controller.dspCore,
+              onChanged: (v) => controller.dspCore = v,
+              stereoExpand: controller.stereoExpand,
+              onStereoExpand: (v) => controller.stereoExpand = v,
+            ),
+          ),
         ]),
       ],
     );
@@ -986,15 +1058,15 @@ class _SettingsState extends State<Settings> {
                 onChanged: (v) => controller.trebleQ = v,
               ),
             ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            // Output limiter
-            SwitchListTile.adaptive(
-              value: controller.limiterEnabled,
-              title: const Text("Output limiter"),
-              subtitle: const Text("Prevents distortion from EQ boosts"),
-              onChanged: (enabled) => controller.limiterEnabled = enabled,
-            ),
           ],
+          const Divider(height: 1, indent: 16, endIndent: 16),
+          // Output limiter
+          SwitchListTile.adaptive(
+            value: controller.limiterEnabled,
+            title: const Text("Limiter"),
+            subtitle: const Text("Prevents distortion from EQ boosts"),
+            onChanged: (enabled) => controller.limiterEnabled = enabled,
+          ),
         ]),
       ],
     );

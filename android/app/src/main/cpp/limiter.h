@@ -1,136 +1,87 @@
 #pragma once
-#include <cmath>
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 
-// Stereo output limiter — true-peak, zero-overshoot, soft-knee.
-// Placed at the very end of the DSP chain to catch peaks from EQ/tone boosts.
+// Stereo output limiter. Placed at the end of the DSP chain to catch peaks.
 //
-// Design: feed-forward peak limiter with per-sample envelope detection.
-// - Attack: instant (gain reduction applied immediately — zero overshoot)
-// - Release: configurable, default 100ms (smooth recovery, no pumping)
-// - Soft knee: configurable width in dB (smooth transition into limiting)
-// - Ceiling: output never exceeds this level (default 0.98 = -0.18 dBFS)
-//
-// Key: gain smoothing is ASYMMETRIC — instant for attack (prevents any
-// sample from exceeding the ceiling), smooth for release (no pumping).
-// The hard safety clamp inside process() should never trigger.
+// No look-ahead, ceiling 1.0. Per frame the stereo-linked peak is compared
+// with the ceiling: above it the target gain drops to ceiling/peak (never
+// rising), otherwise the target creeps back toward 1 at the release slope.
+// The applied gain follows the target at a fixed slope each way: down by
+// 2^-8 per frame (attack), up by 2^-14 per frame (release), both scaled by
+// 48000/fs so the times are the same at any sample rate. A full recovery
+// from silence-level gain therefore takes 2^14 frames, ~341 ms at 48 kHz.
+// Because the attack is a slope and there is no look-ahead, the first ~256
+// frames (~5.3 ms at 48 kHz) of a hard transient exceed the ceiling inside
+// the limiter and are hard-clipped by the engine's final clamp. This is the
+// intended design, not a bug.
 class OutputLimiter {
 public:
     OutputLimiter() { reset(); }
 
     void init(int sampleRate) {
-        sampleRate_ = sampleRate;
-        computeCoefficients();
+        const float scale = sampleRate > 0 ? 48000.0f / (float)sampleRate : 1.0f;
+        att_ = kAttack * scale;
+        rel_ = kRelease * scale;
         reset();
     }
 
     void reset() {
-        envDb_ = -96.0f;
-        gainSmoothed_ = 1.0f;
+        target_ = 1.0f;
+        gain_ = 1.0f;
     }
 
-    void setEnabled(bool enabled) { enabled_ = enabled; }
-    bool isEnabled() const { return enabled_; }
-
-    // Ceiling: max output amplitude (0.0 - 1.0), default 0.98
-    void setCeiling(float ceiling) {
-        ceiling_ = std::max(0.01f, std::min(1.0f, ceiling));
-        ceilingDb_ = 20.0f * std::log10(ceiling_);
+    // Turning the limiter on after it was off starts it from unity gain: the
+    // reduction it had when it was switched off is stale. The reset is done
+    // by the audio thread, on its next [process].
+    void setEnabled(bool enabled) {
+        if (enabled) {
+            if (!enabled_.exchange(true, std::memory_order_relaxed)) {
+                resetPending_.store(true, std::memory_order_relaxed);
+            }
+        } else {
+            enabled_.store(false, std::memory_order_relaxed);
+        }
     }
+    bool isEnabled() const { return enabled_.load(std::memory_order_relaxed); }
 
-    // Release time in ms (10 - 500), default 50
-    void setRelease(float ms) {
-        releaseMs_ = std::max(10.0f, std::min(500.0f, ms));
-        computeCoefficients();
-    }
+    // Current applied gain, 1.0 when not limiting.
+    float gain() const { return gain_; }
 
-    // Soft knee width in dB (0 - 12), default 6
-    void setKnee(float dB) {
-        kneeDb_ = std::max(0.0f, std::min(12.0f, dB));
-    }
-
-    // Process audio through the limiter. The caller controls when to invoke
-    // this — the limiter itself has no internal enabled check, so it always
-    // processes when called. The engine invokes it when EQ/tone is active
-    // (transparent safety net) or when the user explicitly enables it.
     void process(float* left, float* right, int numFrames) {
+        if (resetPending_.exchange(false, std::memory_order_relaxed)) {
+            target_ = 1.0f;
+            gain_ = 1.0f;
+        }
         for (int i = 0; i < numFrames; i++) {
-            // Peak detection (stereo-linked)
-            float peak = std::max(std::fabs(left[i]), std::fabs(right[i]));
-
-            // Convert to dB (floor at -96 dB)
-            float peakDb = (peak > 1e-5f)
-                ? 20.0f * std::log10(peak)
-                : -96.0f;
-
-            // Envelope follower — instant attack, smooth release
-            if (peakDb > envDb_) {
-                envDb_ = peakDb;  // instant: track peak exactly
+            const float peak = std::max(std::fabs(left[i]), std::fabs(right[i]));
+            if (peak > kCeiling) {
+                target_ = std::min(target_, kCeiling / peak);
             } else {
-                envDb_ = releaseCoeff_ * envDb_ + (1.0f - releaseCoeff_) * peakDb;
+                target_ = std::min(1.0f, target_ + rel_);
             }
-
-            // Gain computer with soft knee
-            float gainDb = computeGain(envDb_);
-
-            // Convert to linear gain
-            float gainLin = std::pow(10.0f, gainDb * 0.05f);
-
-            // Asymmetric gain smoothing:
-            // - Attack (gain decreasing): instant — zero overshoot
-            // - Release (gain increasing): smooth — no pumping
-            if (gainLin < gainSmoothed_) {
-                gainSmoothed_ = gainLin;  // instant attack
-            } else {
-                gainSmoothed_ += releaseSmooth_ * (gainLin - gainSmoothed_);
+            if (gain_ > target_) {
+                gain_ = std::max(target_, gain_ - att_);
+            } else if (gain_ < target_) {
+                gain_ = std::min(target_, gain_ + rel_);
             }
-
-            // Apply gain
-            left[i]  *= gainSmoothed_;
-            right[i] *= gainSmoothed_;
-
-            // Hard safety ceiling (should never trigger with instant attack)
-            left[i]  = std::max(-ceiling_, std::min(ceiling_, left[i]));
-            right[i] = std::max(-ceiling_, std::min(ceiling_, right[i]));
+            if (gain_ != 1.0f) {
+                left[i] *= gain_;
+                right[i] *= gain_;
+            }
         }
     }
 
 private:
-    void computeCoefficients() {
-        if (sampleRate_ <= 0) return;
-        // Envelope release: smooth recovery (~100ms default)
-        releaseCoeff_ = std::exp(-1.0f / (releaseMs_ * 0.001f * (float)sampleRate_));
-        // Gain release smoothing: slightly slower than envelope for clean recovery
-        releaseSmooth_ = 1.0f - std::exp(-1.0f / (releaseMs_ * 0.002f * (float)sampleRate_));
-    }
+    static constexpr float kCeiling = 1.0f;
+    static constexpr float kAttack = 1.0f / 256.0f;     // 2^-8
+    static constexpr float kRelease = 1.0f / 16384.0f;  // 2^-14
 
-    // Soft-knee gain computation in dB domain
-    float computeGain(float inputDb) const {
-        float overshoot = inputDb - ceilingDb_;
-
-        if (kneeDb_ > 0.0f && overshoot > -kneeDb_ / 2.0f && overshoot < kneeDb_ / 2.0f) {
-            // Soft knee region: quadratic transition
-            float x = overshoot + kneeDb_ / 2.0f;
-            float reduction = (x * x) / (2.0f * kneeDb_);
-            return -reduction;
-        } else if (overshoot >= kneeDb_ / 2.0f) {
-            // Above knee: full limiting (brick wall, ratio = infinity)
-            return -overshoot;
-        }
-        // Below knee: no gain reduction
-        return 0.0f;
-    }
-
-    int sampleRate_ = 48000;
-    bool enabled_ = false;  // Off by default — user opts in via settings
-
-    float ceiling_ = 0.98f;
-    float ceilingDb_ = -0.18f;  // 20*log10(0.98)
-    float releaseMs_ = 100.0f;
-    float kneeDb_ = 6.0f;
-
-    float releaseCoeff_ = 0.0f;   // envelope release
-    float releaseSmooth_ = 0.01f; // gain release smoothing
-    float envDb_ = -96.0f;
-    float gainSmoothed_ = 1.0f;
+    std::atomic<bool> enabled_{false};
+    std::atomic<bool> resetPending_{false};
+    float att_ = kAttack;
+    float rel_ = kRelease;
+    float target_ = 1.0f;
+    float gain_ = 1.0f;
 };

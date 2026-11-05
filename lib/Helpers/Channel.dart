@@ -104,46 +104,16 @@ class Channel {
     await _invoke("setBassBoostStrength", {"strength": strength});
   }
 
-  /// Loudness enhancer (session-aware init — used by both legacy and DVC)
-  static void _initLoudnessEnhancer(int sessionId) async {
-    await _invoke("initLoudnessEnhancer", {"sessionId": sessionId});
-  }
-
-  static void enableLoudnessEnhancer(bool enable) async {
-    await _invoke("enableLoudnessEnhancer", {"enableLoud": enable});
-  }
-
-  /// Sets the target gain (millibels)
-  static void setTargetGain(int strength) async {
-    await _invoke("setLoudnessEnhancerStrength", {"strength": strength});
-  }
-
-  /// Retrieves the target gain value
-  static Future<double> getTargetGain() async {
-    return await _invokeRequired<double>("loudnessEnhancerStrength", 0.0);
-  }
-
   // ==================== DVC (Direct Volume Control) ====================
 
-  /// Enable DVC: saves system volume, maxes STREAM_MUSIC, enables LoudnessEnhancer
+  /// Enable DVC: saves the system volume and holds STREAM_MUSIC at max
   static Future<void> enableDvc() async {
     await _invoke("enableDvc", {});
   }
 
-  /// Disable DVC: restores saved system volume, disables LoudnessEnhancer
+  /// Disable DVC: restores the saved system volume
   static Future<void> disableDvc() async {
     await _invoke("disableDvc", {});
-  }
-
-  /// Set DVC gain in dB. Native side handles system volume crossover
-  /// for true silence at the bottom of the range.
-  static Future<void> setDvcGain(double dB) async {
-    await _invoke("setDvcGain", {"gain": dB});
-  }
-
-  /// Get current DVC internal gain
-  static Future<double> getDvcGain() async {
-    return await _invokeRequired<double>("getDvcGain", 0.0);
   }
 
   /// Check if DVC is currently active
@@ -262,14 +232,41 @@ class Channel {
     await _invoke("dspSetReverbWetDry", {"value": value});
   }
 
-  /// Enable/disable M/S stereo expansion
-  static Future<void> dspSetStereoExpandEnabled(bool enabled) async {
-    await _invoke("dspSetStereoExpandEnabled", {"enabled": enabled});
+  /// Stereo Expand amount, 0..1 (0 = off, 1 = sides +9.5 dB).
+  static Future<void> dspSetStereoExpand(double value) async {
+    await _invoke("dspSetStereoExpand", {"value": value});
   }
 
-  /// Stereo width (0.0 = mono, 1.0 = normal, 2.0 = max expansion)
-  static Future<void> dspSetStereoWidth(double value) async {
-    await _invoke("dspSetStereoWidth", {"value": value});
+  /// Headroom trim in dB, -10..0 (summed into the input gain).
+  static Future<void> dspSetHeadroomDb(double dB) async {
+    await _invoke("dspSetHeadroomDb", {"value": dB});
+  }
+
+  /// Preamp in dB (-24..+24) of the active speaker/headphone correction
+  /// profile; the engine applies it only while the speaker EQ is on.
+  static Future<void> dspSetSpeakerPreampDb(double dB) async {
+    await _invoke("dspSetSpeakerPreampDb", {"value": dB});
+  }
+
+  /// Track gain in dB (-30..+24) for ONE player's engine, addressed by
+  /// [AudioPlayer.playerId]. Native caches it per id.
+  static Future<void> dspSetTrackGainDb(String playerId, double dB) async {
+    await _invoke("dspSetTrackGainDb", {"playerId": playerId, "value": dB});
+  }
+
+  /// Master volume in dB, -30..0 (-30 is silence); applied to every engine.
+  static Future<void> dspSetMasterVolumeDb(double dB) async {
+    await _invoke("dspSetMasterVolumeDb", {"value": dB});
+  }
+
+  /// Mono downmix on/off.
+  static Future<void> dspSetMono(bool enabled) async {
+    await _invoke("dspSetMono", {"enabled": enabled});
+  }
+
+  /// Stereo balance, -1 (left) .. 1 (right).
+  static Future<void> dspSetBalance(double value) async {
+    await _invoke("dspSetBalance", {"value": value});
   }
 
   /// Enable/disable BS2B crossfeed
@@ -375,21 +372,6 @@ class Channel {
   /// Enable/disable output limiter (on by default — safety net)
   static Future<void> dspSetLimiterEnabled(bool enabled) async {
     await _invoke("dspSetLimiterEnabled", {"enabled": enabled});
-  }
-
-  /// Limiter ceiling (0.01 - 1.0, default 0.98)
-  static Future<void> dspSetLimiterCeiling(double value) async {
-    await _invoke("dspSetLimiterCeiling", {"value": value});
-  }
-
-  /// Limiter release time in ms (10 - 500, default 50)
-  static Future<void> dspSetLimiterRelease(double ms) async {
-    await _invoke("dspSetLimiterRelease", {"value": ms});
-  }
-
-  /// Limiter soft knee width in dB (0 - 12, default 6)
-  static Future<void> dspSetLimiterKnee(double dB) async {
-    await _invoke("dspSetLimiterKnee", {"value": dB});
   }
 
   // ==================== Speaker Correction EQ (AutoEq) ====================
@@ -540,7 +522,6 @@ class Channel {
   }
 
   static void setSessionId(int sessionId) async {
-    _initLoudnessEnhancer(sessionId);
     await _invoke("init", {"sessionId": sessionId});
   }
 

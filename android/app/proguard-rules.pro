@@ -9,9 +9,13 @@
     static void onNativeStatus(java.lang.String);
 }
 
-# just_audio fork (AudioPlayer.java) does Class.forName(...).getMethod("createPlayerInstance").
+# just_audio fork (AudioPlayer.java) does Class.forName(...).getMethod("createPlayerInstance"[, String]).
+# Native (JNI) methods are kept by the default Android rules, and the broadcast*/
+# setTrackGainDb statics are called directly from MainActivity, so only the
+# reflective lookups need rules.
 -keep class x.a.zix.RoomEffectsProcessor {
     public static x.a.zix.RoomEffectsProcessor createPlayerInstance();
+    public static x.a.zix.RoomEffectsProcessor createPlayerInstance(java.lang.String);
 }
 -keep class x.a.zix.VisualizerTapProcessor {
     public static x.a.zix.VisualizerTapProcessor createPlayerInstance();

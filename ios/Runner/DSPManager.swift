@@ -2,14 +2,42 @@ import Foundation
 import AVFoundation
 import Flutter
 
-/// Manages the C++ DSP engine lifecycle and provides a singleton for parameter updates.
-/// The actual audio processing tap is installed by AudioDSPTap on the AVAudioEngine.
+/// Owns the C++ DSP engines — one per just_audio player — and fans parameter
+/// updates out to all of them.
+///
+/// A tap (HypeAudioTap.m) asks for its player's engine through `acquireEngine`
+/// the first time that player installs a tap; the engine is then reused for
+/// every item the player plays. Every global setter applies to all engines and
+/// records itself in a replay log, so an engine created later starts at the
+/// current state. Per-player settings (track gain) are kept per player id.
 class DSPManager {
     static let shared = DSPManager()
 
-    private(set) var handle: UnsafeMutableRawPointer?
     private var sampleRate: Int = 48000
     private var channels: Int = 2
+
+    /// One engine plus the taps still using it. A released player's record
+    /// leaves `registry` at once but its engine is destroyed only when the last
+    /// tap has let go, so a tap never processes through freed memory.
+    private final class EngineRecord {
+        let playerId: String
+        let handle: UnsafeMutableRawPointer
+        var refs = 0
+        var retired = false
+        init(playerId: String, handle: UnsafeMutableRawPointer) {
+            self.playerId = playerId
+            self.handle = handle
+        }
+    }
+
+    private let log = DSPReplayLog()
+    /// One lock serialises everything that touches engines or the log: setter
+    /// fan-out, replay after a reinit, engine creation. Engine setters are not
+    /// themselves thread-safe, and a replay must not overwrite a newer value.
+    private let lock = NSLock()
+    private var registry: [String: EngineRecord] = [:]
+    private var byHandle: [UnsafeMutableRawPointer: EngineRecord] = [:]
+    private var trackGains = PlayerValueBook()
 
     // Cached preamp for getter
     private(set) var cachedPreampGain: Float = 0.0
@@ -17,77 +45,159 @@ class DSPManager {
 
     private init() {}
 
+    /// Records the session format and wires the tap to this registry.
     func initialize(sampleRate: Int = 48000, channels: Int = 2) {
         self.sampleRate = sampleRate
         self.channels = channels
-        if handle == nil {
-            handle = dsp_create(Int32(sampleRate), Int32(channels))
+        let tap = HypeAudioTap.shared()
+        tap.engineAcquire = { playerId in DSPManager.shared.acquireEngine(playerId: playerId) }
+        tap.engineRelease = { handle in DSPManager.shared.releaseEngine(handle) }
+        tap.engineReinitialised = { handle in DSPManager.shared.engineReinitialised(handle) }
+        tap.playerReleased = { playerId in DSPManager.shared.releasePlayer(playerId: playerId) }
+    }
+
+    /// The engine for `playerId`, created on first use and brought to the
+    /// current global state, with a tap reference taken. nil if the engine
+    /// cannot be created (the tap then leaves audio untouched).
+    func acquireEngine(playerId: String) -> UnsafeMutableRawPointer? {
+        lock.lock(); defer { lock.unlock() }
+        let record: EngineRecord
+        if let existing = registry[playerId] {
+            record = existing
         } else {
-            dsp_reinit(handle, Int32(sampleRate), Int32(channels))
+            guard let h = dsp_create(Int32(sampleRate), Int32(channels)) else { return nil }
+            record = EngineRecord(playerId: playerId, handle: h)
+            registry[playerId] = record
+            byHandle[h] = record
+            replayState(onto: record)
+        }
+        record.refs += 1
+        return record.handle
+    }
+
+    /// A tap let go of its engine (finalized, or failed to start).
+    func releaseEngine(_ handle: UnsafeMutableRawPointer) {
+        lock.lock()
+        guard let record = byHandle[handle] else { lock.unlock(); return }
+        record.refs -= 1
+        let dead = record.retired && record.refs <= 0
+        if dead { byHandle[handle] = nil }
+        lock.unlock()
+        if dead { dsp_destroy(handle) }
+    }
+
+    /// The player was disposed: forget it now; destroy once no tap uses it.
+    func releasePlayer(playerId: String) {
+        lock.lock()
+        trackGains.release(playerId)
+        guard let record = registry.removeValue(forKey: playerId) else { lock.unlock(); return }
+        record.retired = true
+        let dead = record.refs <= 0
+        if dead { byHandle[record.handle] = nil }
+        lock.unlock()
+        if dead { dsp_destroy(record.handle) }
+    }
+
+    /// `dsp_reinit` (run when a tap prepares for a new item) resets the EQ and
+    /// crossfeed stages; put the current state back before the first buffer.
+    func engineReinitialised(_ handle: UnsafeMutableRawPointer) {
+        lock.lock(); defer { lock.unlock() }
+        if let record = byHandle[handle] { replayState(onto: record) }
+    }
+
+    /// Caller holds `lock`.
+    private func replayState(onto record: EngineRecord) {
+        log.replay(onto: record.handle)
+        if let gain = trackGains.value(for: record.playerId) {
+            dsp_set_track_gain_db(record.handle, gain)
         }
     }
 
-    func destroy() {
-        if let h = handle {
-            dsp_destroy(h)
-            handle = nil
-        }
+    /// Records the setting and applies it to every live engine, all under the lock.
+    private func apply(key: String, _ body: @escaping (UnsafeMutableRawPointer) -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        log.record(key: key, apply: body)
+        for record in registry.values { body(record.handle) }
     }
 
-    func reinit(sampleRate: Int, channels: Int) {
-        self.sampleRate = sampleRate
-        self.channels = channels
-        if let h = handle {
-            dsp_reinit(h, Int32(sampleRate), Int32(channels))
-        } else {
-            handle = dsp_create(Int32(sampleRate), Int32(channels))
-        }
+    // MARK: - Level stages
+
+    func setHeadroomDb(_ dB: Float) {
+        apply(key: "setHeadroomDb") { h in dsp_set_headroom_db(h, dB) }
     }
 
-    func process(buffer: UnsafeMutablePointer<Float>, numFrames: Int) {
-        guard let h = handle else { return }
-        dsp_process_float(h, buffer, Int32(numFrames))
+    func setSpeakerPreampDb(_ dB: Float) {
+        apply(key: "setSpeakerPreampDb") { h in dsp_set_speaker_preamp_db(h, dB) }
+    }
+
+    func setMasterVolumeDb(_ dB: Float) {
+        apply(key: "setMasterVolumeDb") { h in dsp_set_master_volume_db(h, dB) }
+    }
+
+    func setMono(_ enabled: Bool) {
+        apply(key: "setMono") { h in dsp_set_mono(h, enabled) }
+    }
+
+    func setBalance(_ value: Float) {
+        apply(key: "setBalance") { h in dsp_set_balance(h, value) }
+    }
+
+    /// One player's track gain. Not part of the global replay log: it belongs
+    /// to a single engine. Stored by id even before that engine exists (it is
+    /// applied when the engine is created); ignored once the player is released.
+    func setTrackGainDb(_ dB: Float, playerId: String) {
+        lock.lock(); defer { lock.unlock() }
+        trackGains.set(dB, for: playerId)
+        if let record = registry[playerId] { dsp_set_track_gain_db(record.handle, dB) }
     }
 
     // MARK: - EQ
 
     func setEqEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_eq_enabled(h, enabled)
+        apply(key: "setEqEnabled") { h in
+            dsp_set_eq_enabled(h, enabled)
+        }
     }
 
     func setPreampGain(_ dB: Float) {
         cachedPreampGain = dB
-        guard let h = handle else { return }
-        dsp_set_preamp_gain(h, dB)
+        apply(key: "setPreampGain") { h in
+            dsp_set_preamp_gain(h, dB)
+        }
     }
 
     func setGraphicBandGain(band: Int, dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_graphic_band_gain(h, Int32(band), dB)
+        apply(key: "setGraphicBandGain.\(band)") { h in
+            dsp_set_graphic_band_gain(h, Int32(band), dB)
+        }
     }
 
     func setGraphicAllBands(_ gains: [Float]) {
-        guard let h = handle else { return }
-        gains.withUnsafeBufferPointer { ptr in
+        log.removeAll(withPrefix: "setGraphicBandGain.")
+        apply(key: "setGraphicAllBands") { h in
+            gains.withUnsafeBufferPointer { ptr in
             dsp_set_graphic_all_bands(h, ptr.baseAddress, Int32(gains.count))
+        }
         }
     }
 
     func setParametricBand(band: Int, freq: Float, gain: Float, q: Float,
                            filterType: Int, enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_parametric_band(h, Int32(band), freq, gain, q, Int32(filterType), enabled)
+        apply(key: "setParametricBand.\(band)") { h in
+            dsp_set_parametric_band(h, Int32(band), freq, gain, q, Int32(filterType), enabled)
+        }
     }
 
     func setParametricAllBands(freqs: [Float], gains: [Float], qs: [Float]) {
-        guard let h = handle else { return }
-        let count = min(freqs.count, gains.count, qs.count)
-        freqs.withUnsafeBufferPointer { f in
-            gains.withUnsafeBufferPointer { g in
-                qs.withUnsafeBufferPointer { q in
-                    dsp_set_parametric_all_bands(h, f.baseAddress, g.baseAddress,
-                                                  q.baseAddress, Int32(count))
+        log.removeAll(withPrefix: "setParametricBand.")
+        apply(key: "setParametricAllBands") { h in
+            let count = min(freqs.count, gains.count, qs.count)
+            freqs.withUnsafeBufferPointer { f in
+                gains.withUnsafeBufferPointer { g in
+                    qs.withUnsafeBufferPointer { q in
+                        dsp_set_parametric_all_bands(h, f.baseAddress, g.baseAddress,
+                                                      q.baseAddress, Int32(count))
+                    }
                 }
             }
         }
@@ -96,192 +206,223 @@ class DSPManager {
     // MARK: - Speaker Correction EQ
 
     func setSpeakerEqEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_speaker_eq_enabled(h, enabled)
+        apply(key: "setSpeakerEqEnabled") { h in
+            dsp_set_speaker_eq_enabled(h, enabled)
+        }
     }
 
     func setSpeakerEqBand(band: Int, freq: Float, gain: Float, q: Float,
                           filterType: Int, enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_speaker_eq_band(h, Int32(band), freq, gain, q, Int32(filterType), enabled)
+        apply(key: "setSpeakerEqBand.\(band)") { h in
+            dsp_set_speaker_eq_band(h, Int32(band), freq, gain, q, Int32(filterType), enabled)
+        }
     }
 
     func clearSpeakerEq() {
-        guard let h = handle else { return }
-        dsp_clear_speaker_eq(h)
+        log.removeAll(withPrefix: "setSpeakerEqBand.")
+        apply(key: "clearSpeakerEq") { h in
+            dsp_clear_speaker_eq(h)
+        }
     }
 
     // MARK: - Tone Controls
 
     func setToneEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_tone_enabled(h, enabled)
+        apply(key: "setToneEnabled") { h in
+            dsp_set_tone_enabled(h, enabled)
+        }
     }
 
     func setBassGain(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_bass_gain(h, dB)
+        apply(key: "setBassGain") { h in
+            dsp_set_bass_gain(h, dB)
+        }
     }
 
     func setBassFreq(_ hz: Float) {
-        guard let h = handle else { return }
-        dsp_set_bass_freq(h, hz)
+        apply(key: "setBassFreq") { h in
+            dsp_set_bass_freq(h, hz)
+        }
     }
 
     func setBassQ(_ q: Float) {
-        guard let h = handle else { return }
-        dsp_set_bass_q(h, q)
+        apply(key: "setBassQ") { h in
+            dsp_set_bass_q(h, q)
+        }
     }
 
     func setTrebleGain(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_treble_gain(h, dB)
+        apply(key: "setTrebleGain") { h in
+            dsp_set_treble_gain(h, dB)
+        }
     }
 
     func setTrebleFreq(_ hz: Float) {
-        guard let h = handle else { return }
-        dsp_set_treble_freq(h, hz)
+        apply(key: "setTrebleFreq") { h in
+            dsp_set_treble_freq(h, hz)
+        }
     }
 
     func setTrebleQ(_ q: Float) {
-        guard let h = handle else { return }
-        dsp_set_treble_q(h, q)
+        apply(key: "setTrebleQ") { h in
+            dsp_set_treble_q(h, q)
+        }
     }
 
     // MARK: - Limiter
 
     func setLimiterEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_limiter_enabled(h, enabled)
+        apply(key: "setLimiterEnabled") { h in
+            dsp_set_limiter_enabled(h, enabled)
+        }
     }
 
     func setLimiterCeiling(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_limiter_ceiling(h, v)
+        apply(key: "setLimiterCeiling") { h in
+            dsp_set_limiter_ceiling(h, v)
+        }
     }
 
     func setLimiterRelease(_ ms: Float) {
-        guard let h = handle else { return }
-        dsp_set_limiter_release(h, ms)
+        apply(key: "setLimiterRelease") { h in
+            dsp_set_limiter_release(h, ms)
+        }
     }
 
     func setLimiterKnee(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_limiter_knee(h, dB)
+        apply(key: "setLimiterKnee") { h in
+            dsp_set_limiter_knee(h, dB)
+        }
     }
 
     // MARK: - MBC
 
     func setMbcEnabled(_ enabled: Bool) {
         cachedMbcEnabled = enabled
-        guard let h = handle else { return }
-        dsp_set_mbc_enabled(h, enabled)
+        apply(key: "setMbcEnabled") { h in
+            dsp_set_mbc_enabled(h, enabled)
+        }
     }
 
     func setMbcPreGain(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_pre_gain(h, dB)
+        apply(key: "setMbcPreGain") { h in
+            dsp_set_mbc_pre_gain(h, dB)
+        }
     }
 
     func setMbcNoiseGate(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_noise_gate(h, dB)
+        apply(key: "setMbcNoiseGate") { h in
+            dsp_set_mbc_noise_gate(h, dB)
+        }
     }
 
     func setMbcKneeWidth(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_knee_width(h, dB)
+        apply(key: "setMbcKneeWidth") { h in
+            dsp_set_mbc_knee_width(h, dB)
+        }
     }
 
     func setMbcExpanderRatio(_ ratio: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_expander_ratio(h, ratio)
+        apply(key: "setMbcExpanderRatio") { h in
+            dsp_set_mbc_expander_ratio(h, ratio)
+        }
     }
 
     func setMbcThreshold(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_threshold(h, dB)
+        apply(key: "setMbcThreshold") { h in
+            dsp_set_mbc_threshold(h, dB)
+        }
     }
 
     func setMbcRatio(_ ratio: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_ratio(h, ratio)
+        apply(key: "setMbcRatio") { h in
+            dsp_set_mbc_ratio(h, ratio)
+        }
     }
 
     func setMbcAttackTime(_ ms: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_attack_time(h, ms)
+        apply(key: "setMbcAttackTime") { h in
+            dsp_set_mbc_attack_time(h, ms)
+        }
     }
 
     func setMbcReleaseTime(_ ms: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_release_time(h, ms)
+        apply(key: "setMbcReleaseTime") { h in
+            dsp_set_mbc_release_time(h, ms)
+        }
     }
 
     func setMbcPostGain(_ dB: Float) {
-        guard let h = handle else { return }
-        dsp_set_mbc_post_gain(h, dB)
+        apply(key: "setMbcPostGain") { h in
+            dsp_set_mbc_post_gain(h, dB)
+        }
     }
 
     // MARK: - Reverb
 
     func setReverbEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_reverb_enabled(h, enabled)
+        apply(key: "setReverbEnabled") { h in
+            dsp_set_reverb_enabled(h, enabled)
+        }
     }
 
     func setRoomSize(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_room_size(h, v)
+        apply(key: "setRoomSize") { h in
+            dsp_set_room_size(h, v)
+        }
     }
 
     func setDecay(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_decay(h, v)
+        apply(key: "setDecay") { h in
+            dsp_set_decay(h, v)
+        }
     }
 
     func setDamping(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_damping(h, v)
+        apply(key: "setDamping") { h in
+            dsp_set_damping(h, v)
+        }
     }
 
     func setPreDelay(_ ms: Float) {
-        guard let h = handle else { return }
-        dsp_set_pre_delay(h, ms)
+        apply(key: "setPreDelay") { h in
+            dsp_set_pre_delay(h, ms)
+        }
     }
 
     func setDiffusion(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_diffusion(h, v)
+        apply(key: "setDiffusion") { h in
+            dsp_set_diffusion(h, v)
+        }
     }
 
     func setReverbWetDry(_ v: Float) {
-        guard let h = handle else { return }
-        dsp_set_reverb_wet_dry(h, v)
+        apply(key: "setReverbWetDry") { h in
+            dsp_set_reverb_wet_dry(h, v)
+        }
     }
 
-    // MARK: - Stereo Expander
+    // MARK: - Stereo Expand
 
-    func setStereoExpandEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_stereo_expand_enabled(h, enabled)
-    }
-
-    func setStereoWidth(_ width: Float) {
-        guard let h = handle else { return }
-        dsp_set_stereo_width(h, width)
+    /// Amount 0..1 (0–100 %); 0 is off.
+    func setStereoExpand(_ amount: Float) {
+        apply(key: "setStereoExpand") { h in
+            dsp_set_stereo_expand(h, amount)
+        }
     }
 
     // MARK: - Crossfeed
 
     func setCrossfeedEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_crossfeed_enabled(h, enabled)
+        apply(key: "setCrossfeedEnabled") { h in
+            dsp_set_crossfeed_enabled(h, enabled)
+        }
     }
 
     func setCrossfeedParams(cutoff: Float, feed: Float) {
-        guard let h = handle else { return }
-        dsp_set_crossfeed_params(h, cutoff, feed)
+        apply(key: "setCrossfeedParams") { h in
+            dsp_set_crossfeed_params(h, cutoff, feed)
+        }
     }
 
     // MARK: - 3D Surround
@@ -291,19 +432,22 @@ class DSPManager {
     // Dart side must not need to know which one it is talking to.
 
     func setSurround3dEnabled(_ enabled: Bool) {
-        guard let h = handle else { return }
-        dsp_set_surround3d_enabled(h, enabled)
+        apply(key: "setSurround3dEnabled") { h in
+            dsp_set_surround3d_enabled(h, enabled)
+        }
     }
 
     func setSurround3dParams(intensity: Float, subwoofer: Float) {
-        guard let h = handle else { return }
-        dsp_set_surround3d_params(h, intensity, subwoofer)
+        apply(key: "setSurround3dParams") { h in
+            dsp_set_surround3d_params(h, intensity, subwoofer)
+        }
     }
 
     func setSurround3dSpeakers(frontL: Bool, frontR: Bool, sideL: Bool,
                                sideR: Bool, surroundL: Bool, surroundR: Bool) {
-        guard let h = handle else { return }
-        dsp_set_surround3d_speakers(h, frontL, frontR, sideL, sideR, surroundL, surroundR)
+        apply(key: "setSurround3dSpeakers") { h in
+            dsp_set_surround3d_speakers(h, frontL, frontR, sideL, sideR, surroundL, surroundR)
+        }
     }
 }
 

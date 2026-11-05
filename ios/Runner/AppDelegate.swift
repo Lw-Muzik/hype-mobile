@@ -24,14 +24,10 @@ import AVFoundation
             print("AVAudioSession setup failed: \(error)")
         }
 
-        // Initialize DSP engine
+        // DSP engines: one per just_audio player, created by the audio tap on
+        // first use through the factory DSPManager installs here.
         let sampleRate = Int(session.sampleRate)
         dsp.initialize(sampleRate: sampleRate > 0 ? sampleRate : 48000)
-
-        // Pass DSP handle to audio tap
-        if let handle = dsp.handle {
-            HypeAudioTap.shared().setDspHandle(handle)
-        }
 
         // Set up MethodChannel
         if let controller = window?.rootViewController as? FlutterViewController {
@@ -339,16 +335,30 @@ import AVFoundation
             dsp.setLimiterEnabled(args?["enabled"] as? Bool ?? true)
             result(nil)
 
-        case "dspSetLimiterCeiling":
-            dsp.setLimiterCeiling(floatArg(args, "value"))
+        // ==================== Level stages ====================
+        case "dspSetHeadroomDb":
+            dsp.setHeadroomDb(floatArg(args, "value"))
             result(nil)
 
-        case "dspSetLimiterRelease":
-            dsp.setLimiterRelease(floatArg(args, "value"))
+        case "dspSetSpeakerPreampDb":
+            dsp.setSpeakerPreampDb(floatArg(args, "value"))
             result(nil)
 
-        case "dspSetLimiterKnee":
-            dsp.setLimiterKnee(floatArg(args, "value"))
+        case "dspSetTrackGainDb":
+            dsp.setTrackGainDb(floatArg(args, "value"),
+                               playerId: args?["playerId"] as? String ?? "")
+            result(nil)
+
+        case "dspSetMasterVolumeDb":
+            dsp.setMasterVolumeDb(floatArg(args, "value"))
+            result(nil)
+
+        case "dspSetMono":
+            dsp.setMono(args?["enabled"] as? Bool ?? false)
+            result(nil)
+
+        case "dspSetBalance":
+            dsp.setBalance(floatArg(args, "value"))
             result(nil)
 
         // ==================== 32-Band Graphic EQ ====================
@@ -443,12 +453,8 @@ import AVFoundation
             dsp.setReverbWetDry(floatArg(args, "value"))
             result(nil)
 
-        case "dspSetStereoExpandEnabled":
-            dsp.setStereoExpandEnabled(args?["enabled"] as? Bool ?? false)
-            result(nil)
-
-        case "dspSetStereoWidth":
-            dsp.setStereoWidth(floatArg(args, "value"))
+        case "dspSetStereoExpand":
+            dsp.setStereoExpand(floatArg(args, "value"))
             result(nil)
 
         case "dspSetCrossfeedEnabled":

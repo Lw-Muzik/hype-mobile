@@ -54,6 +54,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
               child: Column(
                 children: [
                   _buildPreampRow(controller),
+                  _buildLimiterRow(controller),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Container(
@@ -154,6 +155,38 @@ class _GraphicEqViewState extends State<GraphicEqView> {
     );
   }
 
+  /// Output limiter: the safety net that catches boosts clipping.
+  Widget _buildLimiterRow(AppController controller) {
+    return Row(
+      children: [
+        Icon(
+          Icons.shield_outlined,
+          size: 16,
+          color: _kAccent.withValues(alpha: 0.7),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          "Limiter",
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+        ),
+        const Spacer(),
+        SizedBox(
+          height: 28,
+          child: Switch(
+            value: controller.limiterEnabled,
+            activeTrackColor: _kAccent.withValues(alpha: 0.5),
+            activeThumbColor: _kAccent,
+            onChanged: (v) => controller.limiterEnabled = v,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPreampRow(AppController controller) {
     return Row(
       children: [
@@ -184,8 +217,8 @@ class _GraphicEqViewState extends State<GraphicEqView> {
             ),
             child: Slider(
               value: controller.preampGain,
-              min: -15,
-              max: 15,
+              min: -24,
+              max: 24,
               onChanged: (v) => controller.preampGain = v,
             ),
           ),

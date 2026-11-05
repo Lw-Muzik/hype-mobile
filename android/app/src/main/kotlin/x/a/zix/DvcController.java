@@ -10,19 +10,17 @@ import android.provider.Settings;
 import io.flutter.plugin.common.EventChannel;
 
 /**
- * Direct Volume Control — Poweramp-style.
+ * Direct Volume Control.
  *
- * When enabled, system STREAM_MUSIC volume is forced to max so the full
- * digital range reaches the DAC.  Internal volume is then controlled via
- * {@link LoudnessControl} (LoudnessEnhancer) which sits after the DSP chain.
- *
- * At very low gain levels (&lt; SYSTEM_VOL_THRESHOLD dB) we start reducing the
- * actual system volume to reach true silence, since LoudnessEnhancer cannot
- * attenuate below unity on most devices.
+ * While enabled, system STREAM_MUSIC volume is held at maximum so the full
+ * digital range reaches the output, and hardware volume keys are forwarded to
+ * Dart as "up"/"down" events. The audible level itself is the engine master
+ * volume (see RoomEffectsProcessor.broadcastMasterVolumeDb), which every
+ * player applies inside its own engine, so a crossfade keeps both players at
+ * the same level. Turning DVC off restores the saved system volume.
  *
  * A {@link ContentObserver} watches for external volume changes and re-forces
- * the correct level, forwarding the event to Flutter so the DVC gain slider
- * can respond instead.
+ * the maximum, so the key presses are handled by the DVC level instead.
  */
 public class DvcController {
 
@@ -32,11 +30,9 @@ public class DvcController {
     private static ContentObserver volumeObserver;
     private static Handler handler;
     private static boolean suppressObserver = false;
-
-    private static final float MUTE_THRESHOLD = -30.0f; // dB — silence
-
-    // Track current gain so the observer knows whether to re-force max
-    private static float currentGainDb = 0.0f;
+    private static Runnable pendingRaise;
+    /** Longer than the AudioTrack buffer the processed audio sits in. */
+    private static final long RAISE_DELAY_MS = 800;
 
     // EventChannel sink for forwarding volume-button events to Flutter
     private static EventChannel.EventSink eventSink;
@@ -66,32 +62,63 @@ public class DvcController {
 
     /**
      * Enable DVC: save current system volume, set STREAM_MUSIC to max,
-     * enable LoudnessEnhancer, and register the volume observer.
+     * and register the volume observer.
      */
     public static void enable(Context context) {
         if (audioManager == null) init(context);
         if (dvcActive) return;
 
         savedSystemVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-        int maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
 
-        suppressObserver = true;
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
-        suppressObserver = false;
-
-        LoudnessControl.enable(true);
         dvcActive = true;
+
+        // The master volume is applied inside the player's AudioProcessor,
+        // upstream of the AudioTrack buffer, so at least RAISE_DELAY_MS of
+        // audio processed at unity gain is still queued when DVC turns on.
+        // Raising the system stream at once would play that audio at full
+        // device volume. When audio is playing, wait for the buffer to drain.
+        // Side effect (accepted): DVC volume-key changes are heard about
+        // one buffer (~0.25 s) late, because the same buffer sits between
+        // the processor and the speaker.
+        if (audioManager.isMusicActive()) {
+            cancelPendingRaise();
+            pendingRaise = new Runnable() {
+                @Override
+                public void run() {
+                    pendingRaise = null;
+                    if (dvcActive) raiseSystemVolumeToMax();
+                }
+            };
+            handler.postDelayed(pendingRaise, RAISE_DELAY_MS);
+        } else {
+            raiseSystemVolumeToMax();
+        }
 
         registerVolumeObserver(context);
     }
 
+    private static void raiseSystemVolumeToMax() {
+        if (audioManager == null) return;
+        int maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        suppressObserver = true;
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
+        suppressObserver = false;
+    }
+
+    private static void cancelPendingRaise() {
+        if (pendingRaise != null && handler != null) {
+            handler.removeCallbacks(pendingRaise);
+        }
+        pendingRaise = null;
+    }
+
     /**
-     * Disable DVC: unregister observer, restore saved system volume,
-     * disable LoudnessEnhancer.
+     * Disable DVC: unregister observer and restore the saved system volume.
      */
     public static void disable(Context context) {
         if (!dvcActive) return;
 
+        cancelPendingRaise();
         unregisterVolumeObserver(context);
 
         if (savedSystemVolume >= 0 && audioManager != null) {
@@ -100,41 +127,18 @@ public class DvcController {
             suppressObserver = false;
         }
 
-        LoudnessControl.enable(false);
         dvcActive = false;
         savedSystemVolume = -1;
     }
 
-    /**
-     * Apply DVC gain in dB.  System volume stays at max for full DAC range.
-     * LoudnessEnhancer handles the entire gain range uniformly (negative =
-     * attenuation, zero = unity, positive = boost).  Only at true silence
-     * we mute the system stream.
-     *
-     * @param gainDb gain in dB (e.g. -30 to +30)
-     */
-    public static void setGain(float gainDb) {
-        currentGainDb = gainDb;
-        if (!dvcActive || audioManager == null) return;
-
+    /** Put the system music stream back at maximum if something moved it. */
+    private static void holdSystemVolumeAtMax() {
+        if (!dvcActive || audioManager == null || pendingRaise != null) return;
         int maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-
-        if (gainDb <= MUTE_THRESHOLD) {
-            // True silence — mute system stream
+        if (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) != maxVol) {
             suppressObserver = true;
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0);
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
             suppressObserver = false;
-            LoudnessControl.setTargetGain(Math.round(MUTE_THRESHOLD * 100));
-        } else {
-            // Ensure system volume is at max
-            int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-            if (current != maxVol) {
-                suppressObserver = true;
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
-                suppressObserver = false;
-            }
-            // Convert dB to millibels — LoudnessEnhancer handles full range
-            LoudnessControl.setTargetGain(Math.round(gainDb * 100));
         }
     }
 
@@ -148,7 +152,7 @@ public class DvcController {
     public static boolean onVolumeButton(String direction) {
         if (!dvcActive) return false;
 
-        // Send event to Flutter (Dart side adjusts gainDb and calls setGain)
+        // Send event to Flutter (Dart side adjusts the DVC level)
         if (eventSink != null) {
             eventSink.success(direction);
         }
@@ -181,8 +185,7 @@ public class DvcController {
             @Override
             public void onChange(boolean selfChange) {
                 if (suppressObserver || !dvcActive || audioManager == null) return;
-                // Re-apply the correct system volume for current gain level
-                setGain(currentGainDb);
+                holdSystemVolumeAtMax();
             }
         };
         context.getContentResolver().registerContentObserver(

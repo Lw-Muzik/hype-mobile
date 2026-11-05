@@ -412,7 +412,7 @@
     if (tapClass) {
         id tap = [tapClass performSelector:@selector(shared)];
         if (tap) {
-            [tap performSelector:@selector(installTapOnPlayerItem:) withObject:playerItem];
+            [tap performSelector:@selector(installTapOnPlayerItem:forPlayer:) withObject:playerItem withObject:_playerId];
         }
     }
 
@@ -1351,6 +1351,12 @@
 }
 
 - (void)dispose:(BOOL)calledFromDealloc {
+    // Free this player's DSP engine (destroyed once its last tap is gone).
+    Class tapClass = NSClassFromString(@"HypeAudioTap");
+    if (tapClass && _playerId) {
+        id tap = [tapClass performSelector:@selector(shared)];
+        if (tap) [tap performSelector:@selector(releasePlayer:) withObject:_playerId];
+    }
     if (!_player) return;
     if (_processingState != psIdle) {
         [_player pause];

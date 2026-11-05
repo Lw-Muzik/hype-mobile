@@ -80,7 +80,7 @@ class LibraryController extends ChangeNotifier {
 
   Future<void> rescan() => scan(force: true);
 
-  /// Per-category pinch-zoom level (grid extent), Poweramp-style: each library
+  /// Per-category pinch-zoom level (grid extent): each library
   /// category remembers its own zoom independently. Read once at tab build;
   /// written on pinch release — no notify, nothing else depends on it live.
   double gridExtentFor(String tab, {required double fallback}) =>

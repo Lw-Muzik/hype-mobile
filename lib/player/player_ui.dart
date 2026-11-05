@@ -108,7 +108,7 @@ class _PlayerState extends State<Player> with TickerProviderStateMixin {
     ).animate(_animationController!);
   }
 
-  // ── Slide-down-to-dismiss (Poweramp-style) ────────────────────────────────
+  // ── Slide-down-to-dismiss ────────────────────────────────
   // A downward drag/fling on the card pops the player; its route (playerTo)
   // reverse-slides the player DOWN while the framework paints the list route
   // beneath, and PlayerRevealBus scrolls that list to the now-playing row. We
@@ -535,8 +535,8 @@ class _CardDeck extends StatelessWidget {
                     );
                   }
                   return InkWell(
-                    // Tap the cover to return to the now-playing list (Poweramp:
-                    // tap OR swipe-down both go back to the current category).
+                    // Tap the cover to return to the now-playing list (tap OR
+                    // swipe-down both go back to the current category).
                     onTap: () {
                       PlayerRevealBus.revealNowPlaying();
                       Routes.pop(context);

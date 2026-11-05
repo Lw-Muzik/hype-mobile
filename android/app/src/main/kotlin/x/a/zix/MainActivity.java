@@ -692,28 +692,6 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             int strengthBB = call.argument("strength");
                             BassEq.setStrength(strengthBB);
                             break;
-                        // loudnessEnhancer (legacy init — still needed for session binding)
-                        case "initLoudnessEnhancer":
-                            int sessionIdL = call.argument("sessionId");
-                            LoudnessControl.init(sessionIdL);
-                            break;
-                        case "enableLoudnessEnhancer":
-                            boolean enableL = call.argument("enableLoud");
-                            LoudnessControl.enable(enableL);
-                            break;
-                        case "loudnessEnhancerEnabled":
-                            boolean enabled = LoudnessControl.isEnabled();
-                            result.success(enabled);
-                            break;
-                        case "loudnessEnhancerStrength":
-                            float strengthL = LoudnessControl.getTargetGain();
-                            result.success(strengthL);
-                            break;
-                        case "setLoudnessEnhancerStrength":
-                            int strengthLL = call.argument("strength");
-                            LoudnessControl.setTargetGain(strengthLL);
-                            break;
-
                         // ==================== DVC (Direct Volume Control) ====================
                         case "enableDvc":
                             DvcController.enable(getApplicationContext());
@@ -722,15 +700,6 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         case "disableDvc":
                             DvcController.disable(getApplicationContext());
                             result.success(null);
-                            break;
-                        case "setDvcGain":
-                            double dvcGainDb = call.argument("gain");
-                            DvcController.setGain((float) dvcGainDb);
-                            result.success(null);
-                            break;
-                        case "getDvcGain":
-                            double dvcGainVal = (double) LoudnessControl.getTargetGain();
-                            result.success(dvcGainVal);
                             break;
                         case "isDvcActive":
                             result.success(DvcController.isActive());
@@ -816,24 +785,6 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         case "dspSetLimiterEnabled": {
                             boolean en = call.argument("enabled");
                             RoomEffectsProcessor.broadcastLimiterEnabled(en);
-                            result.success(null);
-                            break;
-                        }
-                        case "dspSetLimiterCeiling": {
-                            double v = call.argument("value");
-                            RoomEffectsProcessor.broadcastLimiterCeiling((float) v);
-                            result.success(null);
-                            break;
-                        }
-                        case "dspSetLimiterRelease": {
-                            double v = call.argument("value");
-                            RoomEffectsProcessor.broadcastLimiterRelease((float) v);
-                            result.success(null);
-                            break;
-                        }
-                        case "dspSetLimiterKnee": {
-                            double v = call.argument("value");
-                            RoomEffectsProcessor.broadcastLimiterKnee((float) v);
                             result.success(null);
                             break;
                         }
@@ -1012,15 +963,46 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             result.success(null);
                             break;
                         }
-                        case "dspSetStereoExpandEnabled": {
-                            boolean en = call.argument("enabled");
-                            RoomEffectsProcessor.broadcastStereoExpandEnabled(en);
+                        case "dspSetSpeakerPreampDb": {
+                            double v = call.argument("value");
+                            RoomEffectsProcessor.broadcastSpeakerPreampDb((float) v);
                             result.success(null);
                             break;
                         }
-                        case "dspSetStereoWidth": {
+                        case "dspSetHeadroomDb": {
                             double v = call.argument("value");
-                            RoomEffectsProcessor.broadcastStereoWidth((float) v);
+                            RoomEffectsProcessor.broadcastHeadroomDb((float) v);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetTrackGainDb": {
+                            String playerId = call.argument("playerId");
+                            double v = call.argument("value");
+                            RoomEffectsProcessor.setTrackGainDb(playerId, (float) v);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetMasterVolumeDb": {
+                            double v = call.argument("value");
+                            RoomEffectsProcessor.broadcastMasterVolumeDb((float) v);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetMono": {
+                            boolean en = call.argument("enabled");
+                            RoomEffectsProcessor.broadcastMono(en);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetBalance": {
+                            double v = call.argument("value");
+                            RoomEffectsProcessor.broadcastBalance((float) v);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetStereoExpand": {
+                            double v = call.argument("value");
+                            RoomEffectsProcessor.broadcastStereoExpand((float) v);
                             result.success(null);
                             break;
                         }

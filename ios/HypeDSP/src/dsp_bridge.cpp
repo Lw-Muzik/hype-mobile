@@ -44,6 +44,30 @@ void dsp_set_preamp_gain(void* handle, float dB) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setPreampGain(dB);
 }
 
+void dsp_set_speaker_preamp_db(void* handle, float dB) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setSpeakerPreampDb(dB);
+}
+
+void dsp_set_headroom_db(void* handle, float dB) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setHeadroomDb(dB);
+}
+
+void dsp_set_track_gain_db(void* handle, float dB) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setTrackGainDb(dB);
+}
+
+void dsp_set_master_volume_db(void* handle, float dB) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setMasterVolumeDb(dB);
+}
+
+void dsp_set_mono(void* handle, bool enabled) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setMono(enabled);
+}
+
+void dsp_set_balance(void* handle, float balance) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setBalance(balance);
+}
+
 float dsp_get_preamp_gain(void* handle) {
     // The engine doesn't expose a getter, but we track it via cached params
     return 0.0f;
@@ -205,13 +229,9 @@ void dsp_set_reverb_wet_dry(void* handle, float v) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setReverbWetDry(v);
 }
 
-// Stereo expander
-void dsp_set_stereo_expand_enabled(void* handle, bool enabled) {
-    if (handle) static_cast<RoomDSPEngine*>(handle)->setStereoExpandEnabled(enabled);
-}
-
-void dsp_set_stereo_width(void* handle, float width) {
-    if (handle) static_cast<RoomDSPEngine*>(handle)->setStereoWidth(width);
+// Stereo Expand (amount 0..1; 0 = off)
+void dsp_set_stereo_expand(void* handle, float amount) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setStereoExpand(amount);
 }
 
 // Crossfeed

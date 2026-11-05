@@ -10,7 +10,7 @@ const double kLibraryRowExtent = 72.0;
 
 /// Shared list-mode row for the Albums / Artists / Genres / Folders tabs —
 /// what a grid card collapses into when the user pinches in far enough to
-/// cross into list mode (Poweramp-style zoom levels). Deliberately NO Hero
+/// cross into list mode (zoom levels per category). Deliberately NO Hero
 /// here: the matching grid card carries the Hero, and during the pinch
 /// crossfade both layouts are mounted at once, so duplicate tags would
 /// collide.

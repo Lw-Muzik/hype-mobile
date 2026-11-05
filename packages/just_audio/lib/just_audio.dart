@@ -127,6 +127,10 @@ class AudioPlayer {
   /// The id of the current platform player, or null before one exists.
   String? get platformId => _id;
 
+  /// The id native code knows this player by ('' once disposed). It changes
+  /// whenever the platform player is rebuilt; see [platformIdStream].
+  String get playerId => _id ?? '';
+
   /// Emits whenever the platform player is replaced. See [_platformIdSubject].
   Stream<String?> get platformIdStream => _platformIdSubject.stream;
 

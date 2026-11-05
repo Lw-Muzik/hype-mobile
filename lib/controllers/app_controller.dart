@@ -5,6 +5,7 @@ import 'package:eq_app/global/index.dart';
 
 import '/exports/exports.dart';
 
+import '../audio/dsp_core.dart';
 import '../data/library_repository.dart';
 import '../helpers/audio_handler.dart';
 import '../player/queue_sync.dart';
@@ -13,6 +14,7 @@ import '../Helpers/Channel.dart';
 import '../helpers/index.dart';
 import '../models/eq_models.dart';
 import '../models/room_preset.dart';
+import '../models/stereo_expand.dart';
 
 import 'dart:io';
 
@@ -166,7 +168,6 @@ class AppController with ChangeNotifier implements StationSink {
   List<ParametricPoint> _parametricPoints = [];
 
   // Preamp & MBC state
-  double _preampGain = 0.0; // 0-15 dB
   bool _mbcEnabled = false;
 
   // Room effects state (custom DSP engine — float params 0.0-1.0)
@@ -179,9 +180,8 @@ class AppController with ChangeNotifier implements StationSink {
   double _dspWetDry = 0.0;
   String _activeRoomPresetName = 'Off';
 
-  // M/S stereo expander
-  bool _stereoExpandEnabled = false;
-  double _stereoWidth = 1.0; // 0.0=mono, 1.0=normal, 2.0=max
+  // Stereo Expand: 0..1, 0 = off — see `models/stereo_expand.dart`.
+  double _stereoExpand = StereoExpand.initial;
 
   // BS2B crossfeed
   bool _crossfeedEnabled = false;
@@ -209,7 +209,8 @@ class AppController with ChangeNotifier implements StationSink {
   double _trebleQ = 0.707; // 0.1-4.0
 
   // Output limiter (on by default)
-  bool _limiterEnabled = true;
+  /// Headroom, balance, mono, limiter, preamp and tempo (see dsp_core.dart).
+  late DspCoreSettings _dspCore;
 
   // Speaker correction EQ (AutoEq headphone profiles)
   bool _speakerEqEnabled = false;
@@ -291,15 +292,11 @@ class AppController with ChangeNotifier implements StationSink {
   String get lastOutputDevice => _lastOutputDevice;
   bool get linkAllDevices => _linkAllDevices;
   List<ParametricPoint> get parametricPoints => _parametricPoints;
-  double get preampGain => _preampGain;
+  double get preampGain => _dspCore.preampDb;
   bool get mbcEnabled => _mbcEnabled;
 
-  set preampGain(double value) {
-    _preampGain = value.clamp(-15.0, 15.0);
-    _prefs.setDouble("preampGain", _preampGain);
-    Channel.setPreamp(_preampGain);
-    notifyListeners();
-  }
+  set preampGain(double value) =>
+      dspCore = _dspCore.copyWith(preampDb: value);
 
   // Tone controls getters/setters
   bool get toneEnabled => _toneEnabled;
@@ -309,7 +306,9 @@ class AppController with ChangeNotifier implements StationSink {
   double get trebleGain => _trebleGain;
   double get trebleFreq => _trebleFreq;
   double get trebleQ => _trebleQ;
-  bool get limiterEnabled => _limiterEnabled;
+  bool get limiterEnabled => _dspCore.limiter;
+
+  DspCoreSettings get dspCore => _dspCore;
 
   set toneEnabled(bool value) {
     _toneEnabled = value;
@@ -360,12 +359,38 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
-  set limiterEnabled(bool value) {
-    _limiterEnabled = value;
-    _prefs.setBool("limiterEnabled", value);
-    Channel.dspSetLimiterEnabled(value);
+  set limiterEnabled(bool value) =>
+      dspCore = _dspCore.copyWith(limiter: value);
+
+  /// Saves the core settings and pushes only the values that changed.
+  set dspCore(DspCoreSettings value) {
+    final old = _dspCore;
+    _dspCore = value;
+    unawaited(value.save(_prefs));
+    if (value.headroomDb != old.headroomDb) _pushHeadroom();
+    if (value.balance != old.balance) Channel.dspSetBalance(value.balance);
+    if (value.mono != old.mono) Channel.dspSetMono(value.mono);
+    if (value.limiter != old.limiter) {
+      Channel.dspSetLimiterEnabled(value.limiter);
+    }
+    if (value.preampDb != old.preampDb) Channel.setPreamp(value.preampDb);
+    if (value.tempoOn != old.tempoOn || value.tempo != old.tempo) {
+      _pushTempo();
+    }
     notifyListeners();
   }
+
+  /// Headroom is skipped while DVC owns the level (Android only).
+  void _pushHeadroom() => Channel.dspSetHeadroomDb(
+    headroomFor(
+      dvcActive: Platform.isAndroid && _dvcEnabled,
+      headroomDb: _dspCore.headroomDb,
+    ),
+  );
+
+  void _pushTempo() => unawaited(
+    _handler.setTempo(_dspCore.tempoOn ? _dspCore.tempo : 1.0),
+  );
 
   set mbcEnabled(bool value) {
     _mbcEnabled = value;
@@ -403,6 +428,10 @@ class AppController with ChangeNotifier implements StationSink {
 
     final bands = profile.filters.map((f) => f.toNativeMap()).toList();
     await Channel.setSpeakerEqBands(bands);
+    // The profile's own preamp (AutoEq profiles sit well below 0 dB) keeps
+    // the corrected response from clipping; the engine adds it to the input
+    // gain while the speaker EQ is on. This runs from _applyAllDspParams too.
+    await Channel.dspSetSpeakerPreampDb(profile.preamp);
     await Channel.setSpeakerEqEnabled(true);
     notifyListeners();
   }
@@ -413,6 +442,7 @@ class AppController with ChangeNotifier implements StationSink {
     _prefs.remove("activeSpeakerProfile");
     _prefs.setBool("speakerEqEnabled", false);
     await Channel.clearSpeakerEq();
+    await Channel.dspSetSpeakerPreampDb(0.0);
     await Channel.setSpeakerEqEnabled(false);
     notifyListeners();
   }
@@ -475,7 +505,7 @@ class AppController with ChangeNotifier implements StationSink {
       name: name,
       graphicGains: List<double>.from(_graphicBandGains),
       parametric: _parametricPoints.map((p) => p.copyWith()).toList(),
-      preamp: _preampGain,
+      preamp: _dspCore.preampDb,
       deviceType: _linkAllDevices ? null : _lastOutputDevice,
     );
     _prefs.setString("eqPresets", EqPreset.encodeList(_savedPresets));
@@ -575,7 +605,7 @@ class AppController with ChangeNotifier implements StationSink {
         name: '_device_$_lastOutputDevice',
         graphicGains: List<double>.from(_graphicBandGains),
         parametric: _parametricPoints.map((p) => p.copyWith()).toList(),
-        preamp: _preampGain,
+        preamp: _dspCore.preampDb,
         deviceType: _lastOutputDevice,
       );
       _prefs.setString("eqPresets", EqPreset.encodeList(_savedPresets));
@@ -646,19 +676,34 @@ class AppController with ChangeNotifier implements StationSink {
         _dvcGain = -30.0;
         _prefs.setDouble("dvcGain", _dvcGain);
       }
-      Channel.enableDvc();
-      Channel.setDvcGain(_dvcGain);
-    } else {
-      Channel.disableDvc();
     }
+    for (final step in dvcToggleSteps(enable: value)) {
+      switch (step) {
+        case DvcStep.pushMasterVolume:
+          _pushMasterVolume();
+        case DvcStep.enableDvc:
+          Channel.enableDvc();
+        case DvcStep.disableDvc:
+          Channel.disableDvc();
+      }
+    }
+    _pushHeadroom();
     notifyListeners();
   }
 
   set dvcGain(double value) {
     _prefs.setDouble("dvcGain", value);
     _dvcGain = value;
-    Channel.setDvcGain(value);
+    _pushMasterVolume();
     notifyListeners();
+  }
+
+  /// DVC level -> every player's engine master volume (0 dB when DVC is off).
+  void _pushMasterVolume() {
+    if (!Platform.isAndroid) return; // iOS has no DVC; master stays at 0 dB
+    Channel.dspSetMasterVolumeDb(
+      masterVolumeFor(dvcEnabled: _dvcEnabled, dvcGainDb: _dvcGain),
+    );
   }
 
   set dvcFineSteps(bool value) {
@@ -831,8 +876,8 @@ class AppController with ChangeNotifier implements StationSink {
 
     // Apply DVC state on startup
     if (_dvcEnabled) {
+      _pushMasterVolume(); // before DVC raises the system stream
       Channel.enableDvc();
-      Channel.setDvcGain(_dvcGain);
     }
 
     // Global EQ: check availability and restore state
@@ -867,8 +912,8 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   /// Listen to audio session ID changes and rebind session-bound native effects.
-  /// EQ, MBC, and room effects are NOT session-bound (C++ pipeline), only
-  /// LoudnessEnhancer (DVC) needs rebinding.
+  /// EQ, MBC, room effects and the DVC master volume live in the C++ engine
+  /// and are not session-bound, so nothing here needs re-applying.
   void _bindAudioSessionId() {
     _sessionIdSub?.cancel();
     _sessionIdSub = _handler.player.androidAudioSessionIdStream.listen((
@@ -876,11 +921,6 @@ class AppController with ChangeNotifier implements StationSink {
     ) {
       if (sessionId != null) {
         Channel.setSessionId(sessionId);
-        // Re-apply DVC state after session change (LoudnessEnhancer is session-bound)
-        if (_dvcEnabled) {
-          Channel.enableDvc();
-          Channel.setDvcGain(_dvcGain);
-        }
       }
     });
   }
@@ -1730,6 +1770,10 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _loadSettings() {
+    // First: it inspects which prefs earlier versions wrote.
+    _dspCore = DspCoreSettings.load(_prefs, isIos: Platform.isIOS);
+    // Pin the install-dependent headroom default so it survives later launches.
+    if (!_prefs.containsKey("dspHeadroomDb")) unawaited(_dspCore.save(_prefs));
     _appMode = AppMode.values[_prefs.getInt("appMode") ?? 0];
     _enableEffects = _prefs.getBool("enableEffects") ?? false;
     _selectedPreset = _prefs.getInt("selectedPreset") ?? 0;
@@ -1786,7 +1830,6 @@ class AppController with ChangeNotifier implements StationSink {
     // EQ band count
     _eqBandCount = _prefs.getInt("eqBandCount") ?? 32;
     // Preamp & MBC
-    _preampGain = _prefs.getDouble("preampGain") ?? 0.0;
     _mbcEnabled = _prefs.getBool("mbcEnabled") ?? false;
     // Speaker correction EQ
     _speakerEqEnabled = _prefs.getBool("speakerEqEnabled") ?? false;
@@ -1844,8 +1887,13 @@ class AppController with ChangeNotifier implements StationSink {
     _dspDiffusion = _prefs.getDouble("dspDiffusion") ?? 0.0;
     _dspWetDry = _prefs.getDouble("dspWetDry") ?? 0.0;
     _activeRoomPresetName = _prefs.getString("activeRoomPresetName") ?? 'Off';
-    _stereoExpandEnabled = _prefs.getBool("stereoExpandEnabled") ?? false;
-    _stereoWidth = _prefs.getDouble("dspStereoWidth") ?? 1.0;
+    _stereoExpand = StereoExpand.clamp(
+      _prefs.getDouble(StereoExpand.prefKey) ??
+          StereoExpand.migrate(
+            legacyEnabled: _prefs.getBool(StereoExpand.legacyEnabledKey),
+            legacyWidth: _prefs.getDouble(StereoExpand.legacyWidthKey),
+          ),
+    );
     _crossfeedEnabled = _prefs.getBool("crossfeedEnabled") ?? false;
     _crossfeedCutoff = _prefs.getDouble("crossfeedCutoff") ?? 700.0;
     _crossfeedFeed = _prefs.getDouble("crossfeedFeed") ?? 4.5;
@@ -1866,8 +1914,6 @@ class AppController with ChangeNotifier implements StationSink {
     _trebleGain = _prefs.getDouble("trebleGain") ?? 0.0;
     _trebleFreq = _prefs.getDouble("trebleFreq") ?? 10000.0;
     _trebleQ = _prefs.getDouble("trebleQ") ?? 0.707;
-    // Output limiter
-    _limiterEnabled = _prefs.getBool("limiterEnabled") ?? true;
     // Load speaker profiles from asset, then apply DSP params
     loadSpeakerProfiles().then((_) => _applyAllDspParams());
   }
@@ -2272,25 +2318,23 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
-  bool get stereoExpandEnabled => _stereoExpandEnabled;
-  set stereoExpandEnabled(bool v) {
-    _prefs.setBool("stereoExpandEnabled", v);
-    _stereoExpandEnabled = v;
-    Channel.dspSetStereoExpandEnabled(v);
-    if (v && _crossfeedEnabled) {
-      // Mutually exclusive — disable crossfeed
+  /// Stereo Expand, 0..1 (0–100 %). Zero is off.
+  double get stereoExpand => _stereoExpand;
+
+  /// Whether Stereo Expand is doing anything — any amount above zero.
+  bool get stereoExpandEnabled => _stereoExpand > 0;
+
+  set stereoExpand(double v) {
+    final amount = StereoExpand.clamp(v);
+    _prefs.setDouble(StereoExpand.prefKey, amount);
+    _stereoExpand = amount;
+    Channel.dspSetStereoExpand(amount);
+    if (amount > 0 && _crossfeedEnabled) {
+      // Mutually exclusive — one widens, the other narrows.
       _crossfeedEnabled = false;
       _prefs.setBool("crossfeedEnabled", false);
       Channel.dspSetCrossfeedEnabled(false);
     }
-    notifyListeners();
-  }
-
-  double get stereoWidth => _stereoWidth;
-  set stereoWidth(double v) {
-    _prefs.setDouble("dspStereoWidth", v);
-    _stereoWidth = v;
-    Channel.dspSetStereoWidth(v);
     notifyListeners();
   }
 
@@ -2366,11 +2410,11 @@ class AppController with ChangeNotifier implements StationSink {
     _prefs.setBool("crossfeedEnabled", v);
     _crossfeedEnabled = v;
     Channel.dspSetCrossfeedEnabled(v);
-    if (v && _stereoExpandEnabled) {
-      // Mutually exclusive — disable stereo expand
-      _stereoExpandEnabled = false;
-      _prefs.setBool("stereoExpandEnabled", false);
-      Channel.dspSetStereoExpandEnabled(false);
+    if (v && stereoExpandEnabled) {
+      // Mutually exclusive — stereo expand back to 0
+      _stereoExpand = 0;
+      _prefs.setDouble(StereoExpand.prefKey, 0);
+      Channel.dspSetStereoExpand(0);
     }
     notifyListeners();
   }
@@ -2407,7 +2451,7 @@ class AppController with ChangeNotifier implements StationSink {
     }
     // EQ
     Channel.enableEq(_graphicEqEnabled);
-    Channel.setPreamp(_preampGain);
+    Channel.setPreamp(_dspCore.preampDb);
     Channel.setGraphicAllBands(_graphicBandGains);
     _applyParametricToNative();
     // MBC
@@ -2424,8 +2468,7 @@ class AppController with ChangeNotifier implements StationSink {
     Channel.dspSetPreDelay(_dspPreDelay);
     Channel.dspSetDiffusion(_dspDiffusion);
     Channel.dspSetReverbWetDry(_dspWetDry);
-    Channel.dspSetStereoExpandEnabled(_stereoExpandEnabled);
-    Channel.dspSetStereoWidth(_stereoWidth);
+    Channel.dspSetStereoExpand(_stereoExpand);
     Channel.dspSetCrossfeedEnabled(_crossfeedEnabled);
     Channel.dspSetCrossfeedParams(_crossfeedCutoff, _crossfeedFeed);
     Channel.dspSetSurround3dEnabled(_surround3dEnabled);
@@ -2440,7 +2483,12 @@ class AppController with ChangeNotifier implements StationSink {
     Channel.dspSetTrebleFreq(_trebleFreq);
     Channel.dspSetTrebleQ(_trebleQ);
     // Output limiter
-    Channel.dspSetLimiterEnabled(_limiterEnabled);
+    Channel.dspSetLimiterEnabled(_dspCore.limiter);
+    // Core: headroom, balance, mono, tempo
+    _pushHeadroom();
+    Channel.dspSetBalance(_dspCore.balance);
+    Channel.dspSetMono(_dspCore.mono);
+    _pushTempo();
   }
 
   /// Applies a room preset, updating all parameters at once.

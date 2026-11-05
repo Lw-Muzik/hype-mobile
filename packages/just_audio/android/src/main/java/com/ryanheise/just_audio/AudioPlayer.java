@@ -891,8 +891,14 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
             // Each player gets its own instance to avoid shared buffer corruption during crossfade
             try {
                 Class<?> procClass = Class.forName("x.a.zix.RoomEffectsProcessor");
-                java.lang.reflect.Method createInstance = procClass.getMethod("createPlayerInstance");
-                Object proc = createInstance.invoke(null);
+                Object proc;
+                try {
+                    proc = procClass.getMethod("createPlayerInstance", String.class)
+                        .invoke(null, id);
+                } catch (NoSuchMethodException noIdForm) {
+                    Log.w("just_audio", "createPlayerInstance(String) missing; falling back");
+                    proc = procClass.getMethod("createPlayerInstance").invoke(null);
+                }
                 if (proc instanceof AudioProcessor) {
                     discoveredProcessors.add((AudioProcessor) proc);
                     Log.d("just_audio", "AudioProcessor created: " + procClass.getSimpleName());

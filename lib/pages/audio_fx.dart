@@ -36,8 +36,8 @@ class _AudioFxState extends State<AudioFx> {
                       buildSlider(
                         "Preamp",
                         controller.preampGain,
-                        -15,
-                        15,
+                        -24,
+                        24,
                         (x) => controller.preampGain = x,
                       ),
                     ],

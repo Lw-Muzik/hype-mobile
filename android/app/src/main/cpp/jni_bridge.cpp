@@ -136,18 +136,12 @@ Java_x_a_zix_RoomEffectsProcessor_nativeSetReverbWetDry(JNIEnv*, jobject, jlong 
     if (engine) engine->setReverbWetDry(v);
 }
 
-// --- Stereo expander controls ---
+// --- Stereo Expand (amount 0..1; 0 = off) ---
 
 JNIEXPORT void JNICALL
-Java_x_a_zix_RoomEffectsProcessor_nativeSetStereoExpandEnabled(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_x_a_zix_RoomEffectsProcessor_nativeSetStereoExpand(JNIEnv*, jobject, jlong handle, jfloat amount) {
     auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
-    if (engine) engine->setStereoExpandEnabled(enabled);
-}
-
-JNIEXPORT void JNICALL
-Java_x_a_zix_RoomEffectsProcessor_nativeSetStereoWidth(JNIEnv*, jobject, jlong handle, jfloat width) {
-    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
-    if (engine) engine->setStereoWidth(width);
+    if (engine) engine->setStereoExpand(amount);
 }
 
 // --- Crossfeed controls ---
@@ -204,6 +198,42 @@ JNIEXPORT void JNICALL
 Java_x_a_zix_RoomEffectsProcessor_nativeSetPreampGain(JNIEnv*, jobject, jlong handle, jfloat dB) {
     auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
     if (engine) engine->setPreampGain(dB);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetSpeakerPreampDb(JNIEnv*, jobject, jlong handle, jfloat dB) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setSpeakerPreampDb(dB);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetHeadroomDb(JNIEnv*, jobject, jlong handle, jfloat v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setHeadroomDb(v);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetTrackGainDb(JNIEnv*, jobject, jlong handle, jfloat v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setTrackGainDb(v);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetMasterVolumeDb(JNIEnv*, jobject, jlong handle, jfloat v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setMasterVolumeDb(v);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetMono(JNIEnv*, jobject, jlong handle, jboolean v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setMono(v == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetBalance(JNIEnv*, jobject, jlong handle, jfloat v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setBalance(v);
 }
 
 JNIEXPORT void JNICALL

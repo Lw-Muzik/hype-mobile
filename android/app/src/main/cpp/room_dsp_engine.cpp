@@ -48,11 +48,6 @@ void RoomDSPEngine::init(int sampleRate, int channels) {
     channels_ = channels;
     stemTap_.setSampleRate(channels == 2 ? sampleRate : 0);
 
-    // Compute sample-rate-adaptive smoothing coefficient.
-    // Target: ~1ms time constant at any sample rate.
-    // Formula: 1 - exp(-1 / (tau * sampleRate)), tau = 0.001s
-    smoothCoeff_ = 1.0f - std::exp(-1.0f / (0.001f * (float)sampleRate));
-
     // EQ init
     graphicEq_.initGraphic((float)sampleRate, MAX_EQ_BANDS);
     parametricEq_.init((float)sampleRate, MAX_EQ_BANDS);
@@ -73,8 +68,9 @@ void RoomDSPEngine::init(int sampleRate, int channels) {
     surround3d_.init(static_cast<float>(sampleRate));
     crossfeed_.configure(Crossfeed::kChuMoyCutoff, Crossfeed::kChuMoyFeed);
 
-    // Reset smoothed gain to target
-    preampLinearSmoothed_ = preampLinear_;
+    inputGain_.reset();
+    masterVolume_.reset();
+    balance_.reset();
 }
 
 void RoomDSPEngine::reset() {
@@ -86,24 +82,61 @@ void RoomDSPEngine::reset() {
     mbc_.reinit((float)sampleRate_);
     reverb_.reset();
     stereoExpander_.reset();
+    inputGain_.reset();
+    masterVolume_.reset();
+    balance_.reset();
     crossfeed_.reset();
     // Surround3D has delay lines and reverb tails; re-init clears them.
     surround3d_.init(static_cast<float>(sampleRate_));
 }
 
+void RoomDSPEngine::updateInputGain() {
+    float db = trackGainDb_ + headroomDb_;
+    if (eqEnabled_.load() || speakerEqEnabled_.load()) db += preampGainDb_;
+    if (speakerEqEnabled_.load()) db += speakerPreampDb_;
+    inputGain_.setDb(db);
+}
+
+void RoomDSPEngine::setEqEnabled(bool enabled) {
+    eqEnabled_.store(enabled);
+    updateInputGain();
+}
+
+void RoomDSPEngine::setSpeakerEqEnabled(bool enabled) {
+    speakerEqEnabled_.store(enabled);
+    updateInputGain();
+}
+
+void RoomDSPEngine::setSpeakerPreampDb(float dB) {
+    speakerPreampDb_ = std::max(-24.0f, std::min(24.0f, dB));
+    updateInputGain();
+}
+
 void RoomDSPEngine::setPreampGain(float dB) {
-    preampGainDb_ = std::max(-15.0f, std::min(15.0f, dB));
-    recomputeAutoGain();
+    preampGainDb_ = std::max(-24.0f, std::min(24.0f, dB));
+    updateInputGain();
+}
+
+void RoomDSPEngine::setHeadroomDb(float dB) {
+    headroomDb_ = std::max(-10.0f, std::min(0.0f, dB));
+    updateInputGain();
+}
+
+void RoomDSPEngine::setTrackGainDb(float dB) {
+    trackGainDb_ = std::max(-30.0f, std::min(24.0f, dB));
+    updateInputGain();
+}
+
+void RoomDSPEngine::setMasterVolumeDb(float dB) {
+    masterVolume_.setDb(std::max(-30.0f, std::min(0.0f, dB)), /*muteAtFloor=*/true);
 }
 
 void RoomDSPEngine::setGraphicBandGain(int band, float dB) {
     graphicEq_.setBandGain(band, dB);
-    recomputeAutoGain();
 }
 
 void RoomDSPEngine::setGraphicAllBands(const float* gains, int count) {
     graphicEq_.setAllGains(gains, count);
-    recomputeAutoGain();
 }
 
 void RoomDSPEngine::setParametricBand(int band, float freq, float gainDb,
@@ -111,7 +144,6 @@ void RoomDSPEngine::setParametricBand(int band, float freq, float gainDb,
     BiquadType type = static_cast<BiquadType>(
         std::min(std::max(filterType, 0), 6));
     parametricEq_.setBand(band, freq, gainDb, q, type, enabled);
-    recomputeAutoGain();
 }
 
 void RoomDSPEngine::setParametricAllBands(const float* freqs, const float* gains,
@@ -121,83 +153,6 @@ void RoomDSPEngine::setParametricAllBands(const float* freqs, const float* gains
         parametricEq_.setBand(i, freqs[i], gains[i], qs[i],
                               BiquadType::Peaking, true);
     }
-    recomputeAutoGain();
-}
-
-void RoomDSPEngine::recomputeAutoGain() {
-    // Full auto-gain: reduce preamp by exactly the peak boost amount.
-    //
-    // This guarantees zero clipping for the loudest boosted band.
-    // The EQ effect is pure frequency SHAPING — boosted frequencies stand
-    // out because everything else is lowered, not because the overall level
-    // increases. This is how professional hardware EQs work (RME, SSL, Neve).
-    //
-    // We use the SINGLE highest band peak (not cumulative sums of adjacent
-    // bands), so the reduction is minimal and the EQ sounds impactful.
-    // Adjacent band overlap (~3 dB worst case) is caught transparently
-    // by the always-on output limiter — well within its clean range.
-
-    // Find the single highest positive boost across all EQ sources
-    float graphicPeak = graphicEq_.getPeakGain();
-    float parametricPeak = parametricEq_.getPeakGain();
-    float peakBoost = std::max(graphicPeak, parametricPeak);
-
-    // Speaker correction EQ: include its peak in auto-gain
-    if (speakerEqEnabled_.load(std::memory_order_relaxed)) {
-        float speakerPeak = speakerEq_.getPeakGain();
-        peakBoost = std::max(peakBoost, speakerPeak);
-    }
-
-    // Tone controls: take max (not sum) — the shelf may overlap with an
-    // EQ band, but the limiter handles any residual gracefully.
-    if (tone_.isEnabled()) {
-        float tonePeak = tone_.getPeakGain();
-        peakBoost = std::max(peakBoost, tonePeak);
-    }
-
-    // Reduce preamp by 100% of peak boost — zero clipping guaranteed
-    float effectiveDb = preampGainDb_ - peakBoost;
-    effectiveDb = std::max(-30.0f, std::min(15.0f, effectiveDb));
-    preampLinear_ = std::pow(10.0f, effectiveDb / 20.0f);
-}
-
-bool RoomDSPEngine::anyUpstreamBoost() const {
-    // True if any active stage before the limiter can increase the signal
-    // level enough to clip. Conservative by design: it errs toward "true"
-    // (keep the limiter) whenever a stage's contribution is not provably
-    // level-reducing, so gating the limiter can never remove real protection.
-    bool eqOn = eqEnabled_.load(std::memory_order_relaxed);
-    bool spkOn = speakerEqEnabled_.load(std::memory_order_relaxed);
-
-    // Preamp is only applied when EQ or speaker-correction is active
-    // (see process()), so a leftover positive preamp with EQ off is harmless.
-    if ((eqOn || spkOn) && preampGainDb_ > 0.0f) return true;
-
-    // User EQ: only a positive band boost can lift peaks; pure cuts cannot.
-    if (eqOn && (graphicEq_.getPeakGain() > 0.0f ||
-                 parametricEq_.getPeakGain() > 0.0f)) return true;
-
-    // Speaker-correction EQ boost.
-    if (spkOn && speakerEq_.getPeakGain() > 0.0f) return true;
-
-    // Tone shelves only ever boost (gains clamped >= 0).
-    if (tone_.isEnabled() && tone_.getPeakGain() > 0.0f) return true;
-
-    // MBC pre/post makeup gain can lift peaks; keep the limiter whenever the
-    // MBC is engaged (its cost dwarfs the limiter's, so this is essentially
-    // free and avoids reasoning about per-band makeup at runtime).
-    if (mbc_.isEnabled()) return true;
-
-    // Spatial stages add energy / re-sum channels and can raise peaks.
-    if (reverbEnabled_.load(std::memory_order_relaxed)) return true;
-    if (crossfeedEnabled_.load(std::memory_order_relaxed)) return true;
-    if (stereoExpandEnabled_.load(std::memory_order_relaxed)) return true;
-
-    // While separated stems are in the output the sum of the three can peak
-    // above the original — keep the limiter so those peaks stay protected.
-    if (stemTap_.active()) return true;
-
-    return false;
 }
 
 void RoomDSPEngine::process(float* buffer, int numFrames) {
@@ -218,21 +173,21 @@ void RoomDSPEngine::process(float* buffer, int numFrames) {
     bool doSpeakerEq = speakerEqEnabled_.load(std::memory_order_relaxed);
     bool doTone = tone_.isEnabled();
     bool doMbc = mbc_.isEnabled();
-    bool doExpand = stereoExpandEnabled_.load(std::memory_order_relaxed);
+    // On whenever an amount is set, and while gliding back to neutral.
+    bool doExpand = stereoExpander_.active();
     bool doCrossfeed = crossfeedEnabled_.load(std::memory_order_relaxed);
     bool doReverb = reverbEnabled_.load(std::memory_order_relaxed);
     bool doSurround3d = surround3dEnabled_.load(std::memory_order_relaxed);
+    bool doInputGain = inputGain_.active();
+    bool doMaster = masterVolume_.active();
+    bool doMono = mono_.active();
+    bool doBalance = balance_.active();
 
-    // The limiter is a safety net for peaks created BY this chain. Only run it
-    // when some upstream stage can actually raise the level enough to clip;
-    // otherwise the output cannot exceed the (already-bounded) source and the
-    // final hard clamp is a sufficient backstop. This lets a fully-idle chain
-    // truly bypass instead of paying the limiter's per-sample log10/pow.
-    bool doLimiter = limiter_.isEnabled() && anyUpstreamBoost();
+    bool doLimiter = limiter_.isEnabled();
 
     // Early out if nothing is enabled (but always continue if stems are active
     // since the buffer was just replaced and may need DSP processing)
-    if (!doStems && !doEq && !doSpeakerEq && !doTone && !doMbc && !doExpand && !doCrossfeed && !doReverb && !doSurround3d && !doLimiter) return;
+    if (!doStems && !doInputGain && !doMaster && !doMono && !doBalance && !doEq && !doSpeakerEq && !doTone && !doMbc && !doExpand && !doCrossfeed && !doReverb && !doSurround3d && !doLimiter) return;
 
     // Deinterleave to separate L/R channels
     constexpr int STACK_LIMIT = 2048;
@@ -255,23 +210,16 @@ void RoomDSPEngine::process(float* buffer, int numFrames) {
         right[i] = buffer[i * 2 + 1];
     }
 
-    // Signal chain:
-    //   [Preamp+AutoGain] -> [Speaker Correction EQ] -> [Graphic EQ]
+    // Signal chain (see room_dsp_engine.h):
+    //   [Input gain] -> [Speaker Correction EQ] -> [Graphic EQ]
     //   -> [Parametric EQ] -> [Tone Controls] -> [MBC]
-    //   -> [Stereo Expand] -> [Crossfeed] -> [Reverb] -> [Output Limiter]
+    //   -> [Crossfeed] -> [3D Surround] -> [Reverb] -> [Master volume]
+    //   -> [Stereo Expand] -> [Mono] -> [Balance] -> [Output Limiter]
 
-    // Preamp + auto-gain (applies when EQ or speaker correction is active)
-    if (doEq || doSpeakerEq) {
-        float preampTarget = preampLinear_;
-        for (int i = 0; i < numFrames; i++) {
-            if (preampTarget < preampLinearSmoothed_) {
-                preampLinearSmoothed_ = preampTarget;
-            } else {
-                preampLinearSmoothed_ += smoothCoeff_ * (preampTarget - preampLinearSmoothed_);
-            }
-            left[i] *= preampLinearSmoothed_;
-            right[i] *= preampLinearSmoothed_;
-        }
+    // Input gain: track gain + preamp + headroom. Runs whenever it is not at
+    // unity, whether or not the EQ is on.
+    if (doInputGain) {
+        inputGain_.process(left, right, numFrames);
     }
 
     // Speaker correction EQ — flattens headphone response before user EQ
@@ -296,9 +244,6 @@ void RoomDSPEngine::process(float* buffer, int numFrames) {
     }
 
     // Spatial effects
-    if (doExpand) {
-        stereoExpander_.process(left, right, numFrames);
-    }
     if (doCrossfeed) {
         crossfeed_.process(left, right, numFrames);
     }
@@ -309,8 +254,25 @@ void RoomDSPEngine::process(float* buffer, int numFrames) {
         reverb_.process(left, right, numFrames);
     }
 
-    // Output limiter — only when user explicitly enables it.
-    // The hard clamp below still prevents digital clipping as a safety net.
+    // Master volume sits after every effect, ahead of the finishing stages.
+    if (doMaster) {
+        masterVolume_.process(left, right, numFrames);
+    }
+
+    // Stereo Expand widens the finished mix, reverb included.
+    if (doExpand) {
+        stereoExpander_.process(left, right, numFrames);
+    }
+
+    if (doMono) {
+        mono_.process(left, right, numFrames);
+    }
+    if (doBalance) {
+        balance_.process(left, right, numFrames);
+    }
+
+    // Output limiter — only when the user turns it on. The hard clamp below
+    // still prevents digital clipping as a safety net.
     if (doLimiter) {
         limiter_.process(left, right, numFrames);
     }
@@ -329,12 +291,10 @@ void RoomDSPEngine::setSpeakerEqBand(int band, float freq, float gainDb,
     BiquadType type = static_cast<BiquadType>(
         std::min(std::max(filterType, 0), 6));
     speakerEq_.setBand(band, freq, gainDb, q, type, enabled);
-    recomputeAutoGain();
 }
 
 void RoomDSPEngine::clearSpeakerEq() {
     for (int i = 0; i < MAX_EQ_BANDS; i++) {
         speakerEq_.setBand(i, 1000.0f, 0.0f, 1.0f, BiquadType::Peaking, false);
     }
-    recomputeAutoGain();
 }

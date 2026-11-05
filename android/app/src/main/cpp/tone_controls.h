@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-// Independent Bass and Treble tone controls — Poweramp-style.
+// Independent Bass and Treble tone controls, like the knobs on a hi-fi amp.
 // These are shelf filters applied ON TOP of the graphic/parametric EQ,
 // giving extra tonal shaping without disturbing the EQ curve.
 //

@@ -67,7 +67,7 @@ class Routes {
 
   /// Player route: slides up from the list on open and back DOWN on pop, so
   /// the drag-to-dismiss gesture in the player hands off into the pop
-  /// transition without a direction change (Poweramp-style). The list beneath
+  /// transition without a direction change. The list beneath
   /// is painted by the framework for the whole reverse transition, which is
   /// what makes the "player slides away revealing the list" read work.
   ///

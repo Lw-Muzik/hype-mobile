@@ -57,6 +57,14 @@ class HypeAudioHandler extends BaseAudioHandler {
   late AudioPlayer _activePlayer;
   late AudioPlayer _inactivePlayer;
 
+  /// Sets the playback speed on both players, so a crossfade's incoming player
+  /// already matches. just_audio keeps the speed across `stop()` and a new
+  /// source (it re-applies it whenever the platform player is re-activated), so
+  /// it survives swaps. Tempo off is [speed] = 1.0.
+  Future<void> setTempo(double speed) async {
+    await Future.wait([_playerA.setSpeed(speed), _playerB.setSpeed(speed)]);
+  }
+
   StreamSubscription<PlaybackEvent>? _playbackSub;
   bool _isCrossfading = false;
 

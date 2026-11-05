@@ -21,7 +21,8 @@
 // item's URL, which identifies the track to the live-stem engine.
 typedef struct {
     void *dspHandle;
-    char *trackUrl;   // malloc'd; tap_Init takes ownership
+    const char *trackUrl;  // borrowed; only valid during MTAudioProcessingTapCreate
+    int initRan;           // set by tap_Init: the context now owns the engine reference
 } TapClientInfo;
 
 // Context stored in each MTAudioProcessingTap
@@ -192,10 +193,9 @@ static void tap_Init(MTAudioProcessingTapRef tap, void *clientInfo, void **tapSt
     TapClientInfo *info = (TapClientInfo *)clientInfo;
     ctx->dspHandle = info ? info->dspHandle : NULL;
     ctx->stemTap = dsp_stem_tap_create(info && info->trackUrl ? info->trackUrl : "");
-    if (info) {
-        free(info->trackUrl);
-        free(info);
-    }
+    // `info` lives on the caller's stack for the duration of the create call;
+    // nobody frees it. From here the context owns the engine reference.
+    if (info) info->initRan = 1;
     ctx->scratchBuffer = (float *)calloc(MAX_SCRATCH_FRAMES * 2, sizeof(float));
     ctx->sampleRate = 44100;
     ctx->channels = 2;
@@ -215,6 +215,8 @@ static void tap_Finalize(MTAudioProcessingTapRef tap) {
     }
     if (ctx->fftSetup) vDSP_destroy_fftsetup(ctx->fftSetup);
     if (ctx->stemTap) dsp_stem_tap_destroy(ctx->stemTap);
+    // Let go of the engine last: once the count hits zero it may be destroyed.
+    if (ctx->dspHandle) [[HypeAudioTap shared] releaseEngineHandle:ctx->dspHandle];
     free(ctx->scratchBuffer);
     free(ctx);
 }
@@ -229,6 +231,9 @@ static void tap_Prepare(MTAudioProcessingTapRef tap,
     // Reinit DSP engine for this sample rate
     if (ctx->dspHandle) {
         dsp_reinit(ctx->dspHandle, ctx->sampleRate, ctx->channels);
+        // The reinit reset the EQ/crossfeed stages; restore the current state.
+        void (^reinitialised)(void *) = [HypeAudioTap shared].engineReinitialised;
+        if (reinitialised) reinitialised(ctx->dspHandle);
     }
     // Live stems work on stereo only; rate 0 keeps the tap idle otherwise.
     dsp_stem_tap_prepare(ctx->stemTap, ctx->channels == 2 ? ctx->sampleRate : 0);
@@ -394,9 +399,7 @@ static void tap_Process(MTAudioProcessingTapRef tap,
 
 #pragma mark - HypeAudioTap
 
-@implementation HypeAudioTap {
-    void *_dspHandle;
-}
+@implementation HypeAudioTap
 
 + (instancetype)shared {
     static HypeAudioTap *instance;
@@ -407,36 +410,37 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     return instance;
 }
 
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _dspHandle = NULL;
-    }
-    return self;
+- (void)releaseEngineHandle:(void *)handle {
+    if (self.engineRelease) self.engineRelease(handle);
 }
 
-- (void)setDspHandle:(void *)handle {
-    _dspHandle = handle;
+- (void)releasePlayer:(NSString *)playerId {
+    if (self.playerReleased) self.playerReleased(playerId ?: @"");
 }
 
-- (void)installTapOnPlayerItem:(AVPlayerItem *)playerItem {
-    if (!_dspHandle) return;
+- (void)installTapOnPlayerItem:(AVPlayerItem *)playerItem forPlayer:(NSString *)playerId {
+    if (!self.engineAcquire) return;
+    void *handle = self.engineAcquire(playerId ?: @"");  // holds one tap reference
+    if (!handle) return;
 
     AVAsset *asset = playerItem.asset;
-    void *handle = _dspHandle;
     NSString *trackUrl = [asset isKindOfClass:[AVURLAsset class]]
         ? ((AVURLAsset *)asset).URL.absoluteString : @"";
 
     [asset loadTracksWithMediaType:AVMediaTypeAudio
                  completionHandler:^(NSArray<AVAssetTrack *> * _Nullable tracks,
                                      NSError * _Nullable error) {
-        if (error || tracks.count == 0) return;
+        if (error || tracks.count == 0) {
+            [self releaseEngineHandle:handle];
+            return;
+        }
 
         AVAssetTrack *audioTrack = tracks.firstObject;
 
-        TapClientInfo *info = (TapClientInfo *)calloc(1, sizeof(TapClientInfo));
-        info->dspHandle = handle;
-        info->trackUrl = strdup(trackUrl.UTF8String ?: "");
+        TapClientInfo infoStorage = { .dspHandle = handle,
+                                      .trackUrl = trackUrl.UTF8String ?: "",
+                                      .initRan = 0 };
+        TapClientInfo *info = &infoStorage;
 
         MTAudioProcessingTapCallbacks callbacks;
         callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
@@ -453,8 +457,9 @@ static void tap_Process(MTAudioProcessingTapRef tap,
                                                       kMTAudioProcessingTapCreationFlag_PostEffects,
                                                       &tap);
         if (status != noErr || !tap) {
-            free(info->trackUrl);
-            free(info);
+            // If tap_Init ran, its context holds the engine reference and
+            // tap_Finalize gives it back; otherwise give it back here.
+            if (!info->initRan) [self releaseEngineHandle:handle];
             return;
         }
 

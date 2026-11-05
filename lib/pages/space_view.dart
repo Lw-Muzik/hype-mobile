@@ -1,3 +1,4 @@
+import '../models/stereo_expand.dart';
 import '/controllers/app_controller.dart';
 
 import 'package:eq_app/models/room_preset.dart';
@@ -212,62 +213,70 @@ class _SpaceViewState extends State<SpaceView> {
           isFancy: controller.isFancy,
           child: Column(
             children: [
-              SwitchListTile.adaptive(
+              // One control, as the effect has one setting: 0 is off, and
+              // anything above it widens. No switch to forget about.
+              ListTile(
                 title: const Text("Stereo Expand"),
-                subtitle: Text(
+                subtitle: const Text("Widens the stereo image"),
+                trailing: Text(
                   controller.stereoExpandEnabled
-                      ? _stereoWidthLabel(controller.stereoWidth)
-                      : "Disabled",
+                      ? StereoExpand.label(controller.stereoExpand)
+                      : "Off",
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: controller.stereoExpandEnabled
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-                value: controller.stereoExpandEnabled,
-                onChanged: (v) {
-                  controller.stereoExpandEnabled = v;
-                  if (v && controller.crossfeedEnabled) {
-                    _showMutualExclusiveToast("Crossfeed disabled");
-                  }
-                },
               ),
-              if (controller.stereoExpandEnabled) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Text(
-                        "Mono",
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.5,
-                          ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Text(
+                      "Off",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.5,
                         ),
                       ),
-                      Expanded(
-                        child: Slider(
-                          value: controller.stereoWidth,
-                          min: 0.0,
-                          max: 2.0,
-                          divisions: 40,
-                          label: _stereoWidthLabel(controller.stereoWidth),
-                          onChanged: (v) => controller.stereoWidth = v,
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: controller.stereoExpand,
+                        min: StereoExpand.min,
+                        max: StereoExpand.max,
+                        divisions: StereoExpand.divisions,
+                        label: StereoExpand.label(controller.stereoExpand),
+                        onChanged: (v) {
+                          final crossfeedWasOn = controller.crossfeedEnabled;
+                          controller.stereoExpand = v;
+                          if (v > 0 && crossfeedWasOn) {
+                            _showMutualExclusiveToast("Crossfeed disabled");
+                          }
+                        },
+                      ),
+                    ),
+                    Text(
+                      "100%",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.5,
                         ),
                       ),
-                      Text(
-                        "Wide",
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: _StereoFieldIndicator(
-                    width: controller.stereoWidth / 2.0,
-                  ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _StereoFieldIndicator(
+                  // The indicator's 0.5 is an untouched stereo image; the
+                  // expander only ever widens from there.
+                  width: 0.5 + controller.stereoExpand * 0.5,
                 ),
-              ],
+              ),
             ],
           ),
         ),
@@ -290,9 +299,10 @@ class _SpaceViewState extends State<SpaceView> {
                 ),
                 value: controller.crossfeedEnabled,
                 onChanged: (v) {
+                  final expandWasOn = controller.stereoExpandEnabled;
                   controller.crossfeedEnabled = v;
-                  if (v && controller.stereoExpandEnabled) {
-                    _showMutualExclusiveToast("Stereo Expand disabled");
+                  if (v && expandWasOn) {
+                    _showMutualExclusiveToast("Stereo Expand set to off");
                   }
                 },
               ),
@@ -533,14 +543,6 @@ class _SpaceViewState extends State<SpaceView> {
       }
     }
     controller.activeRoomPresetName = 'Custom';
-  }
-
-  String _stereoWidthLabel(double width) {
-    if (width < 0.1) return "Mono";
-    if (width < 0.5) return "Narrow";
-    if (width < 1.1) return "Normal";
-    if (width < 1.5) return "Wide";
-    return "Extra Wide";
   }
 
   String _crossfeedLabel(double feedDb) {

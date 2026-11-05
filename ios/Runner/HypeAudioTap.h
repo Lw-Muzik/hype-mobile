@@ -6,11 +6,24 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)shared;
 
-/// Set the DSP engine handle (called from AppDelegate after DSPManager init)
-- (void)setDspHandle:(void *)handle;
+/// Engine registry hooks, all set by DSPManager (the one registry owner).
+/// acquire: the engine for a player id (created on first use) with a reference
+/// taken for the tap; NULL if it cannot be made. release: the tap let go.
+/// reinitialised: dsp_reinit just ran on the engine, restore its state.
+/// playerReleased: the player was disposed.
+@property (nonatomic, copy, nullable) void *_Nullable (^engineAcquire)(NSString *playerId);
+@property (nonatomic, copy, nullable) void (^engineRelease)(void *handle);
+@property (nonatomic, copy, nullable) void (^engineReinitialised)(void *handle);
+@property (nonatomic, copy, nullable) void (^playerReleased)(NSString *playerId);
 
-/// Install DSP processing + visualization tap on an AVPlayerItem.
-- (void)installTapOnPlayerItem:(AVPlayerItem *)playerItem;
+- (void)releaseEngineHandle:(void *)handle;
+
+/// Call when a just_audio player is disposed.
+- (void)releasePlayer:(NSString *)playerId;
+
+/// Install DSP processing + visualization tap on an AVPlayerItem. The tap runs
+/// through the engine belonging to `playerId` (just_audio's player id).
+- (void)installTapOnPlayerItem:(AVPlayerItem *)playerItem forPlayer:(NSString *)playerId;
 
 /// Remove tap from a player item
 - (void)removeTapFromPlayerItem:(AVPlayerItem *)playerItem;

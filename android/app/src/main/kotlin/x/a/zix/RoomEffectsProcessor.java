@@ -9,6 +9,7 @@ import androidx.media3.common.audio.BaseAudioProcessor;
 import com.ryanheise.just_audio.StemSinkListener;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -40,6 +41,16 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     private static final CopyOnWriteArrayList<RoomEffectsProcessor> playerInstances =
             new CopyOnWriteArrayList<>();
 
+    // The same instances, addressable by just_audio player id (per-player
+    // settings such as track gain). Instances created without an id are only
+    // in the list above.
+    private static final ConcurrentHashMap<String, RoomEffectsProcessor> instancesByPlayerId =
+            new ConcurrentHashMap<>();
+
+    // Track gain per player id — applied to that player's engine on every flush.
+    private static final ConcurrentHashMap<String, Float> cachedTrackGainDb =
+            new ConcurrentHashMap<>();
+
     // Cached params — applied to new native handles on creation
     private static volatile boolean cachedReverbEnabled = false;
     private static volatile float cachedRoomSize = 0.5f;
@@ -48,8 +59,7 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     private static volatile float cachedPreDelay = 0f;
     private static volatile float cachedDiffusion = 0.5f;
     private static volatile float cachedReverbWetDry = 0.3f;
-    private static volatile boolean cachedStereoExpandEnabled = false;
-    private static volatile float cachedStereoWidth = 1.0f;
+    private static volatile float cachedStereoExpand = 0f;
     private static volatile boolean cachedCrossfeedEnabled = false;
     private static volatile float cachedCrossfeedCutoff = 700f;
     private static volatile float cachedCrossfeedFeed = 4.5f;
@@ -70,6 +80,11 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     // True while GlobalEqService is running — bypasses C++ EQ for own app to prevent double-EQ.
     private static volatile boolean cachedGlobalEqActive = false;
     private static volatile float cachedPreampGain = 0f;
+    private static volatile float cachedHeadroomDb = 0f;
+    private static volatile float cachedSpeakerPreampDb = 0f;
+    private static volatile float cachedMasterVolumeDb = 0f;
+    private static volatile boolean cachedMono = false;
+    private static volatile float cachedBalance = 0f;
     private static final float[] cachedGraphicGains = new float[32]; // all 0.0f
     private static final float[] cachedParametricFreqs = new float[32];
     private static final float[] cachedParametricGains = new float[32];
@@ -137,8 +152,17 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
      * and native DSP engine handle.
      */
     public static RoomEffectsProcessor createPlayerInstance() {
-        RoomEffectsProcessor p = new RoomEffectsProcessor();
+        return createPlayerInstance("");
+    }
+
+    /**
+     * Same, for the just_audio player with the given id, so per-player
+     * settings (track gain) can be addressed to this instance's engine.
+     */
+    public static RoomEffectsProcessor createPlayerInstance(String playerId) {
+        RoomEffectsProcessor p = new RoomEffectsProcessor(playerId == null ? "" : playerId);
         playerInstances.add(p);
+        if (!p.playerId.isEmpty()) instancesByPlayerId.put(p.playerId, p);
         Log.i(TAG, "Player instance created, total: " + playerInstances.size());
         return p;
     }
@@ -154,7 +178,14 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     private volatile int stemKeyNext = 0;
     private boolean stemNeedTime = true;
 
-    private RoomEffectsProcessor() {}
+    private final String playerId;
+    // This instance's own track gain; survives a mid-life onReset, which drops
+    // the id from the static cache.
+    private volatile Float trackGainDb = null;
+
+    private RoomEffectsProcessor() { this(""); }
+
+    private RoomEffectsProcessor(String playerId) { this.playerId = playerId; }
 
     // ---- BaseAudioProcessor overrides ----
 
@@ -214,6 +245,11 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (!playerInstances.contains(this)) {
             playerInstances.add(this);
         }
+        if (!playerId.isEmpty()) {
+            instancesByPlayerId.put(playerId, this);
+            Float own = trackGainDb;
+            if (own != null) cachedTrackGainDb.putIfAbsent(playerId, own);
+        }
         if (inputAudioFormat != AudioFormat.NOT_SET) {
             synchronized (handleLock) {
                 if (nativeHandle != 0) {
@@ -249,6 +285,12 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         // an ever-growing list. If media3 later flushes this same instance
         // (mid-life reset), onFlush() re-adds it.
         playerInstances.remove(this);
+        if (!playerId.isEmpty()) {
+            instancesByPlayerId.remove(playerId, this);
+            // Pruned so ids of disposed players don't accumulate; onFlush
+            // restores it from trackGainDb if this instance comes back.
+            cachedTrackGainDb.remove(playerId);
+        }
     }
 
     // ---- StemSinkListener (patched just_audio) ----
@@ -295,8 +337,7 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         nativeSetPreDelay(nativeHandle, cachedPreDelay);
         nativeSetDiffusion(nativeHandle, cachedDiffusion);
         nativeSetReverbWetDry(nativeHandle, cachedReverbWetDry);
-        nativeSetStereoExpandEnabled(nativeHandle, cachedStereoExpandEnabled);
-        nativeSetStereoWidth(nativeHandle, cachedStereoWidth);
+        nativeSetStereoExpand(nativeHandle, cachedStereoExpand);
         nativeSetCrossfeedEnabled(nativeHandle, cachedCrossfeedEnabled);
         nativeSetCrossfeedParams(nativeHandle, cachedCrossfeedCutoff, cachedCrossfeedFeed);
         // Re-applied on every (re)attach, like every other cached stage: a new
@@ -309,6 +350,20 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         // EQ state (bypass own-app EQ when global EQ service is active)
         nativeSetEqEnabled(nativeHandle, cachedEqEnabled && !cachedGlobalEqActive);
         nativeSetPreampGain(nativeHandle, cachedPreampGain);
+        // Level stages: replayed before the first buffer so a new engine never
+        // plays a buffer at the wrong level.
+        nativeSetHeadroomDb(nativeHandle, cachedHeadroomDb);
+        nativeSetMasterVolumeDb(nativeHandle, cachedMasterVolumeDb);
+        nativeSetMono(nativeHandle, cachedMono);
+        nativeSetBalance(nativeHandle, cachedBalance);
+        if (!playerId.isEmpty()) {
+            // The cache holds a value set since the last reset; it wins over
+            // this instance's older own copy and becomes the new one.
+            Float cached = cachedTrackGainDb.get(playerId);
+            if (cached != null) trackGainDb = cached;
+            Float own = trackGainDb;
+            nativeSetTrackGainDb(nativeHandle, own != null ? own : 0f);
+        }
         nativeSetGraphicAllBands(nativeHandle, cachedGraphicGains);
         nativeSetParametricAllBands(nativeHandle, cachedParametricFreqs,
                 cachedParametricGains, cachedParametricQs, 32);
@@ -338,6 +393,7 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         nativeSetLimiterKnee(nativeHandle, cachedLimiterKnee);
         // Speaker correction EQ
         nativeSetSpeakerEqEnabled(nativeHandle, cachedSpeakerEqEnabled);
+        nativeSetSpeakerPreampDb(nativeHandle, cachedSpeakerPreampDb);
         int spkCount = cachedSpeakerBandCount;
         for (int i = 0; i < spkCount; i++) {
             nativeSetSpeakerEqBand(nativeHandle, i, cachedSpeakerEqFreqs[i],
@@ -376,12 +432,9 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (nativeHandle != 0) nativeSetReverbWetDry(nativeHandle, v);
     }
 
-    public void setStereoExpandEnabled(boolean enabled) {
-        if (nativeHandle != 0) nativeSetStereoExpandEnabled(nativeHandle, enabled);
-    }
-
-    public void setStereoWidth(float width) {
-        if (nativeHandle != 0) nativeSetStereoWidth(nativeHandle, width);
+    /** Stereo Expand amount, 0..1 (0 = off). */
+    public void setStereoExpand(float amount) {
+        if (nativeHandle != 0) nativeSetStereoExpand(nativeHandle, amount);
     }
 
     public void setCrossfeedEnabled(boolean enabled) {
@@ -415,6 +468,31 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
 
     public void setPreampGain(float dB) {
         if (nativeHandle != 0) nativeSetPreampGain(nativeHandle, dB);
+    }
+
+    public void setSpeakerPreampDb(float dB) {
+        if (nativeHandle != 0) nativeSetSpeakerPreampDb(nativeHandle, dB);
+    }
+
+    public void setHeadroomDb(float dB) {
+        if (nativeHandle != 0) nativeSetHeadroomDb(nativeHandle, dB);
+    }
+
+    public void setTrackGainDb(float dB) {
+        trackGainDb = dB;
+        if (nativeHandle != 0) nativeSetTrackGainDb(nativeHandle, dB);
+    }
+
+    public void setMasterVolumeDb(float dB) {
+        if (nativeHandle != 0) nativeSetMasterVolumeDb(nativeHandle, dB);
+    }
+
+    public void setMono(boolean on) {
+        if (nativeHandle != 0) nativeSetMono(nativeHandle, on);
+    }
+
+    public void setBalance(float balance) {
+        if (nativeHandle != 0) nativeSetBalance(nativeHandle, balance);
     }
 
     public void setGraphicBandGain(int band, float dB) {
@@ -559,14 +637,9 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         for (RoomEffectsProcessor p : playerInstances) p.setReverbWetDry(v);
     }
 
-    public static void broadcastStereoExpandEnabled(boolean enabled) {
-        cachedStereoExpandEnabled = enabled;
-        for (RoomEffectsProcessor p : playerInstances) p.setStereoExpandEnabled(enabled);
-    }
-
-    public static void broadcastStereoWidth(float width) {
-        cachedStereoWidth = width;
-        for (RoomEffectsProcessor p : playerInstances) p.setStereoWidth(width);
+    public static void broadcastStereoExpand(float amount) {
+        cachedStereoExpand = amount;
+        for (RoomEffectsProcessor p : playerInstances) p.setStereoExpand(amount);
     }
 
     public static void broadcastCrossfeedEnabled(boolean enabled) {
@@ -627,6 +700,39 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         cachedPreampGain = dB;
         for (RoomEffectsProcessor p : playerInstances) p.setPreampGain(dB);
         syncGlobalEq();
+    }
+
+    public static void broadcastSpeakerPreampDb(float dB) {
+        cachedSpeakerPreampDb = dB;
+        for (RoomEffectsProcessor p : playerInstances) p.setSpeakerPreampDb(dB);
+    }
+
+    public static void broadcastHeadroomDb(float dB) {
+        cachedHeadroomDb = dB;
+        for (RoomEffectsProcessor p : playerInstances) p.setHeadroomDb(dB);
+    }
+
+    public static void broadcastMasterVolumeDb(float dB) {
+        cachedMasterVolumeDb = dB;
+        for (RoomEffectsProcessor p : playerInstances) p.setMasterVolumeDb(dB);
+    }
+
+    public static void broadcastMono(boolean on) {
+        cachedMono = on;
+        for (RoomEffectsProcessor p : playerInstances) p.setMono(on);
+    }
+
+    public static void broadcastBalance(float balance) {
+        cachedBalance = balance;
+        for (RoomEffectsProcessor p : playerInstances) p.setBalance(balance);
+    }
+
+    /** Track gain of one player; cached by id so a later engine for it starts right. */
+    public static void setTrackGainDb(String playerId, float dB) {
+        if (playerId == null || playerId.isEmpty()) return;
+        cachedTrackGainDb.put(playerId, dB);
+        RoomEffectsProcessor p = instancesByPlayerId.get(playerId);
+        if (p != null) p.setTrackGainDb(dB);  // also updates the instance's own copy
     }
 
     public static void broadcastGraphicBandGain(int band, float dB) {
@@ -881,8 +987,7 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     private native void nativeSetDiffusion(long handle, float v);
     private native void nativeSetReverbWetDry(long handle, float v);
 
-    private native void nativeSetStereoExpandEnabled(long handle, boolean enabled);
-    private native void nativeSetStereoWidth(long handle, float width);
+    private native void nativeSetStereoExpand(long handle, float amount);
 
     private native void nativeSetCrossfeedEnabled(long handle, boolean enabled);
     private native void nativeSetCrossfeedParams(long handle, float cutoffHz, float feedLevelDb);
@@ -895,6 +1000,12 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
 
     private native void nativeSetEqEnabled(long handle, boolean enabled);
     private native void nativeSetPreampGain(long handle, float dB);
+    private native void nativeSetHeadroomDb(long handle, float dB);
+    private native void nativeSetSpeakerPreampDb(long handle, float dB);
+    private native void nativeSetTrackGainDb(long handle, float dB);
+    private native void nativeSetMasterVolumeDb(long handle, float dB);
+    private native void nativeSetMono(long handle, boolean on);
+    private native void nativeSetBalance(long handle, float balance);
     private native void nativeSetGraphicBandGain(long handle, int band, float dB);
     private native void nativeSetGraphicAllBands(long handle, float[] gains);
     private native void nativeSetParametricBand(long handle, int band, float freq,

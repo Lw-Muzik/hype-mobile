@@ -24,6 +24,12 @@ void  dsp_process_float(void* handle, float* buffer, int numFrames);
 void  dsp_set_eq_enabled(void* handle, bool enabled);
 void  dsp_set_preamp_gain(void* handle, float dB);
 float dsp_get_preamp_gain(void* handle);
+void  dsp_set_headroom_db(void* handle, float dB);
+void  dsp_set_speaker_preamp_db(void* handle, float dB);
+void  dsp_set_track_gain_db(void* handle, float dB);
+void  dsp_set_master_volume_db(void* handle, float dB);
+void  dsp_set_mono(void* handle, bool enabled);
+void  dsp_set_balance(void* handle, float balance);
 void  dsp_set_graphic_band_gain(void* handle, int band, float dB);
 void  dsp_set_graphic_all_bands(void* handle, const float* gains, int count);
 void  dsp_set_parametric_band(void* handle, int band, float freq, float gainDb,
@@ -74,9 +80,8 @@ void  dsp_set_pre_delay(void* handle, float ms);
 void  dsp_set_diffusion(void* handle, float v);
 void  dsp_set_reverb_wet_dry(void* handle, float v);
 
-// Stereo expander
-void  dsp_set_stereo_expand_enabled(void* handle, bool enabled);
-void  dsp_set_stereo_width(void* handle, float width);
+// Stereo Expand (amount 0..1; 0 = off)
+void  dsp_set_stereo_expand(void* handle, float amount);
 
 // Crossfeed
 void  dsp_set_crossfeed_enabled(void* handle, bool enabled);

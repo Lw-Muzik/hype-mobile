@@ -3,36 +3,40 @@
 #include "multiband_compressor.h"
 #include "tone_controls.h"
 #include "limiter.h"
+#include "output_stages.h"
 #include "fdn_reverb.h"
 #include "stereo_expander.h"
 #include "crossfeed.h"
 #include "surround3d.h"
+#include <algorithm>
 #include <atomic>
 
 // Main DSP engine orchestrator — professional-grade signal chain.
 //
 // Processing chain:
-//   [Preamp] -> [Speaker Correction EQ] -> [Graphic EQ 32-band]
-//   -> [Parametric EQ 32-band] -> [Tone Controls (Bass/Treble)]
-//   -> [MBC 10-band] -> [Stereo Expander] -> [Crossfeed] -> [3D Surround]
-//   -> [FDN Reverb] -> [Output Limiter] -> Output
+//   [Input gain: track + preamp + headroom] -> [Speaker Correction EQ]
+//   -> [Graphic EQ 32-band] -> [Parametric EQ 32-band] -> [Tone Controls]
+//   -> [MBC 10-band] -> [Crossfeed] -> [3D Surround] -> [FDN Reverb]
+//   -> [Master volume] -> [Stereo Expand] -> [Mono] -> [Balance]
+//   -> [Output Limiter] -> final clamp -> Output
 //
 // Key design decisions:
-//   - Full auto-gain: preamp is reduced by the single highest band boost.
-//     Guarantees zero clipping. EQ shapes the frequency balance (boosted
-//     frequencies stand out, non-boosted lower). Instant preamp reduction
-//     prevents transient overshoot when bands are adjusted.
-//   - Limiter always active when EQ/tone processing is on — transparent safety
-//     net that catches adjacent-band overlap (~3 dB max). Instant attack,
-//     smooth release — zero overshoot, no pumping.
+//   - No auto-gain: the input gain is exactly track gain + headroom (+ preamp
+//     while an EQ is on, + speaker preamp while the speaker EQ is on);
+//     EQ and tone setters never touch it. Each stage is skipped (bit-exact)
+//     while at its neutral setting.
+//   - Input gain, master volume and balance glide at a fixed slope, so a
+//     slider being dragged does not click (see output_stages.h).
+//   - Master volume sits after the effects and ahead of Stereo Expand, mono
+//     and balance, which are spatial finishing touches on the final level.
+//   - The limiter is last and runs only when the user turns it on (no
+//     look-ahead; the final hard clamp backstops the first samples of a peak).
 //   - Tone controls AFTER EQ, BEFORE MBC: EQ shapes frequency, tone adds
 //     power, MBC controls dynamics of the combined result
-//   - Output limiter LAST: catches all peaks from the entire chain
-//   - Preamp range [-15, +15] dB: supports both boost AND attenuation
 //   - Sample-rate-adaptive smoothing for consistent behavior at all rates
 //
-// All processing runs in ExoPlayer AudioProcessor pipeline.
-// No Android AudioEffect APIs — fully custom C++ DSP.
+// All processing runs in the platform audio pipeline (ExoPlayer AudioProcessor
+// on Android, the audio unit callback on iOS). Fully custom C++ DSP.
 // All parameter updates are lock-free (atomic targets, per-sample smoothing).
 class RoomDSPEngine {
 public:
@@ -45,20 +49,37 @@ public:
     void process(float* buffer, int numFrames);
 
     // EQ controls
-    void setEqEnabled(bool enabled)         { eqEnabled_.store(enabled); }
+    // Turning the EQ (or the speaker EQ) on or off also re-evaluates the
+    // preamp term of the input gain, which counts only while one of them runs.
+    void setEqEnabled(bool enabled);
     bool isEqEnabled() const                { return eqEnabled_.load(); }
 
+    // Preamp, clamped to +-24 dB. Plain gain — no auto-gain compensation. It
+    // is applied only while the EQ or the speaker EQ is on (so not when the
+    // EQ is bypassed for system-wide mode, where the platform EQ applies it).
     void setPreampGain(float dB);
+    // Preamp of the active speaker/headphone correction profile, clamped to
+    // +-24 dB. Added to the input gain only while the speaker EQ is on.
+    void setSpeakerPreampDb(float dB);
+    // Headroom trim, -10..0 dB, summed into the input gain.
+    void setHeadroomDb(float dB);
+    // Per-track (replay) gain, -30..+24 dB, summed into the input gain. Set
+    // per engine, i.e. per player.
+    void setTrackGainDb(float dB);
+    // Master volume, -30..0 dB; -30 is silence (gain exactly 0).
+    void setMasterVolumeDb(float dB);
+    void setMono(bool on)                   { mono_.set(on); }
+    // Balance -1..1; negative attenuates the right channel, positive the left.
+    void setBalance(float b)                { balance_.set(std::clamp(b, -1.0f, 1.0f)); }
     void setGraphicBandGain(int band, float dB);
     void setGraphicAllBands(const float* gains, int count);
     void setParametricBand(int band, float freq, float gainDb, float q,
                            int filterType, bool enabled);
     void setParametricAllBands(const float* freqs, const float* gains,
                                const float* qs, int count);
-    void recomputeAutoGain();
 
     // Speaker correction EQ (AutoEq headphone profiles)
-    void setSpeakerEqEnabled(bool enabled)  { speakerEqEnabled_.store(enabled); }
+    void setSpeakerEqEnabled(bool enabled);
     bool isSpeakerEqEnabled() const         { return speakerEqEnabled_.load(); }
     void setSpeakerEqBand(int band, float freq, float gainDb, float q,
                           int filterType, bool enabled);
@@ -68,10 +89,10 @@ public:
     void setToneEnabled(bool enabled)       { tone_.setEnabled(enabled); }
     bool isToneEnabled() const              { return tone_.isEnabled(); }
 
-    void setBassGain(float dB)              { tone_.setBassGain(dB); recomputeAutoGain(); }
+    void setBassGain(float dB)              { tone_.setBassGain(dB); }
     void setBassFreq(float hz)              { tone_.setBassFreq(hz); }
     void setBassQ(float q)                  { tone_.setBassQ(q); }
-    void setTrebleGain(float dB)            { tone_.setTrebleGain(dB); recomputeAutoGain(); }
+    void setTrebleGain(float dB)            { tone_.setTrebleGain(dB); }
     void setTrebleFreq(float hz)            { tone_.setTrebleFreq(hz); }
     void setTrebleQ(float q)                { tone_.setTrebleQ(q); }
 
@@ -79,9 +100,14 @@ public:
     void setLimiterEnabled(bool enabled)    { limiter_.setEnabled(enabled); }
     bool isLimiterEnabled() const           { return limiter_.isEnabled(); }
 
-    void setLimiterCeiling(float v)         { limiter_.setCeiling(v); }
-    void setLimiterRelease(float ms)        { limiter_.setRelease(ms); }
-    void setLimiterKnee(float dB)           { limiter_.setKnee(dB); }
+    // Current limiter gain, 1.0 when not limiting (for Audio Info).
+    float limiterGain() const               { return limiter_.gain(); }
+
+    // The limiter has a fixed ceiling (1.0) and fixed slopes; these remain
+    // only so the platform bridges that still call them keep compiling.
+    void setLimiterCeiling(float)           {}
+    void setLimiterRelease(float)           {}
+    void setLimiterKnee(float)              {}
 
     // MBC controls
     void setMbcEnabled(bool enabled)        { mbc_.setEnabled(enabled); }
@@ -106,9 +132,10 @@ public:
     void setDiffusion(float v)              { reverb_.setDiffusion(v); }
     void setReverbWetDry(float v)           { reverb_.setWetDry(v); }
 
-    // Stereo expander controls
-    void setStereoExpandEnabled(bool enabled) { stereoExpandEnabled_.store(enabled); }
-    void setStereoWidth(float width)        { stereoExpander_.setWidth(width); }
+    // Stereo Expand: amount 0..1, shown as 0–100 %. There is no separate on
+    // switch — it is on whenever the amount is above zero, and exactly
+    // bypassed at zero. See stereo_expander.h.
+    void setStereoExpand(float amount)      { stereoExpander_.setAmount(amount); }
 
     // Crossfeed controls
     void setCrossfeedEnabled(bool enabled)  { crossfeedEnabled_.store(enabled); }
@@ -119,7 +146,9 @@ public:
     // 3D Surround controls — a port of the desktop stage (see surround3d.h).
     // Placed after Crossfeed for the same reason desktop places it after the
     // Spatializer: it renders a whole virtual speaker ring, so anything that
-    // merely widens or crossfeeds the stereo pair belongs upstream of it.
+    // merely crossfeeds the stereo pair belongs upstream of it. Stereo Expand
+    // is the exception by design: it widens the finished mix — reverb and
+    // all — after master volume.
     void setSurround3dEnabled(bool enabled) {
         surround3dEnabled_.store(enabled);
         surround3d_.setEnabled(enabled);
@@ -137,7 +166,7 @@ public:
     bool isSurround3dEnabled() const        { return surround3dEnabled_.load(); }
 
     bool isReverbEnabled() const            { return reverbEnabled_.load(); }
-    bool isStereoExpandEnabled() const      { return stereoExpandEnabled_.load(); }
+    bool isStereoExpandEnabled() const      { return stereoExpander_.engaged(); }
     bool isCrossfeedEnabled() const         { return crossfeedEnabled_.load(); }
 
 private:
@@ -153,11 +182,19 @@ private:
     // Tone controls (bass/treble shelf filters)
     ToneControls tone_;
 
-    // Preamp + auto-gain: preampLinear_ is the effective gain applied
-    // before EQ (user preamp minus smart auto-reduction for headroom).
-    float preampGainDb_ = 0.0f;  // user-set preamp in dB
-    float preampLinear_ = 1.0f;  // effective linear gain (preamp + auto-reduction)
-    float preampLinearSmoothed_ = 1.0f;
+    // Input gain = track gain + headroom, plus preamp while the EQ is on and
+    // speaker preamp while the speaker EQ is on, through one gliding stage.
+    void updateInputGain();
+    float trackGainDb_ = 0.0f;
+    float preampGainDb_ = 0.0f;
+    float speakerPreampDb_ = 0.0f;
+    float headroomDb_ = 0.0f;
+    GainStage inputGain_;
+
+    // Output-side stages
+    GainStage masterVolume_;
+    MonoStage mono_;
+    BalanceStage balance_;
 
     // Output limiter
     OutputLimiter limiter_;
@@ -172,14 +209,10 @@ private:
     hype::Surround3D surround3d_;
 
     std::atomic<bool> reverbEnabled_{false};
-    std::atomic<bool> stereoExpandEnabled_{false};
     std::atomic<bool> crossfeedEnabled_{false};
     std::atomic<bool> surround3dEnabled_{false};
 
     int sampleRate_;
     int channels_;
-
-    // Per-sample smoothing coefficient — computed from sample rate
-    float smoothCoeff_ = 0.001f;
 
 };

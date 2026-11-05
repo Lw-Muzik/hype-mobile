@@ -386,7 +386,7 @@ class SongListView extends StatelessWidget {
       itemCount: songs.length,
       itemExtent: kSongTileExtent,
       // After a slide-down player dismissal, land this list on the
-      // now-playing row (Poweramp behavior).
+      // now-playing row.
       revealTick: PlayerRevealBus.tick,
       revealIndex: () {
         final current =

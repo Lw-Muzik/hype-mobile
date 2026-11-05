@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 const Color _kAccent = Color(0xFFD4A825);
 
-/// Poweramp-style circular knob for bass/treble tone controls.
+/// Circular knob for bass/treble tone controls.
 ///
 /// Gesture model: incremental angular tracking.
 /// The knob rotates in the direction the user's finger moves around the
