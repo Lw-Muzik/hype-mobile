@@ -131,6 +131,13 @@ void  dsp_stem_tap_prepare(void* tap, int sampleRate);
 void  dsp_stem_tap_process(void* tap, float* interleaved, int frames,
                            int64_t framePos, bool discontinuity);
 
+// Bar spectrum for the built-in visualizers. Main thread only.
+// Decimation factor for a sample rate (1..8).
+int  dsp_bar_spectrum_decimation(int sampleRate);
+// `mono` holds 512 * decim samples, oldest first; writes 256 powers to
+// `out256` and returns 256 (0 on a null pointer).
+int  dsp_bar_spectrum(const float* mono, int decim, float* out256);
+
 #ifdef __cplusplus
 }
 #endif

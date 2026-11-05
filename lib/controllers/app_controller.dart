@@ -1,3 +1,4 @@
+import '../visualizers/visualizer_styles.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -1845,7 +1846,7 @@ class AppController with ChangeNotifier implements StationSink {
   final VisualizerTap _visualTap = VisualizerTap();
 
   // Visualizer fine-tuning
-  String _visualizerStyle = 'circular';
+  String _visualizerStyle = 'radial';
   int _visualizerColor = 0xFFFFFFFF; // white
   int _visualizerFrameRate = 30;
   double _visualizerReactivity = 0.15; // smoothing attack factor
@@ -2957,11 +2958,9 @@ class AppController with ChangeNotifier implements StationSink {
         LoopMode.values[storedLoop.clamp(0, LoopMode.values.length - 1)],
       ),
     );
-    // Restore both visualizer surfaces, then tell the native tap once. The
+    // Restore the player visualizer, then tell the native tap once. The
     // player visual used to be the odd one out: its setter never wrote to prefs
     // and nothing read it back, so it silently reset to off on every launch.
-    _visualTap.backgroundVisual =
-        _prefs.getBool("isVisualInBackground") ?? false;
     _visualTap.playerVisual = _prefs.getBool("playerVisual") ?? false;
     _syncVisualTap();
     _bgQuality = _prefs.getDouble("bgQuality") ?? 2.0;
@@ -3018,7 +3017,14 @@ class AppController with ChangeNotifier implements StationSink {
       } catch (_) {}
     }
     // Visualizer fine-tuning
-    _visualizerStyle = _prefs.getString("visualizerStyle") ?? 'circular';
+    final storedStyle = _prefs.getString("visualizerStyle");
+    _visualizerStyle = migrateVisualizerStyle(
+      storedStyle,
+      isIos: Platform.isIOS,
+    );
+    if (storedStyle != null && storedStyle != _visualizerStyle) {
+      _prefs.setString("visualizerStyle", _visualizerStyle);
+    }
     _visualizerColor = _prefs.getInt("visualizerColor") ?? 0xFFFFFFFF;
     _visualizerFrameRate = _prefs.getInt("visualizerFrameRate") ?? 30;
     _visualizerReactivity = _prefs.getDouble("visualizerReactivity") ?? 0.15;
@@ -3256,14 +3262,6 @@ class AppController with ChangeNotifier implements StationSink {
 
   String get selectedTheme {
     return _selectedTheme;
-  }
-
-  bool get isVisualInBackground => _visualTap.backgroundVisual;
-  set isVisualInBackground(bool b) {
-    _prefs.setBool("isVisualInBackground", b);
-    _visualTap.backgroundVisual = b;
-    _syncVisualTap();
-    notifyListeners();
   }
 
   /// Starts or stops the native capture to match the surfaces now on screen.

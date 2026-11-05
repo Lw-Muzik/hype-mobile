@@ -84,6 +84,7 @@ typedef struct {
     // Full-rate mono audio for the band levels (audio thread writes).
     float bandRing[BAND_RING];
     int64_t bandWritten;      // atomic: samples written
+    int64_t spectrumSeen;     // bandWritten at the last takeSpectrum (main thread only)
 } TapContext;
 
 static void designBassBiquad(double *c, int highPass, double fc, double fs) {
@@ -656,6 +657,25 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     f[5 + n] = (float)m;
     frame.length = (6 + n + m) * sizeof(float);
     return frame;
+}
+
+- (nullable NSData *)takeSpectrum {
+    TapContext *ctx = sActiveContext;
+    if (!ctx) return nil;
+    const int decim = dsp_bar_spectrum_decimation(ctx->sampleRate);
+    const int64_t need = 512 * (int64_t)decim;
+    const int64_t end = __atomic_load_n(&ctx->bandWritten, __ATOMIC_ACQUIRE);
+    if (end < need || end == ctx->spectrumSeen) return nil;
+    ctx->spectrumSeen = end;
+    // 512 * 8 = 4096 samples at most; the ring holds 16384, so the audio
+    // thread cannot lap the oldest sample while it is copied.
+    float mono[512 * 8];
+    for (int64_t i = 0; i < need; i++) {
+        mono[i] = ctx->bandRing[(end - need + i) % BAND_RING];
+    }
+    float out[256];
+    if (dsp_bar_spectrum(mono, decim, out) != 256) return nil;
+    return [NSData dataWithBytes:out length:sizeof(out)];
 }
 
 // PCM float data for projectM (stereo interleaved)

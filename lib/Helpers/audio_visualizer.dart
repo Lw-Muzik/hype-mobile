@@ -78,6 +78,42 @@ class AudioVisualizer {
             .cast<BeatFrame>()
       : _iosBeats.stream;
 
+  static const EventChannel _spectrumChannel = EventChannel('eq_app/spectrum');
+
+  /// Bins in one spectrum frame (FFT bins 1..256 of a 512-point block).
+  static const int spectrumBins = 256;
+
+  // iOS sends the spectrum inside its FFT message; re-published here.
+  static final StreamController<Float32List> _iosSpectrum =
+      StreamController<Float32List>.broadcast();
+
+  static Float32List? _parseSpectrum(Object? data) {
+    final Float32List f;
+    if (data is Float32List) {
+      f = data;
+    } else if (data is List) {
+      f = Float32List.fromList(
+        data.cast<num>().map((e) => e.toDouble()).toList(),
+      );
+    } else {
+      return null;
+    }
+    return f.length == spectrumBins ? f : null;
+  }
+
+  /// 256 bin powers per visualizer tick (FFT bins 1..256 of a 512-point
+  /// block). Frames of any other length are dropped.
+  ///
+  /// Like [beatFrames], subscribe alongside an activated tap (see
+  /// [SpectrumFeed], which does that for you on iOS).
+  static final Stream<Float32List> spectrumFrames = Platform.isAndroid
+      ? _spectrumChannel
+            .receiveBroadcastStream()
+            .map(_parseSpectrum)
+            .where((f) => f != null)
+            .cast<Float32List>()
+      : _iosSpectrum.stream;
+
   // Active stream subscriptions
   dynamic _bandsSub;
   dynamic _waveSub;
@@ -110,6 +146,10 @@ class AudioVisualizer {
         case 'onFftVisualization':
           final beat = BeatFrame.parse(call.arguments['beat']);
           if (beat != null && _iosBeats.hasListener) _iosBeats.add(beat);
+          if (_iosSpectrum.hasListener) {
+            final spectrum = _parseSpectrum(call.arguments['spectrum']);
+            if (spectrum != null) _iosSpectrum.add(spectrum);
+          }
           final raw = call.arguments['fft'];
           if (raw == null) break;
           final List<int> samples = raw is List<int>
@@ -261,6 +301,33 @@ class AudioVisualizer {
     if (null != bandsCallback) {
       _bandsCallbacks.remove(bandsCallback);
     }
+  }
+}
+
+/// Delivers [AudioVisualizer.spectrumFrames] to [onFrame] until [dispose].
+///
+/// Without [source] it feeds from the platform: on iOS it owns an activated
+/// [AudioVisualizer] (ref-counted native tap) and releases it on dispose; on
+/// Android it only subscribes. With [source] it only listens (tests).
+class SpectrumFeed {
+  StreamSubscription<Float32List>? _sub;
+  AudioVisualizer? _visualizer;
+
+  SpectrumFeed({
+    required void Function(Float32List power) onFrame,
+    Stream<Float32List>? source,
+  }) {
+    _sub = (source ?? AudioVisualizer.spectrumFrames).listen(onFrame);
+    if (source == null && !Platform.isAndroid) {
+      _visualizer = AudioVisualizer(channel: Channel.channel)..activate(0);
+    }
+  }
+
+  void dispose() {
+    _sub?.cancel();
+    _sub = null;
+    _visualizer?.dispose();
+    _visualizer = null;
   }
 }
 

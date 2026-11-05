@@ -164,10 +164,12 @@ import AVFoundation
         // The bass report rides along with the FFT (see BeatFrame in Dart).
         let beat = tap.takeBeatFrame()
         let fft = tap.latestFftBytes()
-        if fft != nil || beat != nil {
+        let spectrum = tap.takeSpectrum()
+        if fft != nil || beat != nil || spectrum != nil {
             var args: [String: Any] = [:]
             if let fft = fft { args["fft"] = FlutterStandardTypedData(bytes: fft) }
             if let beat = beat { args["beat"] = FlutterStandardTypedData(float32: beat) }
+            if let spectrum = spectrum { args["spectrum"] = FlutterStandardTypedData(float32: spectrum) }
             channel.invokeMethod("onFftVisualization", arguments: args)
         }
     }

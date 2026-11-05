@@ -15,6 +15,7 @@ import '../onboarding/coach_marks.dart';
 import '../onboarding/interactions_guide.dart';
 import '../services/streaming_data_guard.dart';
 import '../services/share_service.dart';
+import '../visualizers/visualizer_styles.dart';
 import '../services/connect/hype_connect.dart';
 import 'hype_connect_page.dart';
 import 'stream_server.dart';
@@ -771,19 +772,6 @@ class _SettingsState extends State<Settings> {
 
   // -- Visualizer Section --
 
-  static Map<String, (String, IconData)> get _visualizerStyles => {
-    'radial': ('Radial', Icons.flare_rounded),
-    'bars': ('Spectrum', Icons.bar_chart_rounded),
-    'mirror_bars': ('Mirror', Icons.align_vertical_center_rounded),
-    'line': ('Waveform', Icons.show_chart_rounded),
-    'terrain': ('Terrain', Icons.terrain_rounded),
-    'dots': ('Matrix', Icons.grid_on_rounded),
-    'silk': ('Silk', Icons.animation_rounded),
-    'lissajous': ('Lissajous', Icons.all_inclusive_rounded),
-    'windmill': ('Windmill', Icons.rotate_right_rounded),
-    if (!Platform.isIOS) 'milkdrop': ('MilkDrop', Icons.blur_on_rounded),
-  };
-
   static const _visualizerColors = [
     (0xFFFFFFFF, 'White'),
     (0xFFD4A825, 'Gold'),
@@ -802,24 +790,15 @@ class _SettingsState extends State<Settings> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionHeader(Icons.graphic_eq, "Visualizer"),
-        // No master "Enable visualizer" switch: these two rows ARE the switch.
-        // Turning either on starts the native capture, turning both off stops
-        // it. A third control could only disagree with them.
+        // No master "Enable visualizer" switch: this row IS the switch. Turning it
+        // on starts the native capture, turning it off stops it. A second
+        // control could only disagree with it.
         _buildSectionCard([
           SwitchListTile.adaptive(
             value: controller.playerVisual,
             title: const Text("Bottom player visualizer"),
             subtitle: Text(controller.playerVisual ? "Enabled" : "Disabled"),
             onChanged: (enabled) => controller.playerVisual = enabled,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile.adaptive(
-            value: controller.isVisualInBackground,
-            title: const Text("Background visualizer"),
-            subtitle: Text(
-              controller.isVisualInBackground ? "Enabled" : "Disabled",
-            ),
-            onChanged: (enabled) => controller.isVisualInBackground = enabled,
           ),
         ]),
 
@@ -845,17 +824,17 @@ class _SettingsState extends State<Settings> {
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: _visualizerStyles.entries.map((entry) {
-                final isSelected = controller.visualizerStyle == entry.key;
+              children: visualizerStyles(isIos: Platform.isIOS).map((style) {
+                final isSelected = controller.visualizerStyle == style.id;
                 return ChoiceChip(
                   avatar: Icon(
-                    entry.value.$2,
+                    style.icon,
                     size: 16,
                     color: isSelected ? accent : null,
                   ),
-                  label: Text(entry.value.$1),
+                  label: Text(style.name),
                   selected: isSelected,
-                  onSelected: (_) => controller.visualizerStyle = entry.key,
+                  onSelected: (_) => controller.visualizerStyle = style.id,
                 );
               }).toList(),
             ),
@@ -863,7 +842,8 @@ class _SettingsState extends State<Settings> {
           const SizedBox(height: 12),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // Color picker
+          // Color picker (the spectrum styles have fixed colours)
+          if (!isSpectrumBarsStyle(controller.visualizerStyle)) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: Text(
@@ -916,6 +896,7 @@ class _SettingsState extends State<Settings> {
           ),
           const SizedBox(height: 14),
           const Divider(height: 1, indent: 16, endIndent: 16),
+          ],
 
           // Frame rate slider
           ListTile(

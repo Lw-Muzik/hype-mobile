@@ -24,6 +24,9 @@
  * Beat frames (computeBeat): the energy below ~150 Hz in ~5.8 ms hops for the
  * stretch heard since the last call, plus 64 band levels in dBFS. The radial
  * visualizer finds bass hits in the hops (lib/visualizers/bass_beat.dart).
+ *
+ * Bar spectrum (computeSpectrum): the 256 powers the built-in bar visualizers
+ * draw, from the 512 * D samples heard (see bar_spectrum.h).
  */
 
 #include <cmath>
@@ -31,6 +34,8 @@
 #include <cstring>
 #include <atomic>
 #include <algorithm>
+
+#include "bar_spectrum.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -246,6 +251,36 @@ public:
         return 6 + n + NUM_BANDS;
     }
 
+    /**
+     * Writes the 256-power bar spectrum of the 512 * D samples ending at the
+     * heard position (D = BarSpectrum::decimation(sampleRate)). Viz thread only.
+     *
+     * False when fewer than 512 * D samples were ever written, or when the
+     * resolved window end is the one the last frame used. The end follows the
+     * playback clock, so it advances every tick while music plays even between
+     * the bursts the player writes PCM in; when paused the clock goes stale,
+     * the caller passes -1, the end sticks at the newest sample and no frame
+     * is made, so the consumer can fall to silence.
+     */
+    bool computeSpectrum(float* out256, int64_t endIndex, int sampleRate) {
+        const int decim = BarSpectrum::decimation(sampleRate);
+        const int64_t need = (int64_t)BarSpectrum::kBlock * decim;
+        const int64_t newest = writePos_.load(std::memory_order_acquire);
+        if (newest < need) return false;
+
+        // The clock can trail the start of the stream: never read before it.
+        const int64_t end = std::max(need, windowEnd(endIndex));
+        if (end == spectrumEnd_) return false;
+        spectrumEnd_ = end;
+
+        const int64_t start = end - need;
+        for (int64_t i = 0; i < need; i++) {
+            spectrumIn_[i] = ringBuf_[(start + i) & RING_MASK];
+        }
+        spectrum_.compute(spectrumIn_, decim, out256);
+        return true;
+    }
+
 private:
     // ~1.5 s at 44.1 kHz: the heard position trails the newest sample by the
     // sink's lead (~0.3 s, more on Bluetooth), and a window must fit behind it.
@@ -269,6 +304,11 @@ private:
         const int64_t oldest = newest - (RING_SIZE - RING_GUARD) + FFT_SIZE;
         return std::max(oldest, std::min(endIndex, newest));
     }
+
+    // ── Bar spectrum (viz thread) ──
+    BarSpectrum spectrum_;
+    int64_t spectrumEnd_ = -1;   // window end of the last successful frame
+    float spectrumIn_[BarSpectrum::kBlock * BarSpectrum::kMaxDecimation];
 
     // ── Bass hops (viz thread) ──
     // Direct form I biquad in double: a 35 Hz high-pass at 44.1 kHz puts its

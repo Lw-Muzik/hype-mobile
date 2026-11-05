@@ -6,9 +6,9 @@
 /// merely waste its own CPU — it drives the whole render pipeline, including
 /// the background blurs, at 30fps for a picture nobody asked for.
 ///
-/// It used to be governed by a master switch that sat alongside the two
-/// switches for the surfaces that actually draw it. Three switches for two
-/// things is one too many: the master could be off while a surface was on
+/// It used to be governed by a master switch that sat alongside the
+/// switch for the surface that actually draws it. Two switches for one
+/// thing is one too many: the master could be off while a surface was on
 /// (a visualizer that silently never moved), or on while both were off (this
 /// class's whole cost, invisibly, forever). The tap is now *implied* — it runs
 /// exactly when some surface needs it.
@@ -20,15 +20,12 @@ class VisualizerTap {
   /// The visualizer drawn on the player screen.
   bool playerVisual = false;
 
-  /// The visualizer drawn behind the whole app.
-  bool backgroundVisual = false;
-
   /// Silences the tap without forgetting what the user asked for, so that
   /// backgrounding the app can stop the capture and resuming can restore it.
   bool suspended = false;
 
   /// A Hype Connect controller is watching this phone's visualiser. Unlike the
-  /// two surfaces above it is not on this screen, so backgrounding the app does
+  /// player surface it is not on this screen, so backgrounding the app does
   /// not silence it: the phone is typically playing in a pocket while a laptop
   /// draws the spectrum. Hype Connect clears it as soon as nobody watches or
   /// playback stops.
@@ -41,7 +38,7 @@ class VisualizerTap {
 
   /// Whether the native tap should be capturing right now.
   bool get shouldRun =>
-      remoteVisual || (!suspended && (playerVisual || backgroundVisual));
+      remoteVisual || (!suspended && playerVisual);
 
   /// The value to send to the native side, or null when it already agrees.
   ///

@@ -4,6 +4,7 @@
 #include "room_dsp_engine.h"
 #include "stems/stem_engine.h"
 #include "stems_ios/av_pcm_source.h"
+#include "bar_spectrum.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -379,6 +380,19 @@ void dsp_stem_tap_process(void* tap, float* interleaved, int frames, int64_t fra
     auto* t = static_cast<hype::stems::StemTap*>(tap);
     t->setPosition(framePos, discontinuity);
     t->process(interleaved, frames);
+}
+
+// Bar spectrum for the built-in visualizers (bar_spectrum.h). One shared
+// instance with member scratch: main thread only, never the audio thread.
+int dsp_bar_spectrum_decimation(int sampleRate) {
+    return BarSpectrum::decimation(sampleRate);
+}
+
+int dsp_bar_spectrum(const float* mono, int decim, float* out256) {
+    static BarSpectrum* spectrum = new BarSpectrum();
+    if (!mono || !out256) return 0;
+    spectrum->compute(mono, decim, out256);
+    return BarSpectrum::kBins;
 }
 
 } // extern "C"

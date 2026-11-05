@@ -91,6 +91,12 @@ static inline void HypeStereoToMono(const float *stereo, float *mono, int frames
 /// as the float32 beat frame Dart's BeatFrame reads; nil before a tap runs.
 - (nullable NSData *)takeBeatFrame;
 
+/// The newest 512 * D mono samples (D = dsp_bar_spectrum_decimation) as 256
+/// float32 powers for the built-in visualizers. Main thread. nil when no tap
+/// is active, too little audio has been heard, or nothing new arrived since
+/// the last call.
+- (nullable NSData *)takeSpectrum;
+
 /// Raw PCM float data for projectM feeding
 - (nullable NSData *)latestPcmFloat;
 

@@ -2,7 +2,7 @@
 ///
 /// Extracted from `AppController` and tested on its own because the rule is no
 /// longer "whatever the master switch says". The master switch is gone; the tap
-/// is now implied by the two surfaces that actually draw it, and getting the
+/// is now implied by the surface that actually draws it, and getting the
 /// implication wrong is invisible on screen — a tap left running costs CPU on
 /// every audio buffer with nothing to show for it, and a tap wrongly stopped
 /// leaves a visualizer frozen with no error anywhere.
@@ -24,22 +24,19 @@ void main() {
       expect(tap.shouldRun, isTrue);
     });
 
-    test('is true when only the background visual is on', () {
-      final tap = VisualizerTap()..backgroundVisual = true;
-      expect(tap.shouldRun, isTrue);
+    test('is false once the player visual goes away', () {
+      final tap = VisualizerTap()..playerVisual = true;
+      tap.playerVisual = false;
+      expect(tap.shouldRun, isFalse);
     });
 
-    test('stays true while either surface still wants it', () {
+    test('is false while suspended, unless a remote viewer watches', () {
       final tap = VisualizerTap()
         ..playerVisual = true
-        ..backgroundVisual = true;
-
-      tap.playerVisual = false;
-      expect(tap.shouldRun, isTrue,
-          reason: 'the background visual is still drawing it');
-
-      tap.backgroundVisual = false;
+        ..suspended = true;
       expect(tap.shouldRun, isFalse);
+      tap.remoteVisual = true;
+      expect(tap.shouldRun, isTrue);
     });
   });
 
@@ -58,18 +55,6 @@ void main() {
       tap.playerVisual = true;
       expect(tap.pendingPush(), isTrue);
       expect(tap.pendingPush(), isNull);
-      expect(tap.pendingPush(), isNull);
-    });
-
-    test('does not push when a toggle flips but the OR does not', () {
-      final tap = VisualizerTap()
-        ..playerVisual = true
-        ..backgroundVisual = true;
-      tap.pendingPush();
-
-      // One surface goes away, the other still needs the tap: nothing to say
-      // to the native side.
-      tap.playerVisual = false;
       expect(tap.pendingPush(), isNull);
     });
 

@@ -76,7 +76,7 @@ const List<OnboardingPage> onboardingPages = [
     subtitle: 'See your music come alive',
     icon: Icons.auto_awesome_rounded,
     features: [
-      'MilkDrop, spectrum & silk wave modes',
+      'Spectrum, radial & waveform visualizers',
       'Synchronized lyrics display',
       'Track fingerprinting with one tap',
     ],

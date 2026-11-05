@@ -598,6 +598,21 @@ Java_x_a_zix_VisualizerTapProcessor_nativeComputeBeat(
     return result;
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_x_a_zix_VisualizerTapProcessor_nativeComputeSpectrum(
+        JNIEnv* env, jobject, jlong endIndex, jint sampleRate) {
+    std::lock_guard<std::mutex> lock(g_vizMutex);
+    if (!g_fftViz) return nullptr;
+    float powers[BarSpectrum::kBins];
+    if (!g_fftViz->computeSpectrum(powers, static_cast<int64_t>(endIndex), sampleRate)) {
+        return nullptr;
+    }
+    jfloatArray result = env->NewFloatArray(BarSpectrum::kBins);
+    if (!result) return nullptr;
+    env->SetFloatArrayRegion(result, 0, BarSpectrum::kBins, powers);
+    return result;
+}
+
 JNIEXPORT void JNICALL
 Java_x_a_zix_VisualizerTapProcessor_nativeSetSmoothing(
         JNIEnv*, jobject, jfloat attack, jfloat decay) {

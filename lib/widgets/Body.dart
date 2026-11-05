@@ -3,8 +3,6 @@ import 'dart:ui';
 
 import '/controllers/app_controller.dart';
 import '/exports/exports.dart';
-import '../helpers/visualizer_widget.dart';
-import '../visualizers/circular_bar_visualizer.dart';
 import '../player/remote/remote_player.dart' show RemoteBackdrop;
 import '../player/remote/remote_scope.dart' show RemoteBuilder;
 import 'artwork_widget.dart';
@@ -61,7 +59,6 @@ typedef _BgData = ({
   int songDbId,
   int bgQuality,
   double blur,
-  bool visualInBackground,
 });
 
 class _BodyBackground extends StatelessWidget {
@@ -114,14 +111,13 @@ class _LocalBodyBackground extends StatelessWidget {
           songDbId: song?.id ?? -1,
           bgQuality: c.bgQuality.toInt(),
           blur: c.blur,
-          visualInBackground: c.isVisualInBackground,
         );
       },
       builder: (context, d, _) {
         final size = MediaQuery.of(context).size;
-        // Washed out further when no visualizer is drawn over it, so the page
+        // Washed out so the page
         // content stays readable against a busy cover.
-        final washed = d.hasSongs && !d.visualInBackground;
+        final washed = d.hasSongs;
         // A single RepaintBoundary caches the composited background so the page
         // content painting on top of it doesn't force the blur to re-raster.
         return RepaintBoundary(
@@ -187,22 +183,6 @@ class _LocalBodyBackground extends StatelessWidget {
                   ),
                 ),
               ),
-              if (d.visualInBackground)
-                VisualizerWidget(
-                  builder: (context, fft, _, rate) {
-                    return CustomPaint(
-                      painter: CircularBarVisualizer(
-                        color: Theme.of(context).primaryColorLight
-                            .withValues(alpha: 0.1),
-                        waveData: fft,
-                        width: size.width,
-                        height: size.height,
-                      ),
-                      child: const Center(),
-                    );
-                  },
-                  id: 0,
-                ),
             ],
           ),
         );

@@ -1,5 +1,9 @@
 import 'dart:io';
+
 import '/exports/exports.dart';
+import '../visualizers/spectrum_bars/presets.dart';
+import '../visualizers/spectrum_bars/spectrum_bars_view.dart';
+import '../visualizers/visualizer_styles.dart';
 import '../visualizers/wave-visualizer.dart';
 import '../controllers/app_controller.dart';
 import '/helpers/audio_visualizer.dart';
@@ -34,132 +38,11 @@ class _VisualUIState extends State<VisualUI>
   String _presetName = '';
 
   static Map<String, _VisualPreset> get _visualizers => {
-    'radial': const _VisualPreset(
-      name: 'Radial',
-      icon: Icons.flare_rounded,
-      description: 'Circular burst',
-    ),
-    'bars': const _VisualPreset(
-      name: 'Spectrum',
-      icon: Icons.bar_chart_rounded,
-      description: 'Classic analyzer',
-    ),
-    'mirror_bars': const _VisualPreset(
-      name: 'Mirror',
-      icon: Icons.align_vertical_center_rounded,
-      description: 'Mirrored bars',
-    ),
-    'line': const _VisualPreset(
-      name: 'Waveform',
-      icon: Icons.show_chart_rounded,
-      description: 'Oscilloscope',
-    ),
-    'terrain': const _VisualPreset(
-      name: 'Terrain',
-      icon: Icons.terrain_rounded,
-      description: 'Mountain peaks',
-    ),
-    'dots': const _VisualPreset(
-      name: 'Matrix',
-      icon: Icons.grid_on_rounded,
-      description: 'Dot grid',
-    ),
-    'silk': const _VisualPreset(
-      name: 'Silk',
-      icon: Icons.animation_rounded,
-      description: 'Layered ribbon waves',
-    ),
-    'lissajous': const _VisualPreset(
-      name: 'Lissajous',
-      icon: Icons.all_inclusive_rounded,
-      description: 'Twisting curves',
-    ),
-    'windmill': const _VisualPreset(
-      name: 'Windmill',
-      icon: Icons.rotate_right_rounded,
-      description: 'Radial arc fan',
-    ),
-    // ── 3D Visualizers ──
-    'neon_grid': const _VisualPreset(
-      name: 'Neon Grid',
-      icon: Icons.grid_3x3_rounded,
-      description: 'Synthwave horizon',
-    ),
-    'spectrum_ring': const _VisualPreset(
-      name: '3D Ring',
-      icon: Icons.trip_origin_rounded,
-      description: 'Rotating spectrum ring',
-    ),
-    'ribbon_trail': const _VisualPreset(
-      name: 'Ribbons',
-      icon: Icons.gesture_rounded,
-      description: '3D flowing ribbons',
-    ),
-    'lissajous_3d': const _VisualPreset(
-      name: '3D Lissajous',
-      icon: Icons.all_inclusive_rounded,
-      description: 'Neon parametric spirals',
-    ),
-    'particle_field': const _VisualPreset(
-      name: 'Particles',
-      icon: Icons.blur_circular_rounded,
-      description: 'Floating depth orbs',
-    ),
-    'waveform_tunnel': const _VisualPreset(
-      name: 'Tunnel',
-      icon: Icons.track_changes_rounded,
-      description: 'Waveform fly-through',
-    ),
-    'kaleidoscope': const _VisualPreset(
-      name: 'Kaleidoscope',
-      icon: Icons.change_history_rounded,
-      description: 'Symmetric tunnel',
-    ),
-    'terrain_3d': const _VisualPreset(
-      name: 'Terrain',
-      icon: Icons.landscape_rounded,
-      description: '3D audio landscape',
-    ),
-    'mesh_sphere': const _VisualPreset(
-      name: 'Mesh Sphere',
-      icon: Icons.public_rounded,
-      description: 'Spiky wireframe ball',
-    ),
-    'morphing_orb': const _VisualPreset(
-      name: 'Orb',
-      icon: Icons.circle_rounded,
-      description: 'Morphing harmonic sphere',
-    ),
-    'reactive_geo': const _VisualPreset(
-      name: 'Geometry',
-      icon: Icons.hexagon_rounded,
-      description: 'Reactive icosahedron',
-    ),
-    'waterfall': const _VisualPreset(
-      name: 'Waterfall',
-      icon: Icons.waterfall_chart_rounded,
-      description: '3D spectrogram',
-    ),
-    'metaball': const _VisualPreset(
-      name: 'Metaballs',
-      icon: Icons.bubble_chart_rounded,
-      description: 'Merging soft blobs',
-    ),
-    'milkdrop_warp': const _VisualPreset(
-      name: 'Warp Mesh',
-      icon: Icons.waves_rounded,
-      description: 'Milkdrop-style warp grid',
-    ),
-    'fractal_flame': const _VisualPreset(
-      name: 'Fractal',
-      icon: Icons.auto_awesome_rounded,
-      description: 'IFS fractal flame',
-    ),
-    if (!Platform.isIOS)
-      'milkdrop': const _VisualPreset(
-        name: 'MilkDrop',
-        icon: Icons.blur_on_rounded,
-        description: 'MilkDrop presets',
+    for (final v in visualizerStyles(isIos: Platform.isIOS))
+      v.id: _VisualPreset(
+        name: v.name,
+        icon: v.icon,
+        description: v.description,
       ),
   };
 
@@ -499,6 +382,17 @@ class _VisualUIState extends State<VisualUI>
     final color = Color(ctrl.visualizerColor);
     final reactivity = ctrl.visualizerReactivity;
 
+    final spectrum = spectrumBarsVisualizer(style);
+    if (spectrum != null) {
+      // Has its own SpectrumFeed, so it stays outside VisualizerWidget.
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 500),
+        transitionBuilder: (child, animation) =>
+            FadeTransition(opacity: animation, child: child),
+        child: spectrum,
+      );
+    }
+
     return VisualizerWidget(
       builder: (context, waveform, fft, x) {
         return AnimatedSwitcher(
@@ -699,6 +593,7 @@ class _SettingsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMilkDrop = selectedVisual == 'milkdrop';
+    final fixedColors = isMilkDrop || isSpectrumBarsStyle(selectedVisual);
 
     final activeStyle = visualizers[selectedVisual];
 
@@ -758,8 +653,8 @@ class _SettingsPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          // Section: Color palette (hidden for milkdrop — projectM handles its own colors)
-          if (!isMilkDrop) ...[
+          // Section: Color palette (hidden for milkdrop and the spectrum styles — their colors are fixed)
+          if (!fixedColors) ...[
             const Text(
               'COLOR',
               style: TextStyle(
@@ -1441,4 +1336,14 @@ class _CircleButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The built-in spectrum bars view for [style], or null when [style] is a
+/// radial/line style that goes through the wave visualizer.
+@visibleForTesting
+Widget? spectrumBarsVisualizer(String style) {
+  if (!isSpectrumBarsStyle(style)) return null;
+  final preset = spectrumBarsPresetById(style);
+  if (preset == null) return null;
+  return SpectrumBarsView(key: ValueKey(style), preset: preset);
 }

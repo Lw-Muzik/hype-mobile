@@ -1,0 +1,300 @@
+import 'dart:ui' show Color;
+
+/// How a preset arranges its bars.
+enum BarsLayout {
+  bottom,
+  bottomCells,
+  centred,
+  centredCells,
+  reflected,
+  reflectedCells,
+}
+
+const Color _none = Color(0x00000000);
+
+/// One built-in spectrum-bars look: geometry, dynamics, peaks and colours.
+class SpectrumBarsPreset {
+  final String id, name;
+  final BarsLayout layout;
+  final int numX, numY, rounding;
+  final double spacingX, spacingY, smooth, sens, bassSens, sx, sy;
+  final double peakHeight, peakSpacing, peakDelay, peakAccel;
+  final double decay, zoom, zoomExp, thr;
+  final Color colorT, colorB, colorL, colorR;
+  final Color thrT, thrB, thrL, thrR;
+  final Color peakT, peakB;
+
+  const SpectrumBarsPreset({
+    required this.id,
+    required this.name,
+    required this.layout,
+    required this.numX,
+    required this.numY,
+    required this.spacingX,
+    required this.spacingY,
+    this.rounding = 0,
+    required this.smooth,
+    required this.sens,
+    required this.bassSens,
+    this.sx = 1,
+    this.sy = 1,
+    this.peakHeight = 0,
+    this.peakSpacing = 0,
+    this.peakDelay = 0,
+    this.peakAccel = 0,
+    this.decay = 0,
+    this.zoom = 1,
+    this.zoomExp = 1,
+    required this.thr,
+    required this.colorT,
+    required this.colorB,
+    this.colorL = _none,
+    this.colorR = _none,
+    required this.thrT,
+    required this.thrB,
+    this.thrL = _none,
+    this.thrR = _none,
+    this.peakT = _none,
+    this.peakB = _none,
+  });
+
+  bool get _isReflected =>
+      layout == BarsLayout.reflected || layout == BarsLayout.reflectedCells;
+
+  /// Bars actually analysed: numX clamped to 1..128, halved for mirrored layouts.
+  int get barCount {
+    final n = numX < 1 ? 1 : (numX > 128 ? 128 : numX);
+    return _isReflected ? n >> 1 : n;
+  }
+
+  bool get hasPeaks => peakHeight != 0;
+  bool get hasTrail => decay > 0;
+
+  /// Trail fade factor, quantised to 8 bits.
+  double get decayMultiplier => (decay * 255).floorToDouble() / 255;
+}
+
+const List<SpectrumBarsPreset> kSpectrumBarsPresets = [
+  SpectrumBarsPreset(
+    id: 'spectrum_plain',
+    name: 'Spectrum Plain',
+    layout: BarsLayout.bottom,
+    numX: 32,
+    numY: 24,
+    spacingX: .09,
+    spacingY: .5,
+    smooth: .75,
+    sens: .5,
+    bassSens: .5,
+    peakHeight: .012,
+    peakSpacing: .002,
+    peakDelay: 1.5,
+    peakAccel: .25,
+    decay: .94,
+    thr: .81,
+    colorT: Color(0xFF768BBF),
+    colorB: Color(0xFF94A2C3),
+    thrT: Color(0xFFFFFFFF),
+    thrB: Color(0xFFFFFFFF),
+    peakT: Color(0xFFFFFFFF),
+    peakB: Color(0xFF94A2C3),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_narrow',
+    name: 'Spectrum Narrow',
+    layout: BarsLayout.bottom,
+    numX: 128,
+    numY: 24,
+    spacingX: .5,
+    spacingY: .2,
+    smooth: .9,
+    sens: .55,
+    bassSens: 0,
+    thr: .8,
+    colorT: Color(0xFF111199),
+    colorB: Color(0xFF3333AA),
+    thrT: Color(0xFFAA0000),
+    thrB: Color(0xFF443333),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_wide',
+    name: 'Spectrum Wide',
+    layout: BarsLayout.bottom,
+    numX: 16,
+    numY: 24,
+    spacingX: .25,
+    spacingY: .25,
+    rounding: 2,
+    smooth: .9,
+    sens: .775,
+    bassSens: 1,
+    thr: .8,
+    colorT: Color(0xFF111199),
+    colorB: Color(0xFF3333AA),
+    thrT: Color(0xFFAA0000),
+    thrB: Color(0xFF443333),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_centered',
+    name: 'Spectrum Centered',
+    layout: BarsLayout.centred,
+    numX: 128,
+    numY: 24,
+    spacingX: .5,
+    spacingY: .5,
+    smooth: .83,
+    sens: .5,
+    bassSens: 0,
+    thr: .5,
+    colorT: Color(0xFFFFFFFF),
+    colorB: Color(0xFFEEEEEE),
+    thrT: Color(0xFFEEEEEE),
+    thrB: Color(0xFFFFFFFF),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_centered_narrow',
+    name: 'Spectrum Centered Narrow',
+    layout: BarsLayout.centred,
+    numX: 64,
+    numY: 24,
+    spacingX: .3,
+    spacingY: .3,
+    rounding: 1,
+    smooth: .85,
+    sens: .5,
+    bassSens: 0,
+    thr: .5,
+    colorT: Color(0xFF98C8FF),
+    colorB: Color(0xFF050709),
+    thrT: Color(0xFF98C8FF),
+    thrB: Color(0xFF98C8FF),
+    thrR: Color(0xFF050709),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_centered_wide',
+    name: 'Spectrum Centered Wide',
+    layout: BarsLayout.centred,
+    numX: 16,
+    numY: 24,
+    spacingX: .3,
+    spacingY: .5,
+    rounding: 1,
+    smooth: .875,
+    sens: .5,
+    bassSens: 0,
+    thr: .5,
+    colorT: Color(0xFF98C8FF),
+    colorB: Color(0xFF98C8FF),
+    thrT: Color(0xFF98C8FF),
+    thrB: Color(0xFF98C8FF),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_centered_reflected',
+    name: 'Spectrum Centered Reflected',
+    layout: BarsLayout.reflected,
+    numX: 64,
+    numY: 24,
+    spacingX: .8,
+    spacingY: .8,
+    smooth: .5,
+    sens: .9,
+    bassSens: .9,
+    sy: .65,
+    decay: .95,
+    thr: .5,
+    colorT: Color(0xFFFFFFFF),
+    colorB: Color(0xFF536C82),
+    thrT: Color(0xFFFFFFFF),
+    thrB: Color(0xFFFFFFFF),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_reflected_wide',
+    name: 'Spectrum Reflected Wide',
+    layout: BarsLayout.reflected,
+    numX: 32,
+    numY: 24,
+    spacingX: .8,
+    spacingY: .8,
+    smooth: .5,
+    sens: .9,
+    bassSens: .9,
+    sy: .65,
+    decay: .95,
+    thr: .5,
+    colorT: Color(0xFFFFFFFF),
+    colorB: Color(0xFF373782),
+    thrT: Color(0xFFFFFFFF),
+    thrB: Color(0xFFFFFFFF),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_quads_narrow',
+    name: 'Spectrum Quads Narrow',
+    layout: BarsLayout.bottomCells,
+    numX: 32,
+    numY: 48,
+    spacingX: .1,
+    spacingY: .1,
+    smooth: .83,
+    sens: .8,
+    bassSens: .5,
+    peakHeight: .025,
+    peakSpacing: .01,
+    peakDelay: .65,
+    peakAccel: .85,
+    decay: .9,
+    thr: .85,
+    colorT: Color(0xFF768BBF),
+    colorB: Color(0xFF768BBF),
+    colorR: Color(0xFF000033),
+    thrT: Color(0xFFFFFFFF),
+    thrB: Color(0xFFFFFFFF),
+    peakT: Color(0xFFFFFFFF),
+    peakB: Color(0xFF94A2C3),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_quads_reflected',
+    name: 'Spectrum Quads Reflected',
+    layout: BarsLayout.reflectedCells,
+    numX: 49,
+    numY: 99,
+    spacingX: .2,
+    spacingY: .2,
+    smooth: .9,
+    sens: .75,
+    bassSens: 1,
+    thr: .8,
+    colorT: Color(0xFF111199),
+    colorB: Color(0xFF3333AA),
+    thrT: Color(0xFFAA0000),
+    thrB: Color(0xFF443333),
+  ),
+  SpectrumBarsPreset(
+    id: 'spectrum_dots',
+    name: 'Spectrum Dots',
+    layout: BarsLayout.centredCells,
+    numX: 64,
+    numY: 24,
+    spacingX: .5,
+    spacingY: .5,
+    smooth: .1,
+    sens: .95,
+    bassSens: 1,
+    sy: .75,
+    decay: .963,
+    zoom: .999,
+    zoomExp: 1.05,
+    thr: .5,
+    colorT: Color(0xFF768BBF),
+    colorB: Color(0xFF94A2C3),
+    colorR: Color(0xFF94A2C3),
+    thrT: Color(0xFFCAC3FF),
+    thrB: Color(0xFF7A87FF),
+  ),
+];
+
+SpectrumBarsPreset? spectrumBarsPresetById(String id) {
+  for (final p in kSpectrumBarsPresets) {
+    if (p.id == id) return p;
+  }
+  return null;
+}

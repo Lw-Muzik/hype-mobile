@@ -68,6 +68,7 @@ public class VisualizerTapProcessor extends BaseAudioProcessor implements SinkCl
     private static volatile EventChannel.EventSink fftSink;
     private static volatile EventChannel.EventSink waveformSink;
     private static volatile EventChannel.EventSink beatSink;
+    private static volatile EventChannel.EventSink spectrumSink;
     private static ScheduledExecutorService vizThread;
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
     private static volatile boolean fftEnabled = false;
@@ -82,6 +83,7 @@ public class VisualizerTapProcessor extends BaseAudioProcessor implements SinkCl
     private static native float[] nativeComputeBands(long endIndex);
     private static native byte[] nativeGetWaveform(long endIndex);
     private static native float[] nativeComputeBeat(long endIndex, int sampleRate);
+    private static native float[] nativeComputeSpectrum(long endIndex, int sampleRate);
     private static native void nativeSetSmoothing(float attack, float decay);
     private static native void nativeSetGain(float gain);
 
@@ -408,7 +410,21 @@ public class VisualizerTapProcessor extends BaseAudioProcessor implements SinkCl
      */
     public static void setFftSink(EventChannel.EventSink sink) {
         fftSink = sink;
-        if (sink != null) {
+        updateVizThread();
+    }
+
+    /**
+     * Set the EventSink for bar spectrum frames (256 powers, see
+     * FFTVisualizer::computeSpectrum) for the built-in bar visualizers.
+     */
+    public static void setSpectrumSink(EventChannel.EventSink sink) {
+        spectrumSink = sink;
+        updateVizThread();
+    }
+
+    /** The viz thread runs while the bands or the spectrum have a listener. */
+    private static synchronized void updateVizThread() {
+        if (fftSink != null || spectrumSink != null) {
             startFftVizThread();
         } else {
             stopFftVizThread();
@@ -499,8 +515,8 @@ public class VisualizerTapProcessor extends BaseAudioProcessor implements SinkCl
                 final long drawEnd = heard < 0 ? -1 : ahead(p, heard, DRAW_LEAD_NS);
 
                 // Compute FFT bands in C++
-                float[] bands = nativeComputeBands(drawEnd);
-                if (bands != null && fftSink != null) {
+                float[] bands = fftSink != null ? nativeComputeBands(drawEnd) : null;
+                if (bands != null) {
                     mainHandler.post(() -> {
                         try {
                             if (fftSink != null) fftSink.success(bands);
@@ -530,8 +546,20 @@ public class VisualizerTapProcessor extends BaseAudioProcessor implements SinkCl
                     }
                 }
 
+                // The bar spectrum, ending where the bands do.
+                if (spectrumSink != null) {
+                    float[] spectrum = nativeComputeSpectrum(drawEnd, latestSampleRate);
+                    if (spectrum != null) {
+                        mainHandler.post(() -> {
+                            try {
+                                if (spectrumSink != null) spectrumSink.success(spectrum);
+                            } catch (Exception ignored) {}
+                        });
+                    }
+                }
+
                 // Also send waveform if listener is active
-                byte[] waveform = nativeGetWaveform(drawEnd);
+                byte[] waveform = waveformSink != null ? nativeGetWaveform(drawEnd) : null;
                 if (waveform != null && waveformSink != null) {
                     mainHandler.post(() -> {
                         try {

@@ -517,6 +517,18 @@ public class MainActivity extends AudioServiceFragmentActivity {
             }
         });
 
+        // 256-power bar spectrum for the built-in bar visualizers.
+        EventChannel spectrumChannel = new EventChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(), "eq_app/spectrum");
+        spectrumChannel.setStreamHandler(new EventChannel.StreamHandler() {
+            @Override public void onListen(Object arguments, EventChannel.EventSink events) {
+                VisualizerTapProcessor.setSpectrumSink(events);
+            }
+            @Override public void onCancel(Object arguments) {
+                VisualizerTapProcessor.setSpectrumSink(null);
+            }
+        });
+
         // Screen brightness, for the swipe gesture on the video screen.
         //
         // A *window* brightness override rather than a system setting: it needs
