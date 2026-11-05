@@ -56,71 +56,77 @@ class _PlayPauseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<PlayerState>(
-      stream: controller.handler.player.playerStateStream,
-      builder: (context, snapshot) {
-        final playerState = snapshot.data;
-        final processingState = playerState?.processingState;
-        final playing = playerState?.playing ?? false;
+    // A pause fades out before the player stops, and the button flips the
+    // moment it is pressed rather than when the fade is over — see
+    // `HypeAudioHandler.pausing`.
+    return ValueListenableBuilder<bool>(
+      valueListenable: controller.handler.pausing,
+      builder: (context, pausing, _) => StreamBuilder<PlayerState>(
+        stream: controller.handler.player.playerStateStream,
+        builder: (context, snapshot) {
+          final playerState = snapshot.data;
+          final processingState = playerState?.processingState;
+          final playing = (playerState?.playing ?? false) && !pausing;
 
-        if (processingState == ProcessingState.loading ||
-            processingState == ProcessingState.buffering) {
-          return Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white24, width: 2),
-            ),
-            child: const Center(
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.white,
+          if (processingState == ProcessingState.loading ||
+              processingState == ProcessingState.buffering) {
+            return Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white24, width: 2),
+              ),
+              child: const Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Colors.white,
+                  ),
                 ),
               ),
+            );
+          }
+
+          final icon = processingState == ProcessingState.completed
+              ? Icons.replay_rounded
+              : playing
+              ? Icons.pause_rounded
+              : Icons.play_arrow_rounded;
+
+          // Through the handler, not straight at the player. The handler is what
+          // the lock screen, the headset button and the notification already call,
+          // and it is where a session restored from the last run gets loaded
+          // before anything tries to play it.
+          final onPressed = processingState == ProcessingState.completed
+              ? () => controller.handler.seek(Duration.zero)
+              : playing
+              ? controller.handler.pause
+              : controller.handler.play;
+
+          return GestureDetector(
+            onTap: onPressed,
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Icon(icon, size: 38, color: const Color(0xFF0B1220)),
             ),
           );
-        }
-
-        final icon = processingState == ProcessingState.completed
-            ? Icons.replay_rounded
-            : playing
-            ? Icons.pause_rounded
-            : Icons.play_arrow_rounded;
-
-        // Through the handler, not straight at the player. The handler is what
-        // the lock screen, the headset button and the notification already call,
-        // and it is where a session restored from the last run gets loaded
-        // before anything tries to play it.
-        final onPressed = processingState == ProcessingState.completed
-            ? () => controller.handler.player.seek(Duration.zero)
-            : playing
-            ? controller.handler.pause
-            : controller.handler.play;
-
-        return GestureDetector(
-          onTap: onPressed,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  blurRadius: 24,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: Icon(icon, size: 38, color: const Color(0xFF0B1220)),
-          ),
-        );
-      },
+        },
+      ),
     );
   }
 }

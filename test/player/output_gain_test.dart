@@ -68,4 +68,45 @@ void main() {
     gain.setListener(0.7, const ['a']);
     expect(applied['a'], closeTo(0.7, 1e-9));
   });
+
+  group('crossfade mix and play/pause fade', () {
+    test('multiply with the track gain and listener volume', () {
+      gain.setTrack('a', 0.8);
+      gain.setListener(0.5, const ['a']);
+      gain.setMix('a', 0.5);
+      gain.setFade('a', 0.5);
+      expect(applied['a'], closeTo(0.8 * 0.5 * 0.5 * 0.5, 1e-9));
+    });
+
+    /// A crossfade step used to *be* the track gain, so a fade wiped
+    /// ReplayGain and the incoming track snapped to it at the end.
+    test('a crossfade step leaves replay gain alone', () {
+      gain.setTrack('b', 0.6);
+      gain.setMix('b', 0.25);
+      expect(gain.trackOf('b'), 0.6);
+      gain.setMix('b', 1.0);
+      expect(applied['b'], closeTo(0.6, 1e-9));
+    });
+
+    /// Pause halfway through a crossfade: both players fade out to silence,
+    /// and the blend between them is still there when play fades them back.
+    test('a pause fade over a crossfade keeps the blend', () {
+      gain.setMix('a', 0.7);
+      gain.setMix('b', 0.3);
+      gain.setFade('a', 0);
+      gain.setFade('b', 0);
+      expect(applied['a'], 0);
+      expect(applied['b'], 0);
+      gain.setFade('a', 1);
+      gain.setFade('b', 1);
+      expect(applied['a'], closeTo(0.7, 1e-9));
+      expect(applied['b'], closeTo(0.3, 1e-9));
+    });
+
+    test('unity until set', () {
+      expect(gain.mixOf('a'), 1.0);
+      expect(gain.fadeOf('a'), 1.0);
+      expect(gain.volumeOf('a'), 1.0);
+    });
+  });
 }

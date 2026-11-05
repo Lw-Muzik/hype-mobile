@@ -37,9 +37,8 @@ class EmberMiniPlayer extends StatelessWidget {
     final connect = HypeConnect.instanceOrNull;
     if (connect != null) {
       return RemoteBuilder(
-        builder: (context, remote) => remote != null
-            ? RemoteMiniPlayer(remote: remote)
-            : _local(context),
+        builder: (context, remote) =>
+            remote != null ? RemoteMiniPlayer(remote: remote) : _local(context),
       );
     }
     return _local(context);
@@ -85,7 +84,7 @@ class EmberMiniPlayer extends StatelessWidget {
                     // bare Text in flight has no DefaultTextStyle ancestor.
                     Hero(
                       tag: kNowPlayingTitleHeroTag,
-              flightShuttleBuilder: fadeThroughShuttle,
+                      flightShuttleBuilder: fadeThroughShuttle,
                       child: Material(
                         type: MaterialType.transparency,
                         child: Text(
@@ -104,7 +103,7 @@ class EmberMiniPlayer extends StatelessWidget {
                     const SizedBox(height: 2),
                     Hero(
                       tag: kNowPlayingArtistHeroTag,
-              flightShuttleBuilder: fadeThroughShuttle,
+                      flightShuttleBuilder: fadeThroughShuttle,
                       child: Material(
                         type: MaterialType.transparency,
                         child: Text(
@@ -127,24 +126,29 @@ class EmberMiniPlayer extends StatelessWidget {
                 onPressed: controller.prev,
                 size: 22,
               ),
-              StreamBuilder<bool>(
-                stream: controller.handler.player.playingStream,
-                builder: (context, snapshot) {
-                  final playing = snapshot.data ?? false;
-                  return _Control(
-                    icon: playing
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                    // Through the handler: a session restored from disk holds
-                    // its queue with the player still empty, and `onBeforePlay`
-                    // is what loads it.
-                    onPressed: () => playing
-                        ? controller.handler.pause()
-                        : controller.handler.play(),
-                    size: 28,
-                    prominent: true,
-                  );
-                },
+              ValueListenableBuilder<bool>(
+                // A fading pause counts as paused — see
+                // `HypeAudioHandler.pausing`.
+                valueListenable: controller.handler.pausing,
+                builder: (context, pausing, _) => StreamBuilder<bool>(
+                  stream: controller.handler.player.playingStream,
+                  builder: (context, snapshot) {
+                    final playing = (snapshot.data ?? false) && !pausing;
+                    return _Control(
+                      icon: playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      // Through the handler: a session restored from disk holds
+                      // its queue with the player still empty, and `onBeforePlay`
+                      // is what loads it.
+                      onPressed: () => playing
+                          ? controller.handler.pause()
+                          : controller.handler.play(),
+                      size: 28,
+                      prominent: true,
+                    );
+                  },
+                ),
               ),
               _Control(
                 icon: Icons.skip_next_rounded,

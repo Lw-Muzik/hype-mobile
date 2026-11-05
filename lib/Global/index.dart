@@ -21,6 +21,7 @@ import '../pages/equalizer.dart';
 import '../player/lyrics_view.dart';
 import '../widgets/artwork_widget.dart';
 import '../widgets/listen_sheet.dart';
+import '../player/fade_settings.dart';
 import '../services/video/video_registry.dart';
 import '../services/ytmusic/yt_audio_source.dart';
 import '../services/ytmusic/yt_innertube.dart';
@@ -45,9 +46,8 @@ Widget playerVisual(AppController controller) {
       return fft.isNotEmpty
           ? CustomPaint(
               painter: MultiWaveVisualizer(
-                color: Theme.of(
-                  context,
-                ).primaryColorLight.withValues(alpha: 0.1),
+                color: Theme.of(context).primaryColorLight
+                    .withValues(alpha: 0.1),
                 waveData: fft,
                 // width: MediaQuery.of(context).size.width,
                 height: MediaQuery.of(context).size.height,
@@ -283,28 +283,28 @@ Widget playerCard(
                   enabled: idx == controller.songId,
                   song: song,
                   child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 30,
-                        offset: const Offset(0, 12),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: ArtworkWidget(
-                      quality: 100,
+                    decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(18),
-                      size: 1000,
-                      songId: song.id,
-                      type: ArtworkType.AUDIO,
-                      path: song.data,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          blurRadius: 30,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: ArtworkWidget(
+                        quality: 100,
+                        borderRadius: BorderRadius.circular(18),
+                        size: 1000,
+                        songId: song.id,
+                        type: ArtworkType.AUDIO,
+                        path: song.data,
+                      ),
                     ),
                   ),
-                ),
                 ),
               ),
             ),
@@ -372,9 +372,8 @@ Widget folderArtwork(
           child: Icon(
             Icons.folder_rounded,
             size: 48,
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.3),
+            color: Theme.of(context).colorScheme.onSurface
+                .withValues(alpha: 0.3),
           ),
         ),
       Positioned(
@@ -393,15 +392,13 @@ Widget folderArtwork(
               children: [
                 TextSpan(
                   text: "$title \n",
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelSmall!.apply(color: Colors.white),
+                  style: Theme.of(context).textTheme.labelSmall!
+                      .apply(color: Colors.white),
                 ),
                 TextSpan(
                   text: "$numSongs Songs",
-                  style: Theme.of(context).textTheme.labelSmall!.apply(
-                    color: Theme.of(context).primaryColorLight,
-                  ),
+                  style: Theme.of(context).textTheme.labelSmall!
+                      .apply(color: Theme.of(context).primaryColorLight),
                 ),
               ],
             ),
@@ -484,32 +481,27 @@ Widget headerWidget(
   );
 }
 
-Future<void> loadAudioSource(
-  HypeAudioHandler handler,
+/// A track made ready for a player: what to open, what the notification
+/// shows, and the gain to play it at.
+class PreparedTrack {
+  const PreparedTrack(this.source, this.item, this.gain);
+  final AudioSource source;
+  final MediaItem item;
+  final double gain;
+}
+
+/// Works out what a player has to open for [song], without touching a player.
+///
+/// Shared by an ordinary load and by a crossfade, which opens the track on the
+/// spare player instead — so a crossfaded track is built exactly like any
+/// other: the same data guard, the same cloud cache, the same artwork.
+///
+/// Null when the data guard forbids streaming it.
+Future<PreparedTrack?> prepareTrack(
   SongModel song, {
   bool replayGain = false,
-
-  /// Where to start the track. For a session restored from the last run, which
-  /// has to resume mid-song rather than from the beginning.
-  Duration? initialPosition,
-
-  /// Whether to start playing once loaded.
-  ///
-  /// False when the caller is itself running inside `play()` — starting
-  /// playback from in there would recurse through the handler.
-  bool autoPlay = true,
 }) async {
-  // If a crossfade is mid-flight, settle it first (fast — one fade step) so
-  // this load lands on the settled active player instead of the outgoing one
-  // the fade loop is about to stop.
-  await handler.abortCrossfade();
-
   final isCloud = song.data.startsWith('http');
-
-  // Cancel any previous background cache download (don't waste data on skipped tracks)
-  if (isCloud) {
-    AppController.instance.cloudCache.cancelActiveDownload();
-  }
 
   // Artwork: cloud tracks store thumbnail URL in album field
   String image;
@@ -526,7 +518,7 @@ Future<void> loadAudioSource(
       ? song.album
       : null;
 
-  MediaItem item = MediaItem(
+  final item = MediaItem(
     id: song.data,
     album: albumName,
     title: song.title,
@@ -534,8 +526,6 @@ Future<void> loadAudioSource(
     duration: Duration(milliseconds: song.duration ?? 0),
     artUri: image.startsWith('/') ? Uri.file(image) : Uri.parse(image),
   );
-
-  handler.setCurrentMediaItem(item);
 
   // A video is loaded like any other track — same player, same handler, same
   // notification — but what it opens is the manifest this app wrote for it,
@@ -546,22 +536,16 @@ Future<void> loadAudioSource(
     final blockReason = StreamingDataGuard.instance.shouldBlockStream();
     if (blockReason != null) {
       debugPrint('Streaming blocked: $blockReason');
-      return;
+      return null;
     }
-    await handler.player.setAudioSource(
-      video.toAudioSource(tag: item),
-      initialPosition: initialPosition,
-    );
     // Replay gain is read from ID3 tags, which a manifest has none of, so a
     // video always plays at unity — and must say so, or it inherits whatever
     // gain the last local file left behind.
-    handler.setTrackGain(handler.player, 1.0);
-    if (autoPlay) handler.player.play();
-    return;
+    return PreparedTrack(video.toAudioSource(tag: item), item, 1.0);
   }
 
+  final AudioSource source;
   if (isCloud) {
-    AudioSource source;
     final guard = StreamingDataGuard.instance;
 
     // YouTube streams — direct URI, no caching. The target is single-use and
@@ -571,7 +555,7 @@ Future<void> loadAudioSource(
       final blockReason = guard.shouldBlockStream();
       if (blockReason != null) {
         debugPrint('Streaming blocked: $blockReason');
-        return;
+        return null;
       }
       source = ytAudioSource(item.id, tag: item);
     } else {
@@ -589,7 +573,7 @@ Future<void> loadAudioSource(
         final blockReason = guard.shouldBlockStream();
         if (blockReason != null) {
           debugPrint('Streaming blocked: $blockReason');
-          return;
+          return null;
         }
 
         // Get auth headers for cloud providers
@@ -617,35 +601,110 @@ Future<void> loadAudioSource(
       // Prefetch next cloud track in background
       _prefetchNextTrack();
     }
-
-    await handler.player.setAudioSource(
-      source,
-      initialPosition: initialPosition,
-    );
-  } else {
+  } else if (song.data.startsWith('/')) {
     // Local file: use AudioSource.file for proper path handling (spaces, special chars)
-    if (song.data.startsWith('/')) {
-      await handler.player.setAudioSource(
-        AudioSource.file(song.data, tag: item),
-        initialPosition: initialPosition,
-      );
-    } else {
-      await handler.player.setAudioSource(
-        AudioSource.uri(Uri.parse(item.id), tag: item),
-        initialPosition: initialPosition,
-      );
-    }
+    source = AudioSource.file(song.data, tag: item);
+  } else {
+    source = AudioSource.uri(Uri.parse(item.id), tag: item);
   }
 
   // Replay gain only for local files (needs ID3 tags)
-  if (replayGain && !isCloud) {
-    final gain = await HypeAudioHandler.computeReplayGainVolume(song.data);
-    handler.setTrackGain(handler.player, gain);
-  } else {
-    handler.setTrackGain(handler.player, 1.0);
+  final gain = replayGain && !isCloud
+      ? await HypeAudioHandler.computeReplayGainVolume(song.data)
+      : 1.0;
+  return PreparedTrack(source, item, gain);
+}
+
+Future<void> loadAudioSource(
+  HypeAudioHandler handler,
+  SongModel song, {
+  bool replayGain = false,
+
+  /// Where to start the track. For a session restored from the last run, which
+  /// has to resume mid-song rather than from the beginning.
+  Duration? initialPosition,
+
+  /// Whether to start playing once loaded.
+  ///
+  /// False when the caller is itself running inside `play()` — starting
+  /// playback from in there would recurse through the handler.
+  bool autoPlay = true,
+
+  /// How the change should sound — see [FadeSettings.manualChangeFade].
+  ///
+  /// Null for a change that should not be heard as one: a track that ended on
+  /// its own, a restored session.
+  ChangeFade? fade,
+}) async {
+  // The newest request wins: this one stops anything still in flight, and
+  // gives way in turn if another arrives while it waits.
+  final token = handler.beginLoad();
+  // If a crossfade is mid-flight, settle it first (fast — one fade step) so
+  // this load lands on the settled active player instead of the outgoing one
+  // the fade loop is about to stop.
+  await handler.abortCrossfade();
+
+  // Cancel any previous background cache download (don't waste data on skipped tracks)
+  if (song.data.startsWith('http')) {
+    AppController.instance.cloudCache.cancelActiveDownload();
   }
 
-  if (autoPlay) handler.player.play();
+  final prepared = await prepareTrack(song, replayGain: replayGain);
+  if (token != handler.loadToken) return;
+  if (prepared == null) {
+    // Blocked. Whatever was playing goes on — at full volume, not wherever an
+    // interrupted fade had left it.
+    await handler.restoreLevel();
+    return;
+  }
+
+  if (fade != null && fade.crossfadeMs > 0 && autoPlay && handler.isAudible) {
+    try {
+      await handler.crossfade(
+        load: (player) => player.setAudioSource(
+          prepared.source,
+          initialPosition: initialPosition,
+        ),
+        fadeMs: fade.crossfadeMs,
+        earlyFadeOutMs: fade.earlyFadeOutMs,
+        targetGain: prepared.gain,
+        mediaItem: () => prepared.item,
+        token: token,
+      );
+      return;
+    } catch (e) {
+      // The spare player would not open it. Load it the ordinary way, so a
+      // track that cannot play reaches the recovery that watches the active
+      // player instead of failing out of sight.
+      debugPrint('Crossfade load failed, loading directly: $e');
+    }
+  }
+
+  // A cut. Out of something playing it is declicked: a few milliseconds out,
+  // a few in.
+  final wasAudible = fade != null && handler.isAudible;
+  if (wasAudible) await handler.declickOut();
+  if (token != handler.loadToken) return;
+  // A player that finished its track still reports `playing`, and would start
+  // whatever it is given at once.
+  if (!autoPlay && handler.player.playing) await handler.player.pause();
+  handler.setCurrentMediaItem(prepared.item);
+  await handler.player.setAudioSource(
+    prepared.source,
+    initialPosition: initialPosition,
+  );
+  handler.setTrackGain(handler.player, prepared.gain);
+  if (autoPlay) {
+    handler.startPlayback(
+      fadeInMs: fade == null
+          ? 0
+          : wasAudible
+          ? kDeclickMs
+          : fade.fromSilenceMs,
+    );
+  } else {
+    handler.resetLevels(handler.player);
+  }
 }
 
 /// Prefetch the next track in the current queue if conditions allow.

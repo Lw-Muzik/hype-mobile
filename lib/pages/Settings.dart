@@ -18,6 +18,7 @@ import '../onboarding/interactions_guide.dart';
 import '../services/streaming_data_guard.dart';
 import '../services/share_service.dart';
 import '../services/connect/hype_connect.dart';
+import 'crossfade_settings_section.dart';
 import 'hype_connect_page.dart';
 import 'stream_server.dart';
 
@@ -43,7 +44,9 @@ enum SettingsCategory {
   appMode('App Mode', Icons.swap_horiz_rounded,
       'Full player, or equalizer only', _SettingsGroup.playback),
   playback('Playback', Icons.play_circle_outline_rounded,
-      'Gapless, crossfade, replay gain, autoplay', _SettingsGroup.playback),
+      'Replay gain, autoplay', _SettingsGroup.playback),
+  crossfade('Crossfade & Gapless', Icons.compare_arrows_rounded,
+      'Fading between tracks, on skip, pause and seek', _SettingsGroup.playback),
   streaming('Streaming', Icons.wifi_rounded,
       'Data saver and cellular limits', _SettingsGroup.playback),
 
@@ -113,8 +116,24 @@ class SettingsEntry {
 
 const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('App mode', SettingsCategory.appMode, 'player equalizer only'),
-  SettingsEntry('Gapless playback', SettingsCategory.playback, 'seamless'),
-  SettingsEntry('Crossfade', SettingsCategory.playback, 'fade overlap'),
+  SettingsEntry('Auto-advance fading', SettingsCategory.crossfade,
+      'crossfade gapless seamless blend overlap track end'),
+  SettingsEntry('Manual track change fading', SettingsCategory.crossfade,
+      'skip next previous fade crossfade'),
+  SettingsEntry('Crossfade length', SettingsCategory.crossfade,
+      'crossfade duration seconds overlap'),
+  SettingsEntry('Short crossfade length', SettingsCategory.crossfade,
+      'skip fade duration'),
+  SettingsEntry('Fade play/pause/stop', SettingsCategory.crossfade,
+      'fade in out pause resume'),
+  SettingsEntry('Play/pause/stop fade length', SettingsCategory.crossfade,
+      'fade duration'),
+  SettingsEntry('Fade on seek', SettingsCategory.crossfade, 'click jump scrub'),
+  SettingsEntry('Seek fade length', SettingsCategory.crossfade, 'fade duration'),
+  SettingsEntry('Preload gapless tracks', SettingsCategory.crossfade,
+      'gapless seamless buffer next track'),
+  SettingsEntry('Silence between tracks', SettingsCategory.crossfade,
+      'gap pause between songs'),
   SettingsEntry('Autoplay', SettingsCategory.playback, 'radio station endless'),
   SettingsEntry('Data Saver', SettingsCategory.streaming, 'quality data network'),
   SettingsEntry('Stream on Cellular', SettingsCategory.streaming, 'mobile wifi'),
@@ -404,6 +423,10 @@ class _SettingsState extends State<Settings> {
     final body = switch (category) {
       SettingsCategory.appMode => _buildAppModeSection(controller),
       SettingsCategory.playback => _buildPlaybackSection(controller),
+      SettingsCategory.crossfade => CrossfadeSettingsSection(
+          settings: controller.fadeSettings,
+          onChanged: (value) => controller.fadeSettings = value,
+        ),
       SettingsCategory.streaming => _buildStreamingSection(),
       SettingsCategory.equalizer => Column(children: [
           if (controller.globalEqAvailable) ...[
@@ -538,42 +561,7 @@ class _SettingsState extends State<Settings> {
       children: [
         _buildSectionHeader(Icons.headphones, "Playback"),
         _buildSectionCard([
-          SwitchListTile.adaptive(
-            value: controller.gaplessPlayback,
-            title: const Text("Gapless playback"),
-            subtitle: Text(controller.gaplessPlayback ? "Enabled" : "Disabled"),
-            onChanged: (enabled) => controller.gaplessPlayback = enabled,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text("Crossfade"),
-            subtitle: Text(
-              controller.crossfadeDuration == 0
-                  ? "Off"
-                  : "${controller.crossfadeDuration}s",
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                const Text("0s"),
-                Expanded(
-                  child: Slider.adaptive(
-                    value: controller.crossfadeDuration.toDouble(),
-                    min: 0,
-                    max: 30,
-                    divisions: 30,
-                    label: "${controller.crossfadeDuration}s",
-                    onChanged: (value) =>
-                        controller.crossfadeDuration = value.toInt(),
-                  ),
-                ),
-                const Text("30s"),
-              ],
-            ),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
+          // Gapless and crossfade moved to their own page, Crossfade & Gapless.
           SwitchListTile.adaptive(
             value: controller.replayGain,
             title: const Text("Replay gain"),

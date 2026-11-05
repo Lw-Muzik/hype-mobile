@@ -125,18 +125,18 @@ class ControlButtons extends StatelessWidget {
             } else if (playing != true) {
               return _buildControlButton(
                 icon: Icons.play_arrow,
-                onPressed: controller.handler.player.play,
+                onPressed: controller.handler.play,
               );
             } else if (processingState != ProcessingState.completed) {
               return _buildControlButton(
                 icon: Icons.pause,
-                onPressed: controller.handler.player.pause,
+                onPressed: controller.handler.pause,
               );
             } else {
               return IconButton(
                 icon: const Icon(Icons.replay),
                 iconSize: 64.0,
-                onPressed: () => controller.handler.player.seek(Duration.zero),
+                onPressed: () => controller.handler.seek(Duration.zero),
               );
             }
           },

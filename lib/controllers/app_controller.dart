@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:eq_app/global/index.dart';
+
 import '/exports/exports.dart';
 
 import '../data/library_repository.dart';
@@ -12,6 +13,7 @@ import '../Helpers/Channel.dart';
 import '../helpers/index.dart';
 import '../models/eq_models.dart';
 import '../models/room_preset.dart';
+
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
@@ -29,6 +31,7 @@ import '../services/fingerprint_service.dart';
 import '../services/cast_controller.dart';
 import '../services/streaming_data_guard.dart';
 import '../player/crossfade_trigger.dart';
+import '../player/fade_settings.dart';
 import '../player/playback_recovery.dart';
 import '../player/video/video_surface.dart';
 import '../services/video/video_registry.dart';
@@ -130,8 +133,8 @@ class AppController with ChangeNotifier implements StationSink {
   double _preGain = 20;
 
   // Audio feature settings
-  bool _gaplessPlayback = true;
-  int _crossfadeDuration = 0; // seconds, 0 = off
+  /// Crossfade, fade and gapless behaviour — see `lib/player/fade_settings.dart`.
+  FadeSettings _fades = const FadeSettings();
   bool _replayGain = false;
   bool _dvcEnabled = false;
   double _dvcGain = -30.0; // dB, range -30 to 0 (0% to 100%)
@@ -594,8 +597,7 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   // Audio feature getters
-  bool get gaplessPlayback => _gaplessPlayback;
-  int get crossfadeDuration => _crossfadeDuration;
+  FadeSettings get fadeSettings => _fades;
   bool get replayGain => _replayGain;
   bool get dvcEnabled => _dvcEnabled;
   double get dvcGain => _dvcGain;
@@ -605,26 +607,25 @@ class AppController with ChangeNotifier implements StationSink {
   List<Map<String, String>> get playingApps => List.unmodifiable(_playingApps);
 
   // Audio feature setters
-  set gaplessPlayback(bool value) {
-    _prefs.setBool("gaplessPlayback", value);
-    _gaplessPlayback = value;
-    if (value && _crossfadeDuration > 0) {
-      // Gapless and crossfade are mutually exclusive
-      crossfadeDuration = 0;
-    }
+
+  /// Replaces the crossfade/fade settings and saves them.
+  ///
+  /// Some changes move playback onto the other way of loading tracks — a whole
+  /// gapless queue on one player, or a track at a time — and what is playing
+  /// is moved across at once, at its position, rather than at the next track.
+  set fadeSettings(FadeSettings value) {
+    if (value == _fades) return;
+    final wasQueue = _gaplessQueue;
+    _fades = value;
+    _handler.fades = value;
+    unawaited(value.save(_prefs));
     notifyListeners();
+    if (wasQueue != _gaplessQueue) unawaited(_switchLoadingPath());
   }
 
-  set crossfadeDuration(int value) {
-    _prefs.setInt("crossfadeDuration", value);
-    _crossfadeDuration = value;
-    if (value > 0 && _gaplessPlayback) {
-      // Crossfade > 0 forces gapless OFF
-      _gaplessPlayback = false;
-      _prefs.setBool("gaplessPlayback", false);
-    }
-    notifyListeners();
-  }
+  /// Whether the queue is handed to the player whole, so tracks join without a
+  /// gap. Decided by the fading mode — see [usesGaplessQueue].
+  bool get _gaplessQueue => usesGaplessQueue(_fades, shuffled: _isShuffled);
 
   set replayGain(bool value) {
     _prefs.setBool("replayGain", value);
@@ -770,7 +771,6 @@ class AppController with ChangeNotifier implements StationSink {
   static LibraryRepository? libraryRepo;
 
   StreamSubscription<Duration>? _positionSub;
-  bool _isCrossfading = false;
 
   StreamSubscription<ProcessingState>? _processingSub;
   StreamSubscription<int?>? _indexSub;
@@ -923,32 +923,21 @@ class AppController with ChangeNotifier implements StationSink {
           }
         }
         if (event == ProcessingState.completed) {
+          // A crossfade owns the end of the track it is fading out of: the next
+          // track is already open, or already playing underneath.
+          if (handler.crossfadeInFlight) return;
           // Repeat-all wraps instead of stopping. `next()` has always done this
           // for the skip button, but a track ending on its own reached here and
           // stopped — so the setting appeared to work right up until the user put
           // the phone down, which is the only time it matters.
           final repeatAll = handler.loopMode == LoopMode.all;
-          if (_gaplessPlayback && handler.player.audioSources.length > 1) {
+          if (handler.player.audioSources.length > 1) {
             final idx = handler.player.currentIndex ?? 0;
             if (idx >= songs.length - 1 && !repeatAll) {
               handler.player.stop();
             }
-          } else if (!_isCrossfading) {
-            if (songId >= songs.length - 1) {
-              if (repeatAll && songs.isNotEmpty) {
-                songId = 0;
-                artWorkId = songs[0].id;
-                unawaited(loadTrackAt(0));
-              } else {
-                handler.player.stop();
-              }
-            } else {
-              // Both branches assign through the `songId` setter, which tops the
-              // radio up for every path at once.
-              songId += 1;
-              artWorkId = songs[songId].id;
-              unawaited(loadTrackAt(songId));
-            }
+          } else {
+            unawaited(_advanceAfterNaturalEnd(repeatAll: repeatAll));
           }
         }
       },
@@ -968,8 +957,15 @@ class AppController with ChangeNotifier implements StationSink {
     _indexSub?.cancel();
     _indexSub = handler.player.currentIndexStream.listen(
       (index) {
+        // The outgoing player of a crossfade runs on into its own next entry
+        // while it fades; that is not the app changing track.
+        if (handler.crossfadeInFlight) return;
+        // Already the current track: whoever made it so — the `songId` setter
+        // ahead of a skip, a crossfade's start, a reorder — has done the work
+        // below. Re-running it counted the track twice, and the stream replays
+        // its last value to every new listener, which is every crossfade.
+        if (index == _songId) return;
         if (index != null &&
-            _gaplessPlayback &&
             songs.isNotEmpty &&
             index < songs.length &&
             handler.player.audioSources.length > 1) {
@@ -1007,6 +1003,10 @@ class AppController with ChangeNotifier implements StationSink {
     _bindCurrentIndex();
     _setupCrossfadeListener();
     _bindAudioSessionId();
+    // The listening history samples the position of the player being heard.
+    // Left on the old one, every track after the first swap was recorded as
+    // barely played — and now that a skip swaps players, that is every track.
+    _bindPositionSampling();
     // After crossfade swap, the new player's tap has reinited the DSP engine
     if (Platform.isIOS) {
       _applyAllDspParams();
@@ -1017,119 +1017,294 @@ class AppController with ChangeNotifier implements StationSink {
   /// Set while a track is being loaded into the player.
   ///
   /// Read by the crossfade trigger, which must not start a fade out of a track
-  /// that is in the middle of being replaced — see [shouldStartCrossfade].
+  /// that is in the middle of being replaced — see `crossfade_trigger.dart`.
   bool _loadingTrack = false;
+
+  /// Whether a track change that has been waiting — out its silence between
+  /// tracks, on the network, for a crossfade it fell back from — has been
+  /// overtaken by a newer one. See `HypeAudioHandler.beginLoad`.
+  bool _overtaken(int token) => token != handler.loadToken;
 
   void _setupCrossfadeListener() {
     _positionSub?.cancel();
     _positionSub = handler.player.positionStream.listen((position) {
-      if (shouldStartCrossfade(
-        crossfadeSeconds: _crossfadeDuration,
+      if (_isCrossfading || handler.crossfadeInFlight || _loadingTrack) return;
+      if (_songId < 0 || _songId >= songs.length) return;
+      final nextIdx = _autoNextIndex();
+      if (nextIdx == null || nextIdx == _crossfadeFailedIdx) return;
+      final fadeMs = autoCrossfadeMs(
+        _fades,
+        shuffled: _isShuffled,
         repeatOne: handler.loopMode == LoopMode.one,
-        alreadyCrossfading: _isCrossfading,
-        loadingTrack: _loadingTrack,
-        duration: handler.player.duration,
-        position: position,
-        index: songId,
-        queueLength: songs.length,
-      )) {
-        _beginCrossfade();
+        current: _trackRef(songs[_songId]),
+        next: _trackRef(songs[nextIdx]),
+      );
+      final duration = handler.player.duration;
+      if (crossfadeFits(duration, fadeMs)) {
+        if (shouldPrepareCrossfade(
+          fadeMs: fadeMs,
+          leadMs: kCrossfadePrepareLeadMs,
+          duration: duration,
+          position: position,
+        )) {
+          unawaited(_beginAutoCrossfade(nextIdx, fadeMs));
+        }
+        return;
+      }
+      // Not crossfading. Where Hype joins tracks itself — a track at a time —
+      // the next one is opened "Preload gapless tracks" early and started the
+      // instant this one ends. A queue on one player is preloaded by the
+      // player.
+      if (handler.player.audioSources.length <= 1 &&
+          shouldPrepareHandoff(
+            preloadMs: _fades.gaplessPreloadMs,
+            duration: duration,
+            position: position,
+          )) {
+        unawaited(_beginAutoCrossfade(nextIdx, 0));
       }
     });
   }
+
+  /// The track a track ending on its own goes on to, or null for none.
+  int? _autoNextIndex() {
+    if (handler.loopMode == LoopMode.one) return null;
+    final next = _songId + 1;
+    if (next < songs.length) return next;
+    // Repeat-all goes round, and blends going round like anywhere else.
+    if (handler.loopMode == LoopMode.all && songs.length > 1) return 0;
+    return null;
+  }
+
+  static TrackRef _trackRef(SongModel song) =>
+      TrackRef(album: song.album, albumId: song.albumId, track: song.track);
 
   /// Index that failed to crossfade — don't retry it every position tick;
   /// the normal end-of-track advance handles it instead. Cleared on track change.
   int _crossfadeFailedIdx = -1;
 
-  Future<void> _beginCrossfade() async {
+  /// Held from the moment an end-of-track crossfade is decided on until it
+  /// settles, so the position listener — which fires several times a second —
+  /// starts it once.
+  bool _isCrossfading = false;
+
+  /// Crossfades out of a track that is ending on its own into [nextIdx] — or,
+  /// with [fadeMs] zero, hands over to it the instant this one ends (after the
+  /// silence between tracks, if set).
+  ///
+  /// The next track is opened early on the spare player —
+  /// [kCrossfadePrepareLeadMs] before a crossfade, "Preload gapless tracks"
+  /// before a handoff — and started exactly when it is due. Nothing about the current track changes until
+  /// then: the queue, the notification and the screen all move when the new
+  /// track becomes audible, not when it starts loading.
+  ///
+  /// A queue the player holds whole is taken over whole: the spare player gets
+  /// the same queue positioned at the next track, so the boundaries after this
+  /// one stay gapless.
+  Future<void> _beginAutoCrossfade(int nextIdx, int fadeMs) async {
     if (_isCrossfading) return;
-    final nextIdx = songId + 1;
-    if (nextIdx == _crossfadeFailedIdx) return;
     _isCrossfading = true;
+    final outgoing = handler.player;
+    final duration = outgoing.duration;
     final nextSong = songs[nextIdx];
-    final prevId = _songId;
-    final prevArtId = _artWorkId;
+    final inQueue = outgoing.audioSources.length > 1;
+    // Anything loaded while this one was still being prepared — a skip during
+    // the network fetch — has replaced the track it was meant to end. So has a
+    // queue player that moved on to the next entry by itself while the spare
+    // one was still being given the queue.
+    final token = handler.loadToken;
+    final startIndex = outgoing.currentIndex;
+    final startSongId = _songId;
+    bool stale() =>
+        _overtaken(token) ||
+        !identical(handler.player, outgoing) ||
+        outgoing.currentIndex != startIndex ||
+        _songId != startSongId;
+    Future<void>? queueLoad;
 
     try {
-      // Deliberately not through the `songId` setter — a crossfade must not
-      // fire the setter's play-count and session work mid-fade — so the radio
-      // top-up the setter does has to be repeated here. Without it a station
-      // played with crossfade on never grows past its first page, because a
-      // crossfaded track never reaches the natural-end handler either.
-      _songId = nextIdx;
-      _artWorkId = nextSong.id;
-      // A crossfaded track is still a track that was listened to. This is the
-      // third of the three advance paths — see [_onTrackStarted].
-      _onTrackStarted(nextIdx);
-      unawaited(RadioQueue.instance.onIndexChanged(this, nextIdx));
-      _loadLyricsForCurrentSong();
+      if (duration == null) return;
+      final handoff = fadeMs <= 0;
 
-      final AudioSource nextSource;
-      // Videos first, for the same reason every other source-construction site
-      // checks: a video's `data` is an identity, and what the player opens
-      // lives in the registry.
-      if (VideoRegistry.instance.sourceFor(nextSong.id) case final video?) {
-        nextSource = video.toAudioSource();
-      } else if (nextSong.data.startsWith('http')) {
-        // YouTube stream — direct URI with its headers. Must not go through the
-        // cloud-cache branch below: these targets are single-use, keyed by
-        // nothing the cache understands, and need no auth exchange.
-        if (YtInnerTube.isStreamUrl(nextSong.data)) {
-          nextSource = ytAudioSource(nextSong.data);
-        } else {
-          final fileId = nextSong.id.toString();
-          if (cloudCache.isCached(fileId)) {
-            nextSource = AudioSource.file(cloudCache.cacheFile(fileId).path);
-          } else {
-            final headers = nextSong.data.contains('googleapis.com')
-                ? await cloudAuth.getGoogleAuthHeaders()
-                : <String, String>{};
-            nextSource = AudioSource.uri(
-              Uri.parse(nextSong.data),
-              headers: headers,
-            );
-          }
-        }
+      final Future<void> Function(AudioPlayer) load;
+      var gain = 1.0;
+      final FutureOr<MediaItem?> Function() item;
+      if (inQueue) {
+        final sources = await _queueSources();
+        load = (p) => p.setAudioSources(sources, initialIndex: nextIdx);
+        item = () => _mediaItemFor(nextSong);
       } else {
-        nextSource = nextSong.data.startsWith('/')
-            ? AudioSource.file(nextSong.data)
-            : AudioSource.uri(Uri.parse(nextSong.data));
+        // An expired stream link is renewed on the way in, as every other
+        // advance does; a crossfade used to skip it and fade into silence.
+        await _refreshTarget(nextIdx);
+        final song = _songAt(nextIdx, nextSong.id);
+        if (song == null) return;
+        final prepared = await prepareTrack(song, replayGain: _replayGain);
+        if (prepared == null) {
+          _crossfadeFailedIdx = nextIdx;
+          return;
+        }
+        load = (p) => p.setAudioSource(prepared.source);
+        gain = prepared.gain;
+        item = () => prepared.item;
       }
 
-      await handler.beginCrossfade(
-        nextSource,
-        nextSong,
-        Duration(seconds: _crossfadeDuration),
-        replayGain: _replayGain,
+      if (stale()) return;
+      final fade = handler.crossfade(
+        load: load,
+        fadeMs: fadeMs,
+        targetGain: gain,
+        mediaItem: item,
+        startAt: handoff ? null : duration - Duration(milliseconds: fadeMs),
+        startAtEnd: handoff,
+        gapAfterEnd: handoff
+            ? Duration(milliseconds: _fades.silenceMs)
+            : Duration.zero,
+        token: token,
+        // A track ending on its own gives way to a change already in flight.
+        replace: false,
+        onStart: () {
+          if (_overtaken(token)) return;
+          // Found again by identity: an append while the track was opening is
+          // fine, and anything that reorders the queue aborts the crossfade.
+          final at = _songAt(nextIdx, nextSong.id) != null
+              ? nextIdx
+              : songs.indexWhere((s) => s.id == nextSong.id);
+          if (at < 0) return;
+          // Deliberately not through the `songId` setter, so it is repeated
+          // here: the play count and history (see [_onTrackStarted]), the radio
+          // top-up — without which a station played with crossfade on never
+          // grows past its first page — lyrics and the saved session.
+          _songId = at;
+          _artWorkId = nextSong.id;
+          _crossfadeFailedIdx = -1;
+          _onTrackStarted(at);
+          unawaited(RadioQueue.instance.onIndexChanged(this, at));
+          _saveSession();
+          _loadLyricsForCurrentSong();
+          notifyListeners();
+        },
       );
-    } catch (e) {
-      // Crossfade failed (dead cloud URL, auth error, ...). Roll back the
-      // already-advanced track state so UI and audio agree. Latch the failed
-      // index so the position listener doesn't hammer the dead URL every tick
-      // — the normal end-of-track advance takes over instead.
-      _crossfadeFailedIdx = nextIdx;
-      // Only if this crossfade is still what the track state describes. Press
-      // next while the fade is loading and `next()` has already moved the index
-      // on; rolling back then would drag the user back to the track they just
-      // left, while the load they triggered plays on underneath — the queue
-      // looking stuck on the old track with the button doing nothing.
-      if (_songId == nextIdx) {
-        _songId = prevId;
-        _artWorkId = prevArtId;
-        _loadLyricsForCurrentSong();
+      if (inQueue) {
+        queueLoad = fade;
+        _trackQueueLoad(fade);
       }
+      await fade;
+    } catch (e) {
+      // Crossfade failed (dead cloud URL, auth error, ...) before the new track
+      // started, so nothing has moved. Latch the failed index so the position
+      // listener doesn't hammer the dead URL every tick — the normal
+      // end-of-track advance takes over instead.
+      debugPrint('Crossfade into "${nextSong.title}" failed: $e');
+      _crossfadeFailedIdx = nextIdx;
       notifyListeners();
+      // The end of the track arrived while this was in flight and was left to
+      // it; with it failed, nothing else is going to move the queue on.
+      if (!_overtaken(token) &&
+          identical(handler.player, outgoing) &&
+          outgoing.processingState == ProcessingState.completed) {
+        unawaited(
+          _advanceAfterNaturalEnd(repeatAll: handler.loopMode == LoopMode.all),
+        );
+      }
     } finally {
-      // Without this a single failure left _isCrossfading stuck true and
-      // silently disabled crossfade until app restart.
       _isCrossfading = false;
+      if (queueLoad != null && identical(_gaplessLoad, queueLoad)) {
+        _gaplessLoad = null;
+      }
     }
   }
 
-  Future<void> _updateMediaItemForIndex(int index) async {
-    if (index >= songs.length) return;
+  /// The song at [index] if it is still the one with [id].
+  SongModel? _songAt(int index, int id) =>
+      index >= 0 && index < songs.length && songs[index].id == id
+      ? songs[index]
+      : null;
+
+  /// Crossfades from what is playing into the queue at [index], played on the
+  /// spare player — how a skip sounds while the whole queue is on one player.
+  ///
+  /// The new player gets the whole queue, positioned at [index], so playback
+  /// carries on gaplessly from there. Falls back to a cut if the crossfade
+  /// cannot start and nothing else has been asked for in the meantime.
+  Future<void> _crossfadeQueueTo(
+    int index,
+    ChangeFade fade, {
+    Duration? initialPosition,
+  }) {
+    final token = handler.beginLoad();
     final song = songs[index];
+    final load = () async {
+      await handler.abortCrossfade();
+      final sources = await _queueSources();
+      if (_overtaken(token)) return;
+      await handler.crossfade(
+        load: (p) => p.setAudioSources(
+          sources,
+          initialIndex: index,
+          initialPosition: initialPosition,
+        ),
+        fadeMs: fade.crossfadeMs,
+        earlyFadeOutMs: fade.earlyFadeOutMs,
+        mediaItem: () => _mediaItemFor(song),
+        token: token,
+      );
+    }();
+    _trackQueueLoad(load);
+    return load.catchError((Object e) async {
+      debugPrint('Queue crossfade: $e');
+      if (_overtaken(token)) return;
+      await loadGaplessQueue(
+        index,
+        initialPosition: initialPosition,
+        fade: fade,
+      );
+    });
+  }
+
+  /// Marks [load] as the queue load in flight, for appends to wait on.
+  void _trackQueueLoad(Future<void> load) {
+    _gaplessLoad = load;
+    load.whenComplete(() {
+      if (identical(_gaplessLoad, load)) _gaplessLoad = null;
+    }).ignore();
+  }
+
+  /// Moves on after a track that ended on its own, a track at a time.
+  ///
+  /// With silence between tracks set, the next track is opened at once — the
+  /// screen moves to it — and started once the silence has passed.
+  Future<void> _advanceAfterNaturalEnd({required bool repeatAll}) async {
+    final int next;
+    if (_songId >= songs.length - 1) {
+      if (!repeatAll || songs.isEmpty) {
+        await handler.player.stop();
+        return;
+      }
+      next = 0;
+    } else {
+      next = _songId + 1;
+    }
+    // Through the `songId` setter, which tops the radio up for every path at
+    // once.
+    songId = next;
+    artWorkId = songs[next].id;
+    final silence = _fades.silenceMs;
+    if (silence <= 0) {
+      await loadTrackAt(next);
+      return;
+    }
+    final watch = Stopwatch()..start();
+    await loadTrackAt(next, autoPlay: false);
+    final token = handler.loadToken;
+    final remaining = Duration(milliseconds: silence) - watch.elapsed;
+    if (remaining > Duration.zero) await Future<void>.delayed(remaining);
+    if (_overtaken(token) || _songId != next) return;
+    if (!handler.player.playing) handler.startPlayback();
+  }
+
+  /// The notification's description of [song].
+  Future<MediaItem> _mediaItemFor(SongModel song) async {
     Uri? artUri;
     if (song.data.startsWith('http') &&
         song.album != null &&
@@ -1140,16 +1315,19 @@ class AppController with ChangeNotifier implements StationSink {
       final image = await fetchArtworkUrl(song.data, song.id);
       artUri = Uri.file(image);
     }
-    handler.setCurrentMediaItem(
-      MediaItem(
-        id: song.data,
-        album: song.album,
-        title: song.title,
-        artist: song.artist,
-        duration: Duration(milliseconds: song.duration ?? 0),
-        artUri: artUri,
-      ),
+    return MediaItem(
+      id: song.data,
+      album: song.album,
+      title: song.title,
+      artist: song.artist,
+      duration: Duration(milliseconds: song.duration ?? 0),
+      artUri: artUri,
     );
+  }
+
+  Future<void> _updateMediaItemForIndex(int index) async {
+    if (index >= songs.length) return;
+    handler.setCurrentMediaItem(await _mediaItemFor(songs[index]));
   }
 
   Future<String?> _downloadCloudArtwork(String url, int songId) async {
@@ -1183,11 +1361,8 @@ class AppController with ChangeNotifier implements StationSink {
     final routed = ConnectPlayRouter.songs(
       songList,
       index,
-      here: () => playSongFromList(
-        songList,
-        index,
-        initialPosition: initialPosition,
-      ),
+      here: () =>
+          playSongFromList(songList, index, initialPosition: initialPosition),
     );
     if (routed != null) return routed;
     // The user picked something rather than resuming. Whatever was waiting from
@@ -1226,14 +1401,31 @@ class AppController with ChangeNotifier implements StationSink {
       CastController.instance.cast(songList[index]);
       return Future.value();
     }
-    if (_gaplessPlayback && _crossfadeDuration == 0) {
-      return loadGaplessQueue(startIndex, initialPosition: initialPosition);
+    // A tap on a song is a track change the listener asked for, so it sounds
+    // like one — see [FadeSettings.manualChangeFade].
+    final fade = _fades.manualChangeFade(
+      incomingDurationMs: songList[index].duration,
+    );
+    if (_gaplessQueue) {
+      if (fade.crossfadeMs > 0 && handler.isAudible) {
+        return _crossfadeQueueTo(
+          startIndex,
+          fade,
+          initialPosition: initialPosition,
+        );
+      }
+      return loadGaplessQueue(
+        startIndex,
+        initialPosition: initialPosition,
+        fade: fade,
+      );
     }
     return loadAudioSource(
       handler,
       songList[index],
       replayGain: _replayGain,
       initialPosition: initialPosition,
+      fade: fade,
     );
   }
 
@@ -1308,13 +1500,12 @@ class AppController with ChangeNotifier implements StationSink {
     _songId = 0;
     _artWorkId = playing.id;
     notifyListeners();
-    if (_gaplessPlayback &&
-        _crossfadeDuration == 0 &&
-        handler.player.audioSources.length > 1) {
+    if (handler.player.audioSources.length > 1) {
       await loadGaplessQueue(
         0,
         initialPosition: handler.player.position,
         autoPlay: handler.player.playing,
+        fade: ChangeFade.cut,
       );
     }
     RadioQueue.instance.attach(source);
@@ -1369,15 +1560,16 @@ class AppController with ChangeNotifier implements StationSink {
 
   /// Brings the gapless player's source list level with [songs].
   Future<void> _syncPlayerQueue() async {
-    if (!(_gaplessPlayback && _crossfadeDuration == 0)) return;
-    final player = handler.player;
+    if (!_gaplessQueue) return;
     await PlayerQueueSync.catchUp(
       pendingLoad: _gaplessLoad,
-      playerLength: () => player.audioSources.length,
+      // Read after the pending load, never captured before it: a load can be a
+      // crossfade, which ends with the *other* player holding the queue.
+      playerLength: () => handler.player.audioSources.length,
       modelLength: () => songs.length,
       addFrom: (from) async {
         try {
-          await player.addAudioSources([
+          await handler.player.addAudioSources([
             for (final s in songs.sublist(from)) _gaplessSourceFor(s),
           ]);
         } catch (e) {
@@ -1408,21 +1600,25 @@ class AppController with ChangeNotifier implements StationSink {
     int startIndex, {
     Duration? initialPosition,
     bool autoPlay = true,
+
+    /// How the change sounds; null for one that should not be heard as a
+    /// change at all. Never a crossfade — that is [_crossfadeQueueTo].
+    ChangeFade? fade,
   }) {
     final load = _loadGaplessQueue(
       startIndex,
+      token: handler.beginLoad(),
       initialPosition: initialPosition,
       autoPlay: autoPlay,
+      fade: fade,
     );
-    _gaplessLoad = load;
-    load.whenComplete(() {
-      if (identical(_gaplessLoad, load)) _gaplessLoad = null;
-    }).ignore();
+    _trackQueueLoad(load);
     return load;
   }
 
   Future<void> _loadGaplessQueue(
     int startIndex, {
+    required int token,
 
     /// Where the track at [startIndex] should resume from.
     ///
@@ -1435,11 +1631,58 @@ class AppController with ChangeNotifier implements StationSink {
     /// Whether to start playing once loaded. False preserves a paused player
     /// through a reorder.
     bool autoPlay = true,
+    ChangeFade? fade,
   }) async {
     if (songs.isEmpty) return;
+    // A crossfade in flight belongs to the queue being replaced.
+    await handler.abortCrossfade();
+    // Out of something playing, declicked — see [loadAudioSource].
+    final wasAudible = fade != null && handler.isAudible;
+    if (wasAudible) await handler.declickOut();
     // If already loading, the new call will interrupt the old one in just_audio.
     // That's fine — just_audio handles cancellation gracefully.
     _loadingQueue = true;
+    final sources = await _queueSources();
+    if (_overtaken(token)) {
+      _loadingQueue = false;
+      return;
+    }
+    // A player that finished its track still reports `playing`, and would
+    // start whatever it is given at once.
+    if (!autoPlay && handler.player.playing) await handler.player.pause();
+    try {
+      await handler.player.setAudioSources(
+        sources,
+        initialIndex: startIndex,
+        initialPosition: initialPosition,
+      );
+      // Replay gain is per track and a queue shares one player gain, so a
+      // queue plays at unity — and says so, rather than inheriting whatever
+      // the last single track or crossfade left on this player.
+      handler.setTrackGain(handler.player, 1.0);
+      await _updateMediaItemForIndex(startIndex);
+      if (autoPlay) {
+        handler.startPlayback(
+          fadeInMs: fade == null
+              ? 0
+              : wasAudible
+              ? kDeclickMs
+              : fade.fromSilenceMs,
+        );
+      } else {
+        handler.resetLevels(handler.player);
+      }
+    } catch (e) {
+      // "Loading interrupted" — a newer load replaced this one; safe to ignore
+      debugPrint('Gapless queue load: $e');
+    } finally {
+      _loadingQueue = false;
+    }
+  }
+
+  /// The player sources for the whole queue, in [songs] order.
+  /// Cached cloud tracks play from disk; uncached ones stream with auth headers.
+  Future<List<AudioSource>> _queueSources() async {
     final sources = <AudioSource>[];
 
     // Get auth headers once (reused for all cloud tracks of same provider)
@@ -1483,20 +1726,7 @@ class AppController with ChangeNotifier implements StationSink {
         }
       }
     }
-    try {
-      await handler.player.setAudioSources(
-        sources,
-        initialIndex: startIndex,
-        initialPosition: initialPosition,
-      );
-      await _updateMediaItemForIndex(startIndex);
-      if (autoPlay) handler.player.play();
-    } catch (e) {
-      // "Loading interrupted" — a newer load replaced this one; safe to ignore
-      debugPrint('Gapless queue load: $e');
-    } finally {
-      _loadingQueue = false;
-    }
+    return sources;
   }
 
   void _loadSettings() {
@@ -1531,8 +1761,8 @@ class AppController with ChangeNotifier implements StationSink {
     _preGain = _prefs.getDouble("preGain") ?? 20.0;
     _kneeWidth = _prefs.getDouble("kneeWidth") ?? 0.4;
     // Audio features
-    _gaplessPlayback = _prefs.getBool("gaplessPlayback") ?? true;
-    _crossfadeDuration = _prefs.getInt("crossfadeDuration") ?? 0;
+    _fades = FadeSettings.load(_prefs);
+    _handler.fades = _fades;
     _replayGain = _prefs.getBool("replayGain") ?? false;
     _dvcEnabled = _prefs.getBool("dvcEnabled") ?? false;
     _dvcGain = _prefs.getDouble("dvcGain") ?? -30.0;
@@ -1707,7 +1937,9 @@ class AppController with ChangeNotifier implements StationSink {
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
     );
     if (streamed != null) {
-      unawaited(libraryRepo?.rememberStreamed(streamed) ?? Future<void>.value());
+      unawaited(
+        libraryRepo?.rememberStreamed(streamed) ?? Future<void>.value(),
+      );
     }
     _markedSongId = song.id;
     _markedDurationMs = song.duration ?? 0;
@@ -2339,8 +2571,7 @@ class AppController with ChangeNotifier implements StationSink {
   /// Whether the bottom player should show: a local track, or another device
   /// that this phone is controlling (Hype Connect remote mode).
   bool get hasMiniPlayer =>
-      hasNowPlaying ||
-      (ConnectPlayRouter.instance?.session.isRemote ?? false);
+      hasNowPlaying || (ConnectPlayRouter.instance?.session.isRemote ?? false);
 
   /// Remote mode started or ended: redraw the bottom players and the player.
   void refreshRemoteMode() => notifyListeners();
@@ -2446,7 +2677,7 @@ class AppController with ChangeNotifier implements StationSink {
     // are reached. Such a queue plays one track at a time instead, each
     // refreshed on the way in, until nothing stale is left.
     final anyStale = songs.any((song) => !song.hasFreshTarget);
-    if (_gaplessPlayback && _crossfadeDuration == 0 && !anyStale) {
+    if (_gaplessQueue && !anyStale) {
       await loadGaplessQueue(
         _songId,
         initialPosition: position,
@@ -2469,8 +2700,20 @@ class AppController with ChangeNotifier implements StationSink {
   /// good for about six hours, which is shorter than a queue's life and much
   /// shorter than a saved session's, so "the URL in the queue still works" is
   /// an assumption that has to be checked rather than made.
-  Future<void> loadTrackAt(int index, {Duration? position}) async {
+  Future<void> loadTrackAt(
+    int index, {
+    Duration? position,
+
+    /// How the change sounds — for a change the listener asked for, see
+    /// [FadeSettings.manualChangeFade]. Null for a track ending on its own,
+    /// whose fade, if any, has already happened.
+    ChangeFade? fade,
+    bool autoPlay = true,
+  }) async {
     if (index < 0 || index >= songs.length) return;
+    // Synchronously, before the network: a crossfade in flight stops now, not
+    // once the link has been renewed.
+    handler.beginLoad();
     // Skipping is starting something, so there is no longer a paused session
     // waiting to be resumed — and leaving the mark set would save the old
     // track's position against the new one.
@@ -2487,6 +2730,8 @@ class AppController with ChangeNotifier implements StationSink {
         songs[index],
         replayGain: _replayGain,
         initialPosition: position,
+        autoPlay: autoPlay,
+        fade: fade,
       );
     } finally {
       _loadingTrack = false;
@@ -2679,6 +2924,10 @@ class AppController with ChangeNotifier implements StationSink {
         ? QueueOrder.shuffle(_songs, playing)
         : List<SongModel>.of(_songs);
 
+    // "Shuffled songs" fading blends a shuffled queue and keeps an ordered one
+    // gapless, so turning shuffle over can move playback to the other way of
+    // loading tracks.
+    final wasQueue = _gaplessQueue;
     _isShuffled = value;
     unawaited(_prefs.setBool('isShuffled', value));
 
@@ -2686,7 +2935,11 @@ class AppController with ChangeNotifier implements StationSink {
     if (songs.isNotEmpty) _artWorkId = songs[_songId].id;
     notifyListeners();
 
-    await _reloadQueueOrder();
+    if (wasQueue != _gaplessQueue) {
+      await _switchLoadingPath();
+    } else {
+      await _reloadQueueOrder();
+    }
   }
 
   /// Rebuilds the player's source list so it plays the order the app is showing.
@@ -2696,7 +2949,6 @@ class AppController with ChangeNotifier implements StationSink {
   /// advance; a gapless queue is handed to the player once and has to be handed
   /// over again to change.
   Future<void> _reloadQueueOrder() async {
-    if (!(_gaplessPlayback && _crossfadeDuration == 0)) return;
     if (handler.player.audioSources.length <= 1) return;
     // Reordering must not resume a queue the user had paused, nor restart the
     // song they are in the middle of.
@@ -2704,7 +2956,39 @@ class AppController with ChangeNotifier implements StationSink {
       _songId,
       initialPosition: handler.player.position,
       autoPlay: handler.player.playing,
+      fade: ChangeFade.cut,
     );
+  }
+
+  /// Moves what is playing onto the other way of loading tracks — the whole
+  /// queue on one player, or a track at a time — at the same position, playing
+  /// or paused as it was. Called when a setting or shuffle changes which one
+  /// the fading mode wants.
+  Future<void> _switchLoadingPath() async {
+    if (songs.isEmpty || _songId < 0 || _songId >= songs.length) return;
+    // Nothing loaded yet, or a restored session waiting for its first play:
+    // whichever loads next will follow the rules in force by then.
+    if (_pendingResume != null || handler.player.audioSources.isEmpty) return;
+    final position = handler.player.position;
+    final playing = handler.player.playing;
+    if (_gaplessQueue) {
+      // A queue holding expired links goes on a track at a time — see
+      // [_resumePendingSession].
+      if (songs.any((song) => !song.hasFreshTarget)) return;
+      await loadGaplessQueue(
+        _songId,
+        initialPosition: position,
+        autoPlay: playing,
+        fade: ChangeFade.cut,
+      );
+    } else {
+      await loadTrackAt(
+        _songId,
+        position: position,
+        autoPlay: playing,
+        fade: ChangeFade.cut,
+      );
+    }
   }
 
   set songId(int id) {
@@ -2740,7 +3024,9 @@ class AppController with ChangeNotifier implements StationSink {
     _currentLyrics = null;
     notifyListeners();
     bool stale() =>
-        _songId < 0 || _songId >= songs.length || songs[_songId].id != target.id;
+        _songId < 0 ||
+        _songId >= songs.length ||
+        songs[_songId].id != target.id;
     try {
       final result = await _lyricsService.loadLyrics(
         target,
@@ -2828,28 +3114,21 @@ class AppController with ChangeNotifier implements StationSink {
 
     if (loopMode == LoopMode.one) {
       // Repeat-one: restart current track
-      handler.player.seek(Duration.zero);
-      handler.player.play();
+      _restartCurrent();
       return;
     }
 
     if (songId >= songs.length - 1) {
       if (loopMode == LoopMode.all) {
         // Repeat-all: wrap to first song
-        songId = 0;
-        artWorkId = songs[0].id;
-        unawaited(loadTrackAt(0));
+        _changeTrackTo(0);
       } else {
         // No repeat: stop at end
         songId = 0;
-        handler.player.stop();
+        unawaited(handler.stop());
       }
-    } else if (_gaplessPlayback && handler.player.audioSources.length > 1) {
-      handler.player.seekToNext();
     } else {
-      songId += 1;
-      artWorkId = songs[songId].id;
-      unawaited(loadTrackAt(songId));
+      _changeTrackTo(songId + 1);
     }
   }
 
@@ -2857,36 +3136,89 @@ class AppController with ChangeNotifier implements StationSink {
     if (songs.isEmpty) return;
     final loopMode = handler.loopMode;
 
-    // If more than 3 seconds in, restart current track (standard behavior)
-    final position = handler.player.position;
+    // If more than 3 seconds in, restart current track (standard behavior).
+    // Measured on the track being heard: during a crossfade that is the one
+    // coming in, so previous early in a fade goes back to the track fading
+    // out rather than restarting the new one.
+    final position = handler.currentTrackPlayer.position;
     if (position.inSeconds > 3) {
-      handler.player.seek(Duration.zero);
+      unawaited(handler.seek(Duration.zero));
       return;
     }
 
     if (loopMode == LoopMode.one) {
-      handler.player.seek(Duration.zero);
-      handler.player.play();
+      _restartCurrent();
       return;
     }
 
     if (songId == 0) {
       if (loopMode == LoopMode.all) {
         // Repeat-all: wrap to last song
-        songId = songs.length - 1;
-        artWorkId = songs[songId].id;
-        unawaited(loadTrackAt(songId));
+        _changeTrackTo(songs.length - 1);
       } else {
         // No repeat: restart first song
-        handler.player.seek(Duration.zero);
+        unawaited(handler.seek(Duration.zero));
       }
-    } else if (_gaplessPlayback && handler.player.audioSources.length > 1) {
-      handler.player.seekToPrevious();
     } else {
-      songId -= 1;
-      artWorkId = songs[songId].id;
-      unawaited(loadTrackAt(songId));
+      _changeTrackTo(songId - 1);
     }
+  }
+
+  /// Plays the track at [index] of the queue — a swipe of the player card, or
+  /// any other jump straight to a track. Sounds like next and previous do.
+  void skipTo(int index) {
+    if (index == songId) return;
+    _changeTrackTo(index);
+  }
+
+  /// A track change the listener asked for: next, previous, a swipe, a jump.
+  ///
+  /// Every one of them used to cut. They fade now, the way
+  /// [FadeSettings.manualChange] says: out of something playing, the old track
+  /// fades out under the new one; out of silence, the new one fades in.
+  ///
+  /// The `songId` setter runs first, before the player is touched, so the
+  /// outgoing track's listening is recorded against the position it actually
+  /// reached.
+  void _changeTrackTo(int index) {
+    if (index < 0 || index >= songs.length) return;
+    final fade = _fades.manualChangeFade(
+      incomingDurationMs: songs[index].duration,
+    );
+    final inQueue = handler.player.audioSources.length > 1;
+    songId = index;
+    artWorkId = songs[index].id;
+    if (!inQueue) {
+      unawaited(loadTrackAt(index, fade: fade));
+      return;
+    }
+    // The whole queue is on one player.
+    if (fade.crossfadeMs > 0 && handler.isAudible) {
+      unawaited(_crossfadeQueueTo(index, fade));
+      return;
+    }
+    // A cut within the queue, declicked like any other.
+    final token = handler.beginLoad();
+    unawaited(() async {
+      await handler.abortCrossfade();
+      if (_overtaken(token)) return;
+      final wasAudible = handler.isAudible;
+      await handler.declickOut();
+      await handler.player.seek(Duration.zero, index: index);
+      if (wasAudible) {
+        handler.startPlayback(fadeInMs: kDeclickMs);
+      } else {
+        handler.resetLevels(handler.player);
+      }
+    }());
+  }
+
+  /// Repeat-one's answer to next and previous: the same track from the top.
+  void _restartCurrent() {
+    unawaited(() async {
+      await handler.seek(Duration.zero);
+      if (!handler.player.playing) unawaited(handler.play());
+    }());
   }
 
   // --- Cloud services ---

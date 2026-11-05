@@ -69,25 +69,29 @@ Widget bottomPlayer(AppController controller, BuildContext context) {
               onPressed: controller.prev,
               size: 22,
             ),
-            StreamBuilder<bool>(
-              stream: controller.handler.player.playingStream,
-              builder: (context, snapshot) {
-                final isPlaying = snapshot.data ?? false;
-                return _ControlButton(
-                  icon: isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  // Through the handler, not straight at the player. The handler
-                  // is where `onBeforePlay` lives, and a session restored from
-                  // disk holds its queue with the player still empty — so going
-                  // straight to the player here started nothing at all.
-                  onPressed: () => isPlaying
-                      ? controller.handler.pause()
-                      : controller.handler.play(),
-                  size: 28,
-                  prominent: true,
-                );
-              },
+            ValueListenableBuilder<bool>(
+              // A fading pause counts as paused — see `HypeAudioHandler.pausing`.
+              valueListenable: controller.handler.pausing,
+              builder: (context, pausing, _) => StreamBuilder<bool>(
+                stream: controller.handler.player.playingStream,
+                builder: (context, snapshot) {
+                  final isPlaying = (snapshot.data ?? false) && !pausing;
+                  return _ControlButton(
+                    icon: isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    // Through the handler, not straight at the player. The handler
+                    // is where `onBeforePlay` lives, and a session restored from
+                    // disk holds its queue with the player still empty — so going
+                    // straight to the player here started nothing at all.
+                    onPressed: () => isPlaying
+                        ? controller.handler.pause()
+                        : controller.handler.play(),
+                    size: 28,
+                    prominent: true,
+                  );
+                },
+              ),
             ),
             _ControlButton(
               icon: Icons.skip_next_rounded,

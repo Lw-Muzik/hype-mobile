@@ -133,7 +133,7 @@ class _LyricsViewState extends State<LyricsView>
     if (lyrics == null || index < 0 || index >= lyrics.lines.length) return;
     final ts = lyrics.lines[index].timestamp;
     if (ts != null) {
-      controller.handler.currentTrackPlayer.seek(ts);
+      controller.handler.seek(ts);
     }
   }
 
@@ -803,7 +803,8 @@ class _MiniControls extends StatelessWidget {
                     position: data?.position ?? Duration.zero,
                     bufferedPosition: data?.bufferedPosition ?? Duration.zero,
                     isPlaying: isPlaying,
-                    onChangeEnd: (position) => player.seek(position),
+                    onChangeEnd: (position) =>
+                        controller.handler.seek(position),
                   );
                 },
               );

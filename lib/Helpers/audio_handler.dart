@@ -6,11 +6,11 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio/video.dart';
 import 'package:id3tag/id3tag.dart';
-import 'package:on_audio_query/on_audio_query.dart';
 
 import '../player/fade_cancellation.dart';
+import '../player/fade_curve.dart';
+import '../player/fade_settings.dart';
 import '../player/output_gain.dart';
-import 'index.dart';
 
 class HypeAudioHandler extends BaseAudioHandler {
   /// Data-conscious streaming configuration (Spotify-style drip-feed):
@@ -79,8 +79,9 @@ class HypeAudioHandler extends BaseAudioHandler {
     (player, volume) => unawaited(player.setVolume(volume)),
   );
 
-  /// Sets [player]'s track gain: ReplayGain, a crossfade step, unity for a
-  /// video. Applied under the listener volume, which it never overwrites.
+  /// Sets [player]'s track gain: ReplayGain, or unity for a video. Applied
+  /// under the crossfade, the play/pause fade and the listener volume, none of
+  /// which it overwrites — see [OutputGain].
   void setTrackGain(AudioPlayer player, double gain) =>
       _gain.setTrack(player, gain);
 
@@ -158,10 +159,7 @@ class HypeAudioHandler extends BaseAudioHandler {
 
   Future<void> setLoopMode(LoopMode mode) async {
     _loopMode = mode;
-    await Future.wait([
-      _playerA.setLoopMode(mode),
-      _playerB.setLoopMode(mode),
-    ]);
+    await Future.wait([_playerA.setLoopMode(mode), _playerB.setLoopMode(mode)]);
   }
 
   VoidCallback? onSkipToNext;
@@ -193,7 +191,8 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// once rather than on every event that follows it.
   int? _reportedErrorCode;
 
-  void _bindPlaybackState() => bindPlaybackEvents(_activePlayer.playbackEventStream);
+  void _bindPlaybackState() =>
+      bindPlaybackEvents(_activePlayer.playbackEventStream);
 
   /// Binds [events] as the source of playback state.
   ///
@@ -238,7 +237,9 @@ class HypeAudioHandler extends BaseAudioHandler {
     }
     if (code == _reportedErrorCode) return;
     _reportedErrorCode = code;
-    onPlaybackError?.call(PlayerException(code, event.errorMessage, event.currentIndex));
+    onPlaybackError?.call(
+      PlayerException(code, event.errorMessage, event.currentIndex),
+    );
   }
 
   /// Forgets the last reported error, so the next one is reported even if it is
@@ -256,14 +257,170 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// this is where that work happens. Awaited, so play acts on a loaded player.
   Future<void> Function()? onBeforePlay;
 
+  // ---------------------------------------------------------------------------
+  // Fades
+  //
+  // Every fade Hype plays lives here: the crossfade between two tracks, and the
+  // short ramps on play, pause, stop and seek. Lengths come from [fades], which
+  // AppController keeps current. See `lib/player/fade_settings.dart`.
+  // ---------------------------------------------------------------------------
+
+  /// The fade lengths and switches in force. Pushed by AppController.
+  FadeSettings fades = const FadeSettings();
+
+  /// True while a pause (or stop) is fading out.
+  ///
+  /// The player still reports `playing` until the fade is over, so anything
+  /// that shows a play/pause button reads this as well — a button that went on
+  /// showing "pause" for the length of the fade would look like it had not
+  /// heard the tap, and a second tap would land as another pause.
+  final ValueNotifier<bool> pausing = ValueNotifier(false);
+
+  /// Whether the listener can hear something right now: playing, not on its
+  /// way to a pause, and not stalled on a finished or failed track.
+  ///
+  /// A track change crossfades only out of something audible. Out of silence
+  /// — paused, or a track that has already ended — there is nothing to fade
+  /// out, and the new track simply fades in.
+  bool get isAudible {
+    final p = currentTrackPlayer;
+    if (!p.playing || pausing.value) return false;
+    final state = p.processingState;
+    return state == ProcessingState.ready ||
+        state == ProcessingState.buffering ||
+        state == ProcessingState.loading;
+  }
+
+  /// Bumped by every request to play something else — see [beginLoad].
+  int _loadToken = 0;
+
+  /// The newest load's token. A load that finds it has changed while it was
+  /// waiting (on the network, on artwork) has been overtaken and stops.
+  int get loadToken => _loadToken;
+
+  /// Starts a request to play something else, and returns its token.
+  ///
+  /// The newest request always wins. Anything still in flight — a crossfade
+  /// opening its track, or one halfway through its blend — is told to stop at
+  /// once, not when the new request gets round to it; and a load overtaken
+  /// while it waited notices by its token and gives way.
+  int beginLoad() {
+    _cancellation?.cancel();
+    return ++_loadToken;
+  }
+
+  /// Whether a crossfade is anywhere between "opening the next track" and
+  /// "handed over". The natural end of the outgoing track belongs to the fade
+  /// in that window, not to the controller's advance.
+  bool get crossfadeInFlight => _inFlight;
+  bool _inFlight = false;
+
+  /// The players the listener is hearing: both during a crossfade.
+  List<AudioPlayer> get _audiblePlayers =>
+      _isCrossfading ? [_activePlayer, _inactivePlayer] : [_activePlayer];
+
+  /// The play/pause/seek ramp running on each player, if any. A new ramp on a
+  /// player cancels the one before it, so a play pressed halfway through a
+  /// pause's fade turns the fade around rather than racing it.
+  final Map<AudioPlayer, FadeCancellation> _transportRamps = Map.identity();
+
+  Future<bool> _rampTransport(
+    List<AudioPlayer> players,
+    double from,
+    double to,
+    Duration duration,
+  ) async {
+    final token = FadeCancellation();
+    _cancelTransport(players);
+    for (final p in players) {
+      _transportRamps[p] = token;
+    }
+    final reached = await runRamp(
+      from: from,
+      to: to,
+      duration: duration,
+      cancel: token,
+      apply: (gain) {
+        for (final p in players) {
+          if (identical(_transportRamps[p], token)) _gain.setFade(p, gain);
+        }
+      },
+    );
+    for (final p in players) {
+      if (identical(_transportRamps[p], token)) _transportRamps.remove(p);
+    }
+    return reached;
+  }
+
+  /// Stops the ramps on [players]. A ramp shared with a player not in
+  /// [players] — a pause fading both sides of a crossfade, when the crossfade
+  /// hands over — carries on for that one.
+  void _cancelTransport(Iterable<AudioPlayer> players) {
+    for (final p in players) {
+      final token = _transportRamps.remove(p);
+      if (token != null &&
+          !_transportRamps.values.any((t) => identical(t, token))) {
+        token.cancel();
+      }
+    }
+  }
+
+  /// Tells the notification and lock screen "paused" the moment a pause is
+  /// asked for, rather than when its fade finishes.
+  void _publishPausedIntent() {
+    final state = playbackState.value;
+    playbackState.add(
+      state.copyWith(playing: false, controls: _controlsFor(playing: false)),
+    );
+  }
+
   // Controls route to [currentTrackPlayer]: during a crossfade the audible
   // track lives on the incoming player — acting on _activePlayer (outgoing)
   // would target a player the fade loop is about to stop.
+  //
+  // A play or pause during a crossfade acts on both players, as one: the
+  // listener hears one thing, so one thing pauses. The crossfade's progress is
+  // measured on the incoming track's position, which stands still while
+  // paused, so the blend resumes exactly where it was.
   @override
   Future<void> play() async {
     final before = onBeforePlay;
     if (before != null) await before();
-    await currentTrackPlayer.play();
+    final players = _audiblePlayers;
+    final target = currentTrackPlayer;
+    final interruptedPause = pausing.value;
+    pausing.value = false;
+    // The lock screen was told "paused" when the pause began; a pause turned
+    // round before it finished produces no player event to say otherwise.
+    if (interruptedPause) {
+      playbackState.add(
+        playbackState.value.copyWith(
+          playing: true,
+          controls: _controlsFor(playing: true),
+        ),
+      );
+    }
+    // From silence when starting; from wherever it had got to when play
+    // interrupts a pause that was still fading out. Switched off, a resume
+    // still fades in over [kDeclickMs].
+    if (!target.playing) {
+      for (final p in players) {
+        _gain.setFade(p, 0.0);
+      }
+    }
+    final from = _gain.fadeOf(target);
+    // just_audio's `play()` completes when playback *pauses*, so the ramp is
+    // started beside it rather than after it.
+    final playing = Future.wait([for (final p in players) p.play()]);
+    unawaited(
+      _rampTransport(
+        players,
+        from,
+        1.0,
+        rampDuration(from, 1.0, fades.resumeFadeMs),
+      ),
+    );
+    await playing;
   }
 
   /// Run after playback pauses, if set.
@@ -274,24 +431,155 @@ class HypeAudioHandler extends BaseAudioHandler {
   /// the position without being wired into each of them separately.
   void Function()? onPaused;
 
+  /// Pauses, fading out first; the player pauses once the fade has finished.
+  /// Switched off, the pause is immediate.
   @override
   Future<void> pause() async {
-    await currentTrackPlayer.pause();
+    if (pausing.value) return; // already on its way out
+    final players = _audiblePlayers;
+    final target = currentTrackPlayer;
+    final fadeMs = fades.playPauseMs;
+    if (fadeMs > 0 && target.playing) {
+      pausing.value = true;
+      _publishPausedIntent();
+      final from = _gain.fadeOf(target);
+      final reached = await _rampTransport(
+        players,
+        from,
+        0.0,
+        rampDuration(from, 0.0, fadeMs),
+      );
+      // Play was pressed, or a new track loaded, before the fade finished.
+      // Whatever did that owns the player now.
+      if (!reached) return;
+      pausing.value = false;
+    }
+    await Future.wait([for (final p in players) p.pause()]);
+    // Back to unity under the pause, so anything that starts this player
+    // again without coming through [play] — the audio session resuming after
+    // a phone call — is heard. Ordered after the pause on the platform
+    // channel, so it is never audible; [play] starts from silence regardless.
+    for (final p in players) {
+      _gain.setFade(p, 1.0);
+    }
     onPaused?.call();
   }
 
+  /// Stops, fading out first like a pause. Switched off, a hard stop.
   @override
   Future<void> stop() async {
+    final fadeMs = fades.playPauseMs;
+    if (fadeMs > 0 && isAudible) {
+      pausing.value = true;
+      _publishPausedIntent();
+      final from = _gain.fadeOf(currentTrackPlayer);
+      final reached = await _rampTransport(
+        _audiblePlayers,
+        from,
+        0.0,
+        rampDuration(from, 0.0, fadeMs),
+      );
+      if (!reached) return;
+      pausing.value = false;
+    }
     await abortCrossfade();
     await _activePlayer.stop();
     await _inactivePlayer.stop();
+    resetLevels(_activePlayer);
+    resetLevels(_inactivePlayer);
   }
 
+  /// Seeks the current track: [kDeclickMs] out, the jump, then a fade back in
+  /// over the seek fade length — so the jump never lands with a click.
+  /// Switched off, there is no fade out and the fade in is [kDeclickMs].
+  ///
+  /// A seek during a crossfade ends the crossfade first: the position being
+  /// moved belongs to the incoming track, and the outgoing one is faded away
+  /// over [kDeclickMs].
   @override
-  Future<void> seek(Duration position) => currentTrackPlayer.seek(position);
+  Future<void> seek(Duration position) async {
+    await abortCrossfade();
+    final p = _activePlayer;
+    if (!p.playing || pausing.value) {
+      _gain.setMix(p, 1.0);
+      await p.seek(position);
+      return;
+    }
+    if (fades.fadeSeek) {
+      final from = _gain.fadeOf(p);
+      await _rampTransport([p], from, 0.0, rampDuration(from, 0.0, kDeclickMs));
+    } else {
+      _cancelTransport([p]);
+      _gain.setFade(p, 0.0);
+    }
+    // Silent here, so a crossfade's leftover level can be put right unheard.
+    _gain.setMix(p, 1.0);
+    await p.seek(position);
+    unawaited(
+      _rampTransport([p], 0.0, 1.0, Duration(milliseconds: fades.seekFadeInMs)),
+    );
+  }
 
-  /// Fast-settle any in-flight crossfade: the fade loop breaks at its next
-  /// step (≤ fadeDuration/20), the swap completes immediately, and callers can
+  /// Fades the active player out over [kDeclickMs], if anything is audible —
+  /// the first half of a cut that must not click.
+  Future<void> declickOut() async {
+    if (!isAudible) return;
+    final p = _activePlayer;
+    final from = _gain.fadeOf(p);
+    await _rampTransport([p], from, 0.0, rampDuration(from, 0.0, kDeclickMs));
+  }
+
+  /// Brings the active player back up to full after a change that did not
+  /// happen — a skip to a track the data guard would not stream — so the
+  /// track left playing is not stuck wherever the abandoned fade had got it to.
+  Future<void> restoreLevel() async {
+    final p = _activePlayer;
+    final from = _gain.mixOf(p);
+    if (from >= 1.0) return;
+    await runRamp(
+      from: from,
+      to: 1.0,
+      duration: rampDuration(from, 1.0, fades.resumeFadeMs),
+      apply: (g) => _gain.setMix(p, g),
+    );
+  }
+
+  /// Puts [player]'s crossfade and fade gains back to unity — for a player
+  /// given something new to play, which owes nothing to what came before.
+  void resetLevels(AudioPlayer player) {
+    _cancelTransport([player]);
+    _gain.setMix(player, 1.0);
+    _gain.setFade(player, 1.0);
+  }
+
+  /// Starts the active player after a load, fading in from silence over
+  /// [fadeInMs] (zero for none).
+  ///
+  /// Every load that is not a crossfade starts through here.
+  void startPlayback({int fadeInMs = 0}) {
+    final p = _activePlayer;
+    pausing.value = false;
+    _cancelTransport([p]);
+    _gain.setMix(p, 1.0);
+    if (fadeInMs > 0) {
+      _gain.setFade(p, 0.0);
+      unawaited(p.play());
+      unawaited(
+        _rampTransport([p], 0.0, 1.0, Duration(milliseconds: fadeInMs)),
+      );
+    } else {
+      _gain.setFade(p, 1.0);
+      unawaited(p.play());
+    }
+  }
+
+  /// Settles any in-flight crossfade at once.
+  ///
+  /// One that has started blending hands over where it stands: the track that
+  /// was fading out is faded away over [kDeclickMs], and the incoming one keeps
+  /// the level it had reached — whatever is done next (another skip, a seek)
+  /// carries on from there rather than jumping. One still opening its track is
+  /// dropped, and the track playing is left as it was. Either way callers can
   /// then safely act on [player]. No-op when no crossfade is running.
   Future<void> abortCrossfade() async {
     final done = _fadeDone;
@@ -314,138 +602,287 @@ class HypeAudioHandler extends BaseAudioHandler {
     mediaItem.add(item);
   }
 
-  /// Crossfade from current track to next.
-  /// Loads [nextSource] on the inactive player, fades volumes, then swaps.
-  Future<void> beginCrossfade(
-    AudioSource nextSource,
-    SongModel nextSong,
-    Duration fadeDuration, {
-    bool replayGain = false,
+  /// Plays a new track (or queue) on the spare player and blends over to it.
+  ///
+  /// * [load] puts the new source — one track, or a whole gapless queue
+  ///   positioned at the new track — on the player it is given.
+  /// * [fadeMs] is the blend: the new track fades in over it, and the old one
+  ///   fades out at the same rate, in a straight line, from whatever level it
+  ///   is at ([crossfadeOutGain]). Zero is a handoff — the new track starts at
+  ///   full volume the moment it is due.
+  /// * [earlyFadeOutMs] — a change the listener asked for: the old track
+  ///   starts on its way out at once, at the rate of a full fade over this
+  ///   long, while the new one opens.
+  /// * [startAt] — a track ending on its own: opened early, the blend begins
+  ///   when the old track reaches this position. If the new one is late, the
+  ///   old one starts fading on time anyway.
+  /// * [startAtEnd] — a handoff: the new track starts when the old one ends,
+  ///   after [gapAfterEnd] of silence.
+  /// * [onStart] runs as the new track becomes audible: the moment the app
+  ///   should start calling it the current track.
+  ///
+  /// Cancellable throughout via [abortCrossfade] — see there for where each
+  /// kind of cancel leaves things.
+  ///
+  /// The blend's progress is the incoming track's *position*, not the clock.
+  /// A pause halfway through holds both tracks where they are, and play picks
+  /// the blend up again exactly there.
+  Future<void> crossfade({
+    required Future<void> Function(AudioPlayer incoming) load,
+    required int fadeMs,
+    double targetGain = 1.0,
+    FutureOr<MediaItem?> Function()? mediaItem,
+    int earlyFadeOutMs = 0,
+    Duration? startAt,
+    bool startAtEnd = false,
+    Duration gapAfterEnd = Duration.zero,
+    void Function()? onStart,
+
+    /// The [beginLoad] token this crossfade belongs to. A newer load cancels
+    /// it.
+    int? token,
+
+    /// Whether to take over from a crossfade already in flight — what a change
+    /// the listener asked for does — or to give way to it, as a track ending
+    /// on its own does.
+    bool replace = true,
   }) async {
-    if (_fadeDone != null) return; // one crossfade at a time
+    // One crossfade at a time: the newest request wins over one in flight, a
+    // track ending on its own gives way to it.
+    while (_fadeDone != null) {
+      if (!replace) return;
+      _cancellation?.cancel();
+      await _fadeDone!.future;
+    }
+    if (token != null && token != _loadToken) return;
 
     final fadeDone = Completer<void>();
     _fadeDone = fadeDone;
+    _inFlight = true;
     final cancellation = FadeCancellation();
     _cancellation = cancellation;
-    final origVolume = trackGainOf(_activePlayer);
-    var incomingStarted = false;
+    if (token != null && token != _loadToken) cancellation.cancel();
+    final outgoing = _activePlayer;
+    final incoming = _inactivePlayer;
+    final outgoingIndex = outgoing.currentIndex;
+    final outFrom = _gain.mixOf(outgoing);
+    final fadeUs = math.max(1, fadeMs * 1000);
+    var incomingLoaded = false;
+    var setupOver = false;
+
+    // The outgoing track has nothing left to give once it ends — or, in a
+    // gapless queue, moves on to its own next entry, which is the very track
+    // coming in.
+    //
+    // Or loops back to its start, which a lone track does under repeat-all:
+    // seen as its position jumping backwards.
+    var lastOutPosition = outgoing.position;
+    var wrapped = false;
+    bool outgoingFinished() {
+      final position = outgoing.position;
+      if (position + const Duration(seconds: 1) < lastOutPosition) {
+        wrapped = true;
+      }
+      lastOutPosition = position;
+      final state = outgoing.processingState;
+      return wrapped ||
+          state == ProcessingState.completed ||
+          state == ProcessingState.idle ||
+          (outgoingIndex != null && outgoing.currentIndex != outgoingIndex);
+    }
 
     try {
-      final targetVolume = replayGain
-          ? await computeReplayGainVolume(nextSong.data)
-          : 1.0;
-      // The first of several. Everything above the fade loop is *setup* — a
-      // network load, an artwork fetch — and it used to be uninterruptible:
-      // `abortCrossfade` waited for all of it, so a press of next during a slow
-      // load did nothing at all until the load finished. Each await is followed
-      // by this question so the answer arrives while the user is still asking.
+      _cancelTransport([incoming]);
+      _gain.setFade(incoming, 1.0);
+      _gain.setMix(incoming, 0.0);
+      setTrackGain(incoming, targetGain);
+
+      // While the new track opens, the old one may already be on its way out:
+      // at once for a change the listener asked for, from [startAt] for a
+      // track ending on its own whose successor is late.
+      final requested = Stopwatch()..start();
+      unawaited(() async {
+        while (!setupOver && !cancellation.isCancelled) {
+          double? level;
+          if (earlyFadeOutMs > 0) {
+            level =
+                outFrom -
+                requested.elapsedMicroseconds / (earlyFadeOutMs * 1000);
+          } else if (startAt != null && fadeMs > 0) {
+            final over = (outgoing.position - startAt).inMicroseconds;
+            if (over > 0) level = outFrom - over / fadeUs;
+          }
+          if (level != null) _gain.setMix(outgoing, level.clamp(0.0, 1.0));
+          await cancellation.wait(kFadeTick);
+        }
+      }());
+
+      // Setup: open the track, find its artwork, wait for the moment. Each
+      // await is followed by the same question, so a skip during any of them
+      // is answered at once rather than when the network gets round to it.
+      await load(incoming);
+      incomingLoaded = true;
       if (cancellation.isCancelled) {
-        await _abandonSetup(origVolume, incomingStarted);
+        setupOver = true;
+        await _abandonSetup(incoming);
+        return;
+      }
+      final item = mediaItem == null ? null : await mediaItem();
+      if (!cancellation.isCancelled && startAt != null) {
+        await _waitForPosition(
+          outgoing,
+          startAt,
+          outgoingFinished,
+          cancellation,
+        );
+      }
+      if (!cancellation.isCancelled && startAtEnd) {
+        while (!cancellation.isCancelled && !outgoingFinished()) {
+          await cancellation.wait(kFadeTick);
+        }
+        if (gapAfterEnd > Duration.zero) await cancellation.wait(gapAfterEnd);
+      }
+      setupOver = true;
+      if (cancellation.isCancelled) {
+        await _abandonSetup(incoming);
         return;
       }
 
-      await _inactivePlayer.setAudioSource(nextSource);
-      setTrackGain(_inactivePlayer, 0.0);
-      _inactivePlayer.play();
-      incomingStarted = true;
-      if (cancellation.isCancelled) {
-        await _abandonSetup(origVolume, incomingStarted);
+      // Paused while the new track was opening. The change still happens —
+      // the listener asked for it — but into a paused player, with nothing to
+      // blend: play fades it in like any resume.
+      if (startAt == null && !startAtEnd && !outgoing.playing) {
+        if (item != null) setCurrentMediaItem(item);
+        await outgoing.stop();
+        resetLevels(outgoing);
+        setTrackGain(outgoing, 1.0);
+        _gain.setMix(incoming, 1.0);
+        _activePlayer = incoming;
+        _inactivePlayer = outgoing;
+        onStart?.call();
+        _inFlight = false;
+        _bindPlaybackState();
+        onPlayerSwapped?.call();
         return;
       }
 
-      // Update media item for the next track
-      final image = await fetchArtworkUrl(nextSong.data, nextSong.id);
-      if (cancellation.isCancelled) {
-        await _abandonSetup(origVolume, incomingStarted);
-        return;
-      }
-      final item = MediaItem(
-        id: nextSong.data,
-        album: nextSong.album,
-        title: nextSong.title,
-        artist: nextSong.artist,
-        duration: Duration(milliseconds: nextSong.duration ?? 0),
-        artUri: Uri.file(image),
-      );
-
-      setCurrentMediaItem(item);
-
-      // Signal that the new track is now playing on _inactivePlayer.
-      // currentTrackPlayer will return _inactivePlayer while _isCrossfading.
+      // The blend.
+      final outLevel = outgoingFinished() ? 0.0 : _gain.mixOf(outgoing);
+      final startPosition = incoming.position;
+      unawaited(incoming.play());
+      if (item != null) setCurrentMediaItem(item);
+      // currentTrackPlayer returns the incoming player from here on.
       _isCrossfading = true;
+      onStart?.call();
       onCrossfadeStarted?.call();
 
-      const steps = 20;
-      final stepDuration = Duration(
-        milliseconds: fadeDuration.inMilliseconds ~/ steps,
-      );
-      final currentVolume = trackGainOf(_activePlayer);
-
-      for (var i = 1; i <= steps; i++) {
-        await cancellation.wait(stepDuration);
-        // Abort requested (user skipped/paused/loaded a track): jump straight
-        // to the end state instead of finishing the audible fade. The wait
-        // above returns the instant that happens, rather than at the end of a
-        // step — which at a 20 s crossfade is a whole second of dead button.
+      while (true) {
+        final speed = incoming.speed > 0 ? incoming.speed : 1.0;
+        final moved = (incoming.position - startPosition).inMicroseconds;
+        final progress = fadeMs <= 0
+            ? 1.0
+            : (moved / (fadeUs * speed)).clamp(0.0, 1.0);
+        _gain.setMix(
+          outgoing,
+          outgoingFinished() ? 0.0 : crossfadeOutGain(progress, from: outLevel),
+        );
+        _gain.setMix(incoming, crossfadeInGain(progress));
+        if (progress >= 1.0) break;
+        // The new track failed to open after all. Hand over now and let the
+        // ordinary error path, which watches the active player, deal with it.
+        if (incoming.processingState == ProcessingState.idle) break;
+        await cancellation.wait(kFadeTick);
         if (cancellation.isCancelled) break;
-        final progress = i / steps;
-        setTrackGain(_activePlayer, currentVolume * (1.0 - progress));
-        setTrackGain(_inactivePlayer, targetVolume * progress);
       }
 
-      // Stop old active player, snap incoming to target, swap
-      setTrackGain(_inactivePlayer, targetVolume);
-      await _activePlayer.stop();
-      setTrackGain(_activePlayer, 1.0);
+      if (cancellation.isCancelled) {
+        // Interrupted mid-blend. The track fading out is declicked rather than
+        // cut; the incoming one keeps the level it had reached.
+        final from = _gain.mixOf(outgoing);
+        if (from > 0) {
+          await runRamp(
+            from: from,
+            to: 0.0,
+            duration: rampDuration(from, 0.0, kDeclickMs),
+            apply: (g) => _gain.setMix(outgoing, g),
+          );
+        }
+      } else {
+        _gain.setMix(incoming, 1.0);
+      }
+      await outgoing.stop();
+      resetLevels(outgoing);
+      setTrackGain(outgoing, 1.0);
 
-      final temp = _activePlayer;
-      _activePlayer = _inactivePlayer;
-      _inactivePlayer = temp;
+      _activePlayer = incoming;
+      _inactivePlayer = outgoing;
 
       _isCrossfading = false;
+      _inFlight = false;
       _bindPlaybackState();
       onPlayerSwapped?.call();
     } catch (e) {
-      // Failed before the swap (e.g. dead cloud URL in setAudioSource, or
-      // artwork I/O). Restore the outgoing player and silence the incoming
-      // one so it can't keep playing invisibly; rethrow so the caller can
-      // roll back its track state.
+      // Failed before the swap (a dead cloud URL in the load, artwork I/O).
+      // The outgoing player is still the audible one: bring it back to where
+      // it was, silence the incoming one so it can't keep playing invisibly,
+      // and rethrow so the caller can fall back.
+      setupOver = true;
       _isCrossfading = false;
-      setTrackGain(_activePlayer, origVolume);
-      if (incomingStarted) {
+      _gain.setMix(outgoing, outFrom);
+      if (incomingLoaded) {
         try {
-          await _inactivePlayer.stop();
+          await incoming.stop();
         } catch (_) {}
       }
+      resetLevels(incoming);
       rethrow;
     } finally {
       // Whatever happened, the crossfade is settled: unblock abortCrossfade()
       // waiters and clear the guard so future crossfades can run.
+      setupOver = true;
       _isCrossfading = false;
+      _inFlight = false;
       _cancellation = null;
       _fadeDone = null;
       fadeDone.complete();
     }
   }
 
-  /// Gives up a crossfade that was cancelled before the fade began.
-  ///
-  /// Leaves the outgoing player exactly as it was found — it is still the
-  /// audible one, and the caller that cancelled is usually about to load
-  /// something onto it — and silences the incoming one, which may already be
-  /// playing at volume zero and would otherwise decode on for ever.
-  ///
-  /// Returns normally rather than throwing. A cancellation is not a failure: a
-  /// throw here reaches `AppController._beginCrossfade`'s catch, which rolls the
-  /// track index back — undoing the very skip the user asked for.
-  Future<void> _abandonSetup(double origVolume, bool incomingStarted) async {
-    setTrackGain(_activePlayer, origVolume);
-    if (incomingStarted) {
-      try {
-        await _inactivePlayer.stop();
-      } catch (_) {}
+  /// Waits until [outgoing] reaches [position] — or [finished] says it has
+  /// nothing left — polling, because a pause, a stall or a change of speed all
+  /// move the moment and the wait has to follow the track, not the clock.
+  static Future<void> _waitForPosition(
+    AudioPlayer outgoing,
+    Duration position,
+    bool Function() finished,
+    FadeCancellation cancel,
+  ) async {
+    const poll = Duration(milliseconds: 100);
+    while (!cancel.isCancelled && !finished()) {
+      final remaining = position - outgoing.position;
+      if (remaining <= Duration.zero) return;
+      final speed = outgoing.speed > 0 ? outgoing.speed : 1.0;
+      final wall = Duration(
+        microseconds: (remaining.inMicroseconds / speed).round(),
+      );
+      await cancel.wait(wall < poll ? wall : poll);
     }
+  }
+
+  /// Gives up a crossfade that was cancelled before the blend began.
+  ///
+  /// The outgoing player is still the audible one — and the caller that
+  /// cancelled is usually about to act on it — so it is left at whatever level
+  /// it is at, for that action to carry on from. The incoming one holds a track
+  /// nobody is going to hear.
+  ///
+  /// Returns normally rather than throwing. A cancellation is not a failure.
+  Future<void> _abandonSetup(AudioPlayer incoming) async {
+    try {
+      await incoming.stop();
+    } catch (_) {}
+    resetLevels(incoming);
+    setTrackGain(incoming, 1.0);
   }
 
   /// Compute replay gain volume from ID3 tags
@@ -460,7 +897,10 @@ class HypeAudioHandler extends BaseAudioHandler {
           final val = frame.value.toLowerCase();
           if (val.contains('replaygain_track_gain')) {
             final gainStr = frame.value
-                .replaceAll(RegExp(r'replaygain_track_gain', caseSensitive: false), '')
+                .replaceAll(
+                  RegExp(r'replaygain_track_gain', caseSensitive: false),
+                  '',
+                )
                 .replaceAll(RegExp(r'[^\d.\-+]'), '');
             final dB = double.tryParse(gainStr) ?? 0.0;
             final linear = math.pow(10, dB / 20).toDouble();
@@ -474,14 +914,19 @@ class HypeAudioHandler extends BaseAudioHandler {
     return 1.0;
   }
 
+  List<MediaControl> _controlsFor({required bool playing}) => [
+    MediaControl.skipToPrevious,
+    if (playing) MediaControl.pause else MediaControl.play,
+    MediaControl.skipToNext,
+    MediaControl.stop,
+  ];
+
   PlaybackState _transformEvent(PlaybackEvent event) {
+    // A pause that is still fading out is a pause as far as the lock screen is
+    // concerned — see [pausing].
+    final playing = _activePlayer.playing && !pausing.value;
     return PlaybackState(
-      controls: [
-        MediaControl.skipToPrevious,
-        if (_activePlayer.playing) MediaControl.pause else MediaControl.play,
-        MediaControl.skipToNext,
-        MediaControl.stop,
-      ],
+      controls: _controlsFor(playing: playing),
       systemActions: const {
         MediaAction.seek,
         MediaAction.seekForward,
@@ -495,7 +940,7 @@ class HypeAudioHandler extends BaseAudioHandler {
         ProcessingState.ready: AudioProcessingState.ready,
         ProcessingState.completed: AudioProcessingState.completed,
       }[_activePlayer.processingState]!,
-      playing: _activePlayer.playing,
+      playing: playing,
       updatePosition: _activePlayer.position,
       bufferedPosition: _activePlayer.bufferedPosition,
       speed: _activePlayer.speed,

@@ -466,14 +466,11 @@ class _CardDeck extends StatelessWidget {
                     controller.next();
                   } else if (page < controller.songId) {
                     // Skip the >3s restart check — card already animated,
-                    // user explicitly chose previous track
-                    controller.songId = page;
-                    controller.artWorkId = controller.songs[page].id;
-                    loadAudioSource(
-                      controller.handler,
-                      controller.songs[page],
-                      replayGain: controller.replayGain,
-                    );
+                    // user explicitly chose previous track. Through the
+                    // controller, which fades the change like any other skip
+                    // and keeps a gapless queue whole; loading the track here
+                    // directly cut, and dropped the rest of the queue.
+                    controller.skipTo(page);
                   }
                 },
                 itemBuilder: (context, index, {bool isActive = false}) {
@@ -849,7 +846,9 @@ class _WaveformProgress extends StatelessWidget {
               position: data?.position ?? Duration.zero,
               bufferedPosition: data?.bufferedPosition ?? Duration.zero,
               isPlaying: isPlaying,
-              onChangeEnd: (position) => trackPlayer.seek(position),
+              // Through the handler, which fades the jump in and settles a
+              // crossfade first.
+              onChangeEnd: (position) => controller.handler.seek(position),
             );
           },
         );

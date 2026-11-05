@@ -1,40 +1,47 @@
-/// When a track is close enough to its end to start fading into the next one.
+/// When a track ending on its own should start getting ready to crossfade.
 ///
-/// Pulled out of the position listener because the rule has grown a condition
-/// that is easy to get wrong and impossible to see in a stream callback: a fade
-/// must not start while a track is *being loaded*.
+/// Pulled out of the position listener because the timing is easy to get wrong
+/// and impossible to see in a stream callback. The listener itself also sits
+/// out any moment a track is being loaded or a crossfade is already under way:
+/// press next near the end of a track and, for the length of that load, the
+/// old track is still playing and still near its end — starting a fade out of
+/// it would fade the track the user chose straight into one they did not.
 ///
-/// The race it prevents: the user presses next near the end of a track. That
-/// load takes a moment — artwork, and for a streamed track a network fetch —
-/// and throughout it the old track is still playing, still near its end, still
-/// feeding the position listener. The listener starts a crossfade out of a
-/// track the app is in the middle of replacing, so the track the user chose
-/// begins and is immediately faded away into one they did not. From the outside
-/// that is "I pressed next and it did something else".
+/// Whether this boundary fades at all, and for how long, is decided by
+/// `autoCrossfadeMs` in `fade_settings.dart`; this file only answers "is it
+/// time yet".
 library;
 
-/// Whether the position listener should start a crossfade now.
-bool shouldStartCrossfade({
-  required int crossfadeSeconds,
-  required bool repeatOne,
-  required bool alreadyCrossfading,
-  required bool loadingTrack,
+/// Whether a track of [duration] is long enough to crossfade out of over
+/// [fadeMs]: longer than the crossfade plus five seconds. Anything shorter
+/// simply ends and the next track follows.
+bool crossfadeFits(Duration? duration, int fadeMs) =>
+    fadeMs > 0 && duration != null && duration.inMilliseconds > fadeMs + 5000;
+
+/// Whether to open the next track now for a crossfade of [fadeMs] that should
+/// begin [fadeMs] before the end of the current one.
+///
+/// The next track is opened [leadMs] ahead of the fade, so a streamed track
+/// that takes a moment to open still starts on time; the crossfade itself
+/// waits for its moment once the track is open.
+bool shouldPrepareCrossfade({
+  required int fadeMs,
+  required int leadMs,
   required Duration? duration,
   required Duration position,
-  required int index,
-  required int queueLength,
 }) {
-  if (crossfadeSeconds <= 0) return false;
-  // Repeat-one and crossfade are contradictory instructions: the fade exists to
-  // reach the *next* track, which is the one thing repeat-one says not to do.
-  // The explicit setting wins.
-  if (repeatOne) return false;
-  if (alreadyCrossfading) return false;
-  // A load in flight owns the player. See this file's header.
-  if (loadingTrack) return false;
-  if (duration == null) return false;
-  // A track shorter than the fade has no room to fade at all.
-  if (duration.inSeconds <= crossfadeSeconds) return false;
-  if (position < duration - Duration(seconds: crossfadeSeconds)) return false;
-  return index < queueLength - 1;
+  if (!crossfadeFits(duration, fadeMs)) return false;
+  final prepareAt = duration! - Duration(milliseconds: fadeMs + leadMs);
+  return position >= prepareAt;
+}
+
+/// Whether to open the next track now so it can start the instant the current
+/// one ends — "Preload gapless tracks", [preloadMs] before the end.
+bool shouldPrepareHandoff({
+  required int preloadMs,
+  required Duration? duration,
+  required Duration position,
+}) {
+  if (preloadMs <= 0 || duration == null) return false;
+  return position >= duration - Duration(milliseconds: preloadMs);
 }
