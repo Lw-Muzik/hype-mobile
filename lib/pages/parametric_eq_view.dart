@@ -585,7 +585,8 @@ class _ParametricEqViewState extends State<ParametricEqView> {
   }
 
   void _copyFromGraphic(AppController controller) {
-    final gains = controller.graphicBandGains;
+    final gains = controller.eqGains;
+    final centres = controller.eqCentres;
     if (gains.isEmpty) return;
 
     controller.resetParametricPoints();
@@ -612,7 +613,7 @@ class _ParametricEqViewState extends State<ParametricEqView> {
         : _evenlySpacedSubset(uniqueBands, 8);
 
     for (final band in selected) {
-      final freq = 20.0 * pow(20000.0 / 20.0, band / (bandCount - 1));
+      final freq = centres[band];
       final gain = gains[band].clamp(_kMinGain, _kMaxGain);
       if (gain.abs() > 0.1) {
         controller.addParametricPoint(freq.toDouble(), gain);

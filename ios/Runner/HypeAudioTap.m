@@ -3,6 +3,7 @@
 #import <Accelerate/Accelerate.h>
 #import <HypeDSP/dsp_bridge.h>
 #import <os/lock.h>
+#import <pthread.h>
 
 #define VIZ_CAPTURE_SIZE 1024
 #define MAX_SCRATCH_FRAMES 8192
@@ -29,6 +30,16 @@ typedef struct {
 typedef struct {
     void *dspHandle;
     void *stemTap;            // live stems: this item's tap (dsp_stem_tap_*)
+
+    // Gapless queues: this item's own copy of its URL (the key a gain message
+    // is matched by), the engine's gain cell, and the gain waiting for this
+    // item's first process call. Resolved off the audio thread; the audio
+    // thread only reads the atomics.
+    char *trackUrl;
+    HypeGainCell *gainCell;
+    int firstProcessDone;     // audio thread only; reset in tap_Prepare
+    float nextGainDb;         // written before nextGainSet is raised
+    int nextGainSet;          // atomic
     float *scratchBuffer;     // interleave buffer (MAX_SCRATCH_FRAMES * 2)
     int sampleRate;
     int channels;
@@ -183,6 +194,49 @@ static int writeBandsDb(TapContext *ctx, float *out) {
 
 // Shared latest context (points to whichever tap is active)
 static TapContext * volatile sActiveContext = NULL;
+
+// Live contexts, for routing a gain message to its item's tap. Touched only
+// from init/finalize/message threads, never the audio thread.
+#define MAX_LIVE_CONTEXTS 512
+static pthread_mutex_t sCtxMutex = PTHREAD_MUTEX_INITIALIZER;
+static TapContext *sLiveContexts[MAX_LIVE_CONTEXTS];
+
+static void registerContext(TapContext *ctx) {
+    pthread_mutex_lock(&sCtxMutex);
+    int placed = 0;
+    for (int i = 0; i < MAX_LIVE_CONTEXTS; i++) {
+        if (!sLiveContexts[i]) { sLiveContexts[i] = ctx; placed = 1; break; }
+    }
+    pthread_mutex_unlock(&sCtxMutex);
+    // Without a slot this item never gets its boundary gain (the Dart
+    // re-gain on the index change still applies).
+    static int warned = 0;
+    if (!placed && !__atomic_exchange_n(&warned, 1, __ATOMIC_RELAXED)) {
+        NSLog(@"HypeAudioTap: live tap list full, boundary gain disabled for some items");
+    }
+}
+
+static void unregisterContext(TapContext *ctx) {
+    pthread_mutex_lock(&sCtxMutex);
+    for (int i = 0; i < MAX_LIVE_CONTEXTS; i++) {
+        if (sLiveContexts[i] == ctx) sLiveContexts[i] = NULL;
+    }
+    pthread_mutex_unlock(&sCtxMutex);
+}
+
+static void postNextGain(TapContext *ctx, float dB) {
+    ctx->nextGainDb = dB;
+    __atomic_store_n(&ctx->nextGainSet, 1, __ATOMIC_RELEASE);
+}
+
+/// Picks up the gain DSPManager is holding for this item, if any.
+static void lookupNextGain(TapContext *ctx) {
+    HypeAudioTap *shared = [HypeAudioTap shared];
+    if (!ctx->dspHandle || !ctx->trackUrl || !ctx->trackUrl[0] || !shared.nextGainLookup) return;
+    float db = 0;
+    NSString *uri = [NSString stringWithUTF8String:ctx->trackUrl];
+    if (uri && shared.nextGainLookup(ctx->dspHandle, uri, &db)) postNextGain(ctx, db);
+}
 // Global enabled state — survives tap context switches
 static volatile int sVizEnabledGlobal = 0;
 
@@ -193,6 +247,18 @@ static void tap_Init(MTAudioProcessingTapRef tap, void *clientInfo, void **tapSt
     TapClientInfo *info = (TapClientInfo *)clientInfo;
     ctx->dspHandle = info ? info->dspHandle : NULL;
     ctx->stemTap = dsp_stem_tap_create(info && info->trackUrl ? info->trackUrl : "");
+    {
+        // The key a gain message is matched by: the URL as DSPManager
+        // normalises it (see NextGainKey), so both sides agree.
+        const char *raw = info && info->trackUrl ? info->trackUrl : "";
+        NSString *rawStr = [NSString stringWithUTF8String:raw];
+        NSString *(^norm)(NSString *) = [HypeAudioTap shared].keyNormaliser;
+        NSString *key = (norm && rawStr) ? norm(rawStr) : rawStr;
+        ctx->trackUrl = strdup(key ? key.UTF8String : raw);
+    }
+    if (ctx->dspHandle && [HypeAudioTap shared].engineGainCell) {
+        ctx->gainCell = [HypeAudioTap shared].engineGainCell(ctx->dspHandle);
+    }
     // `info` lives on the caller's stack for the duration of the create call;
     // nobody frees it. From here the context owns the engine reference.
     if (info) info->initRan = 1;
@@ -206,6 +272,10 @@ static void tap_Init(MTAudioProcessingTapRef tap, void *clientInfo, void **tapSt
     vDSP_hann_window(ctx->fftWindow, VIZ_CAPTURE_SIZE, vDSP_HANN_NORM);
 
     *tapStorageOut = ctx;
+
+    registerContext(ctx);
+    // A gain sent before this tap existed.
+    lookupNextGain(ctx);
 }
 
 static void tap_Finalize(MTAudioProcessingTapRef tap) {
@@ -213,7 +283,9 @@ static void tap_Finalize(MTAudioProcessingTapRef tap) {
     if (ctx == sActiveContext) {
         sActiveContext = NULL;
     }
+    unregisterContext(ctx);
     if (ctx->fftSetup) vDSP_destroy_fftsetup(ctx->fftSetup);
+    free(ctx->trackUrl);
     if (ctx->stemTap) dsp_stem_tap_destroy(ctx->stemTap);
     // Let go of the engine last: once the count hits zero it may be destroyed.
     if (ctx->dspHandle) [[HypeAudioTap shared] releaseEngineHandle:ctx->dspHandle];
@@ -230,7 +302,9 @@ static void tap_Prepare(MTAudioProcessingTapRef tap,
 
     // Reinit DSP engine for this sample rate
     if (ctx->dspHandle) {
-        dsp_reinit(ctx->dspHandle, ctx->sampleRate, ctx->channels);
+        // The engine only works on stereo: a mono item is widened around it
+        // (see tap_Process), so it is always (re)initialised as stereo.
+        dsp_reinit(ctx->dspHandle, ctx->sampleRate, ctx->channels == 1 ? 2 : ctx->channels);
         // The reinit reset the EQ/crossfeed stages; restore the current state.
         void (^reinitialised)(void *) = [HypeAudioTap shared].engineReinitialised;
         if (reinitialised) reinitialised(ctx->dspHandle);
@@ -238,6 +312,11 @@ static void tap_Prepare(MTAudioProcessingTapRef tap,
     // Live stems work on stereo only; rate 0 keeps the tap idle otherwise.
     dsp_stem_tap_prepare(ctx->stemTap, ctx->channels == 2 ? ctx->sampleRate : 0);
     ctx->stemFrameKnown = 0;
+
+    // A new run of this item: its gain, if one is waiting, applies on the
+    // first buffer. (A seek back into an item prepares it again.)
+    ctx->firstProcessDone = 0;
+    lookupNextGain(ctx);
 
     prepareBass(ctx);
 
@@ -340,6 +419,18 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     int frames = (int)*numberFramesOut;
     if (frames <= 0 || !ctx->dspHandle) return;
 
+    // The first buffer of this item in a gapless queue: the gain meant for it
+    // goes on the shared engine before this buffer is processed. Lock-free:
+    // everything was resolved off this thread.
+    if (!ctx->firstProcessDone) {
+        ctx->firstProcessDone = 1;
+        if (__atomic_exchange_n(&ctx->nextGainSet, 0, __ATOMIC_ACQ_REL)) {
+            const float db = ctx->nextGainDb;
+            dsp_set_track_gain_db(ctx->dspHandle, db);
+            if (ctx->gainCell) HypeGainCellPost(ctx->gainCell, db);
+        }
+    }
+
     // Which samples of the track this buffer holds, for the stem tap: counted
     // on from the last origin while the asset time agrees with the count to
     // within its packet jitter (~200 frames seen); a seek moves it further.
@@ -360,7 +451,21 @@ static void tap_Process(MTAudioProcessingTapRef tap,
         ctx->stemFrameKnown = 1;
     }
 
-    if (bufferListInOut->mNumberBuffers == 1) {
+    if (bufferListInOut->mNumberBuffers == 1 && ctx->channels == 1) {
+        // Mono float: widen to stereo in the pre-sized scratch, run the engine
+        // (track gain, EQ, ...), fold back. Chunked so any buffer size fits.
+        float *mono = (float *)bufferListInOut->mBuffers[0].mData;
+        for (int done = 0; done < frames; done += MAX_SCRATCH_FRAMES) {
+            int chunk = frames - done;
+            if (chunk > MAX_SCRATCH_FRAMES) chunk = MAX_SCRATCH_FRAMES;
+            HypeMonoToStereo(mono + done, ctx->scratchBuffer, chunk);
+            dsp_process_float(ctx->dspHandle, ctx->scratchBuffer, chunk);
+            if (__atomic_load_n(&ctx->vizEnabled, __ATOMIC_ACQUIRE)) {
+                captureVisualization(ctx, ctx->scratchBuffer, chunk);
+            }
+            HypeStereoToMono(ctx->scratchBuffer, mono + done, chunk);
+        }
+    } else if (bufferListInOut->mNumberBuffers == 1) {
         // Interleaved stereo float
         float *data = (float *)bufferListInOut->mBuffers[0].mData;
         if (stemsKnowWhere) dsp_stem_tap_process(ctx->stemTap, data, frames, framePos, discontinuity);
@@ -412,6 +517,20 @@ static void tap_Process(MTAudioProcessingTapRef tap,
 
 - (void)releaseEngineHandle:(void *)handle {
     if (self.engineRelease) self.engineRelease(handle);
+}
+
+- (void)pushNextGainDb:(float)dB forUri:(NSString *)uri engine:(void *)handle {
+    const char *key = uri.UTF8String;
+    if (!key || !handle) return;
+    pthread_mutex_lock(&sCtxMutex);
+    for (int i = 0; i < MAX_LIVE_CONTEXTS; i++) {
+        TapContext *ctx = sLiveContexts[i];
+        if (ctx && ctx->dspHandle == handle && ctx->trackUrl
+            && strcmp(ctx->trackUrl, key) == 0) {
+            postNextGain(ctx, dB);
+        }
+    }
+    pthread_mutex_unlock(&sCtxMutex);
 }
 
 - (void)releasePlayer:(NSString *)playerId {

@@ -39,7 +39,7 @@ public class DvcController {
 
     public static void init(Context context) {
         audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        handler = new Handler(Looper.getMainLooper());
+        if (handler == null) handler = new Handler(Looper.getMainLooper());
     }
 
     /**
@@ -95,6 +95,7 @@ public class DvcController {
         }
 
         registerVolumeObserver(context);
+        SystemVolumeObserver.refresh();
     }
 
     private static void raiseSystemVolumeToMax() {
@@ -129,6 +130,7 @@ public class DvcController {
 
         dvcActive = false;
         savedSystemVolume = -1;
+        SystemVolumeObserver.refresh();
     }
 
     /** Put the system music stream back at maximum if something moved it. */

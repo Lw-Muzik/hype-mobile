@@ -217,7 +217,10 @@ class _SpaceViewState extends State<SpaceView> {
               // anything above it widens. No switch to forget about.
               ListTile(
                 title: const Text("Stereo Expand"),
-                subtitle: const Text("Widens the stereo image"),
+                subtitle: Text(
+                  controller.systemWideDisabledReason ??
+                      "Widens the stereo image",
+                ),
                 trailing: Text(
                   controller.stereoExpandEnabled
                       ? StereoExpand.label(controller.stereoExpand)
@@ -249,13 +252,17 @@ class _SpaceViewState extends State<SpaceView> {
                         max: StereoExpand.max,
                         divisions: StereoExpand.divisions,
                         label: StereoExpand.label(controller.stereoExpand),
-                        onChanged: (v) {
-                          final crossfeedWasOn = controller.crossfeedEnabled;
-                          controller.stereoExpand = v;
-                          if (v > 0 && crossfeedWasOn) {
-                            _showMutualExclusiveToast("Crossfeed disabled");
-                          }
-                        },
+                        // The platform equalizer cannot carry it: held off
+                        // (the stored amount is kept) while system-wide.
+                        onChanged: controller.systemWideActive
+                            ? null
+                            : (v) {
+                                final crossfeedWasOn = controller.crossfeedEnabled;
+                                controller.stereoExpand = v;
+                                if (v > 0 && crossfeedWasOn) {
+                                  _showMutualExclusiveToast("Crossfeed disabled");
+                                }
+                              },
                       ),
                     ),
                     Text(

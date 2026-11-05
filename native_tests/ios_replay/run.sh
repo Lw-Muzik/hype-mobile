@@ -10,6 +10,7 @@ out="${TMPDIR:-/tmp}/hype_ios_replay_test"
 mkdir -p "$out"
 swiftc -parse-as-library -O \
   "$repo/ios/Runner/DSPReplayLog.swift" \
+  "$repo/ios/Runner/SystemVolume.swift" \
   "$here/replay_test.swift" \
   -o "$out/replay_test"
 "$out/replay_test"

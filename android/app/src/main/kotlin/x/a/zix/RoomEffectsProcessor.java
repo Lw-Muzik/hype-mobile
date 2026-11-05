@@ -48,6 +48,11 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
             new ConcurrentHashMap<>();
 
     // Track gain per player id — applied to that player's engine on every flush.
+    // The gain a player's NEXT queue item takes where it starts (gapless
+    // queues). Static by player id so it can arrive before the processor
+    // exists; consumed at the first real item boundary, kept across seeks.
+    private static final ConcurrentHashMap<String, Float> pendingNextGainDb =
+            new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Float> cachedTrackGainDb =
             new ConcurrentHashMap<>();
 
@@ -77,15 +82,40 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
 
     // Cached EQ params
     private static volatile boolean cachedEqEnabled = false;
-    // True while GlobalEqService is running — bypasses C++ EQ for own app to prevent double-EQ.
+    // True while GlobalEqService is running (the platform equalizer applies the
+    // user's EQ to the whole mix, this app included). The engine then holds its
+    // own graphic EQ, tone, preamp, headroom, track gain, balance, mono and
+    // stereo expand neutral, so nothing is applied twice. The EQ-enabled flag
+    // itself is passed through unchanged. Replayed to every new engine.
     private static volatile boolean cachedGlobalEqActive = false;
     private static volatile float cachedPreampGain = 0f;
     private static volatile float cachedHeadroomDb = 0f;
     private static volatile float cachedSpeakerPreampDb = 0f;
     private static volatile float cachedMasterVolumeDb = 0f;
+    // Smooth equalizer/tone gains: the engine scales its boosts by the playback
+    // level (setting, and the platform volume in dB that it cannot see).
+    private static volatile boolean cachedSmoothGains = false;
+    private static volatile float cachedSystemVolumeDb = 0f;
     private static volatile boolean cachedMono = false;
     private static volatile float cachedBalance = 0f;
     private static final float[] cachedGraphicGains = new float[32]; // all 0.0f
+    // Graphic EQ layout. Default = the legacy 32-band grid, which is also what a
+    // fresh native engine starts with. Cutoffs are the DynamicsProcessing band
+    // edges (default = the centres, the pre-layout behaviour). Guarded by
+    // graphicLock together with the gains above; arrays always hold 32 slots.
+    private static final float[] LEGACY_GRAPHIC_CENTRES = {
+        20f, 25f, 31.5f, 40f, 50f, 63f, 80f, 100f,
+        125f, 160f, 200f, 250f, 315f, 400f, 500f, 630f,
+        800f, 1000f, 1250f, 1600f, 2000f, 2500f, 3150f, 4000f,
+        5000f, 6300f, 8000f, 10000f, 12500f, 16000f, 18000f, 20000f
+    };
+    private static final Object graphicLock = new Object();
+    private static int cachedGraphicCount = 32;
+    // False until Dart has sent a layout. Until then a new engine keeps its own
+    // default layout and only the gains are replayed (as before the layout existed).
+    private static boolean cachedLayoutReceived = false;
+    private static final float[] cachedGraphicCentres = LEGACY_GRAPHIC_CENTRES.clone();
+    private static final float[] cachedGraphicCutoffs = LEGACY_GRAPHIC_CENTRES.clone();
     private static final float[] cachedParametricFreqs = new float[32];
     private static final float[] cachedParametricGains = new float[32];
     private static final float[] cachedParametricQs = new float[32];
@@ -112,8 +142,6 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
 
     // Cached Limiter
     private static volatile boolean cachedLimiterEnabled = true;
-    private static volatile float cachedLimiterCeiling = 0.98f;
-    private static volatile float cachedLimiterRelease = 50f;
     private static volatile float cachedLimiterKnee = 6f;
 
     // Cached Speaker correction EQ (AutoEq headphone profiles)
@@ -179,6 +207,10 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     private boolean stemNeedTime = true;
 
     private final String playerId;
+    // Whether a buffer has reached this processor since the last flush. A
+    // stream change before any is a seek landing in another item, not a
+    // gapless boundary. Playback thread (flush runs there too).
+    private boolean bufferSinceFlush = false;
     // This instance's own track gain; survives a mid-life onReset, which drops
     // the id from the static cache.
     private volatile Float trackGainDb = null;
@@ -196,13 +228,19 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (encoding != C.ENCODING_PCM_16BIT && encoding != C.ENCODING_PCM_FLOAT) {
             throw new UnhandledAudioFormatException(inputAudioFormat);
         }
-        if (inputAudioFormat.channelCount != 2) {
-            Log.w(TAG, "Non-stereo audio (" + inputAudioFormat.channelCount + "ch), passing through");
+        int channels = inputAudioFormat.channelCount;
+        if (channels != 1 && channels != 2) {
+            Log.w(TAG, "Unsupported channel count (" + channels + "ch), passing through");
             return AudioFormat.NOT_SET;
         }
 
         Log.i(TAG, "Configured: " + inputAudioFormat.sampleRate + "Hz, " +
-            inputAudioFormat.channelCount + "ch, encoding=" + encoding);
+            channels + "ch, encoding=" + encoding);
+        // Mono is widened to stereo (L = R) so the engine, which only works on
+        // stereo, still applies the track gain and the effects to it.
+        if (channels == 1) {
+            return new AudioFormat(inputAudioFormat.sampleRate, 2, encoding);
+        }
         return inputAudioFormat;
     }
 
@@ -213,15 +251,33 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         int remaining = inputBuffer.remaining();
         int encoding = inputAudioFormat.encoding;
         int bytesPerSample = (encoding == C.ENCODING_PCM_FLOAT) ? 4 : 2;
-        int numFrames = remaining / (bytesPerSample * 2); // stereo = 2 channels
+        boolean mono = inputAudioFormat.channelCount == 1;
+        int numFrames = remaining / (bytesPerSample * (mono ? 1 : 2));
 
         if (numFrames <= 0) {
             inputBuffer.position(inputBuffer.limit());
             return;
         }
 
-        ByteBuffer outputBuffer = replaceOutputBuffer(remaining);
-        outputBuffer.put(inputBuffer);
+        // The output is always stereo; a mono input doubles in size.
+        ByteBuffer outputBuffer = replaceOutputBuffer(numFrames * bytesPerSample * 2);
+        if (mono) {
+            // Copy each sample's bytes twice (L = R); byte-wise so the byte
+            // order of the buffers does not matter. A trailing partial frame
+            // is dropped, as for stereo.
+            int in = inputBuffer.position();
+            for (int f = 0; f < numFrames; f++) {
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int b = 0; b < bytesPerSample; b++) {
+                        outputBuffer.put(inputBuffer.get(in + b));
+                    }
+                }
+                in += bytesPerSample;
+            }
+            inputBuffer.position(inputBuffer.limit());
+        } else {
+            outputBuffer.put(inputBuffer);
+        }
         outputBuffer.flip();
 
         // Process through this instance's native DSP engine
@@ -253,11 +309,11 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (inputAudioFormat != AudioFormat.NOT_SET) {
             synchronized (handleLock) {
                 if (nativeHandle != 0) {
-                    nativeReinit(nativeHandle, inputAudioFormat.sampleRate,
-                        inputAudioFormat.channelCount);
+                    nativeReinit(nativeHandle, outputAudioFormat.sampleRate,
+                        outputAudioFormat.channelCount);
                 } else {
-                    nativeHandle = nativeCreate(inputAudioFormat.sampleRate,
-                        inputAudioFormat.channelCount);
+                    nativeHandle = nativeCreate(outputAudioFormat.sampleRate,
+                        outputAudioFormat.channelCount);
                 }
                 // Apply current cached params to this instance's native handle
                 applyCachedParams();
@@ -268,6 +324,9 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
             }
             stemNeedTime = true;
         }
+        // Whatever happens next is not a boundary until audio has flowed.
+        // The pending next gain is deliberately kept.
+        bufferSinceFlush = false;
     }
 
     @Override
@@ -301,10 +360,20 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         long h = nativeHandle;
         if (h != 0) nativeStemStreamChange(h);
         stemNeedTime = true;
+        // A gapless boundary: the next item's gain takes over from the first
+        // sample of the new item, which is what this callback precedes.
+        if (bufferSinceFlush && !playerId.isEmpty()) {
+            Float next = pendingNextGainDb.remove(playerId);
+            if (next != null) {
+                cachedTrackGainDb.put(playerId, next);
+                setTrackGainDb(next);
+            }
+        }
     }
 
     @Override
     public void onSinkBuffer(long mediaTimeUs) {
+        bufferSinceFlush = true;
         // Playback thread, before the buffer enters this processor. Only the
         // first buffer after a flush or stream change matters; frames are
         // counted natively from there.
@@ -347,13 +416,17 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
                 cachedSurround3dSubwoofer);
         nativeSetSurround3dSpeakers(nativeHandle, cachedS3dFrontL, cachedS3dFrontR,
                 cachedS3dSideL, cachedS3dSideR, cachedS3dSurroundL, cachedS3dSurroundR);
-        // EQ state (bypass own-app EQ when global EQ service is active)
-        nativeSetEqEnabled(nativeHandle, cachedEqEnabled && !cachedGlobalEqActive);
+        // EQ state. The platform-mode flag goes with it, so an engine created
+        // while system-wide EQ runs starts with its stages neutral.
+        nativeSetEqEnabled(nativeHandle, cachedEqEnabled);
+        nativeSetPlatformEqActive(nativeHandle, cachedGlobalEqActive);
         nativeSetPreampGain(nativeHandle, cachedPreampGain);
         // Level stages: replayed before the first buffer so a new engine never
         // plays a buffer at the wrong level.
         nativeSetHeadroomDb(nativeHandle, cachedHeadroomDb);
         nativeSetMasterVolumeDb(nativeHandle, cachedMasterVolumeDb);
+        nativeSetSmoothGains(nativeHandle, cachedSmoothGains);
+        nativeSetSystemVolumeDb(nativeHandle, cachedSystemVolumeDb);
         nativeSetMono(nativeHandle, cachedMono);
         nativeSetBalance(nativeHandle, cachedBalance);
         if (!playerId.isEmpty()) {
@@ -364,7 +437,15 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
             Float own = trackGainDb;
             nativeSetTrackGainDb(nativeHandle, own != null ? own : 0f);
         }
-        nativeSetGraphicAllBands(nativeHandle, cachedGraphicGains);
+        // Layout and gains in one call: a fresh engine (after onReset/nativeCreate)
+        // otherwise falls back to the 32-band layout. Before any layout was
+        // received there is nothing to restore: replay the gains alone.
+        float[][] graphic = snapshotGraphicLayout();
+        if (graphic != null) {
+            nativeSetGraphicLayout(nativeHandle, graphic[0], graphic[1]);
+        } else {
+            nativeSetGraphicAllBands(nativeHandle, getCachedGraphicGains());
+        }
         nativeSetParametricAllBands(nativeHandle, cachedParametricFreqs,
                 cachedParametricGains, cachedParametricQs, 32);
         // MBC state
@@ -388,8 +469,6 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         nativeSetTrebleQ(nativeHandle, cachedTrebleQ);
         // Limiter
         nativeSetLimiterEnabled(nativeHandle, cachedLimiterEnabled);
-        nativeSetLimiterCeiling(nativeHandle, cachedLimiterCeiling);
-        nativeSetLimiterRelease(nativeHandle, cachedLimiterRelease);
         nativeSetLimiterKnee(nativeHandle, cachedLimiterKnee);
         // Speaker correction EQ
         nativeSetSpeakerEqEnabled(nativeHandle, cachedSpeakerEqEnabled);
@@ -466,6 +545,10 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (nativeHandle != 0) nativeSetEqEnabled(nativeHandle, enabled);
     }
 
+    public void setPlatformEqActive(boolean active) {
+        if (nativeHandle != 0) nativeSetPlatformEqActive(nativeHandle, active);
+    }
+
     public void setPreampGain(float dB) {
         if (nativeHandle != 0) nativeSetPreampGain(nativeHandle, dB);
     }
@@ -487,6 +570,14 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (nativeHandle != 0) nativeSetMasterVolumeDb(nativeHandle, dB);
     }
 
+    public void setSmoothGains(boolean on) {
+        if (nativeHandle != 0) nativeSetSmoothGains(nativeHandle, on);
+    }
+
+    public void setSystemVolumeDb(float dB) {
+        if (nativeHandle != 0) nativeSetSystemVolumeDb(nativeHandle, dB);
+    }
+
     public void setMono(boolean on) {
         if (nativeHandle != 0) nativeSetMono(nativeHandle, on);
     }
@@ -495,12 +586,26 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (nativeHandle != 0) nativeSetBalance(nativeHandle, balance);
     }
 
+    // The graphic setters hold handleLock, like the flush that replays the cache
+    // (applyCachedParams): a replay's stale snapshot must not land over a newer
+    // layout. Lock order is handleLock -> graphicLock everywhere.
     public void setGraphicBandGain(int band, float dB) {
-        if (nativeHandle != 0) nativeSetGraphicBandGain(nativeHandle, band, dB);
+        synchronized (handleLock) {
+            if (nativeHandle != 0) nativeSetGraphicBandGain(nativeHandle, band, dB);
+        }
     }
 
     public void setGraphicAllBands(float[] gains) {
-        if (nativeHandle != 0) nativeSetGraphicAllBands(nativeHandle, gains);
+        synchronized (handleLock) {
+            if (nativeHandle != 0) nativeSetGraphicAllBands(nativeHandle, gains);
+        }
+    }
+
+    /** Centres (Hz) and gains (dB), same length, applied in one native call. */
+    public void setGraphicLayout(float[] centresHz, float[] gainsDb) {
+        synchronized (handleLock) {
+            if (nativeHandle != 0) nativeSetGraphicLayout(nativeHandle, centresHz, gainsDb);
+        }
     }
 
     public void setParametricBand(int band, float freq, float gainDb, float q,
@@ -588,14 +693,6 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         if (nativeHandle != 0) nativeSetLimiterEnabled(nativeHandle, enabled);
     }
 
-    public void setLimiterCeiling(float v) {
-        if (nativeHandle != 0) nativeSetLimiterCeiling(nativeHandle, v);
-    }
-
-    public void setLimiterRelease(float ms) {
-        if (nativeHandle != 0) nativeSetLimiterRelease(nativeHandle, ms);
-    }
-
     public void setLimiterKnee(float dB) {
         if (nativeHandle != 0) nativeSetLimiterKnee(nativeHandle, dB);
     }
@@ -678,21 +775,21 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     // ---- EQ broadcast methods ----
 
     /**
-     * Called by GlobalEqService when it starts/stops.
-     * While active, own-app C++ EQ is bypassed so the global DynamicsProcessing
-     * handles all audio (including ours) — prevents double-EQ.
+     * Called by GlobalEqService when it starts/stops. Cached (so a new engine
+     * starts right), applied to every instance and replayed by
+     * applyCachedParams. While active, the global DynamicsProcessing handles
+     * all audio (including ours) and each engine holds the stages it
+     * duplicates neutral - faded, with the stored values kept - so nothing is
+     * applied twice. The EQ-enabled flag is not masked any more.
      */
     public static void broadcastGlobalEqActive(boolean active) {
         cachedGlobalEqActive = active;
-        // Apply/restore EQ bypass on all active player instances
-        for (RoomEffectsProcessor p : playerInstances) {
-            p.setEqEnabled(cachedEqEnabled && !active);
-        }
+        for (RoomEffectsProcessor p : playerInstances) p.setPlatformEqActive(active);
     }
 
     public static void broadcastEqEnabled(boolean enabled) {
         cachedEqEnabled = enabled;
-        for (RoomEffectsProcessor p : playerInstances) p.setEqEnabled(enabled && !cachedGlobalEqActive);
+        for (RoomEffectsProcessor p : playerInstances) p.setEqEnabled(enabled);
         syncGlobalEq();
     }
 
@@ -710,11 +807,24 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     public static void broadcastHeadroomDb(float dB) {
         cachedHeadroomDb = dB;
         for (RoomEffectsProcessor p : playerInstances) p.setHeadroomDb(dB);
+        syncGlobalEq();
     }
 
     public static void broadcastMasterVolumeDb(float dB) {
         cachedMasterVolumeDb = dB;
         for (RoomEffectsProcessor p : playerInstances) p.setMasterVolumeDb(dB);
+    }
+
+    public static void broadcastSmoothGains(boolean on) {
+        cachedSmoothGains = on;
+        for (RoomEffectsProcessor p : playerInstances) p.setSmoothGains(on);
+        syncGlobalEq();
+    }
+
+    public static void broadcastSystemVolumeDb(float dB) {
+        cachedSystemVolumeDb = dB;
+        for (RoomEffectsProcessor p : playerInstances) p.setSystemVolumeDb(dB);
+        syncGlobalEq();
     }
 
     public static void broadcastMono(boolean on) {
@@ -731,21 +841,81 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     public static void setTrackGainDb(String playerId, float dB) {
         if (playerId == null || playerId.isEmpty()) return;
         cachedTrackGainDb.put(playerId, dB);
+        // A new current gain supersedes an announced next one; Dart announces
+        // the next item again right after (every load sets current first).
+        pendingNextGainDb.remove(playerId);
         RoomEffectsProcessor p = instancesByPlayerId.get(playerId);
         if (p != null) p.setTrackGainDb(dB);  // also updates the instance's own copy
     }
 
+    /**
+     * The gain the player's next queue item takes at the boundary where it
+     * starts (see onSinkStreamChange). Latest value wins; ids that never reach
+     * a boundary leave one small entry each.
+     */
+    public static void setNextTrackGainDb(String playerId, float dB) {
+        if (playerId == null || playerId.isEmpty()) return;
+        pendingNextGainDb.put(playerId, dB);
+    }
+
     public static void broadcastGraphicBandGain(int band, float dB) {
-        if (band >= 0 && band < 32) cachedGraphicGains[band] = dB;
+        if (band >= 0 && band < 32) {
+            synchronized (graphicLock) { cachedGraphicGains[band] = dB; }
+        }
         for (RoomEffectsProcessor p : playerInstances) p.setGraphicBandGain(band, dB);
         syncGlobalEq();
     }
 
     public static void broadcastGraphicAllBands(float[] gains) {
         int count = Math.min(gains.length, 32);
-        System.arraycopy(gains, 0, cachedGraphicGains, 0, count);
+        synchronized (graphicLock) {
+            System.arraycopy(gains, 0, cachedGraphicGains, 0, count);
+        }
         for (RoomEffectsProcessor p : playerInstances) p.setGraphicAllBands(gains);
         syncGlobalEq();
+    }
+
+    /**
+     * New graphic EQ layout with its gains, in one step: every live engine gets
+     * both in one native call, and the cache (replayed into engines created
+     * later, and read by the system-wide effect) changes together. `cutoffsHz`
+     * are the DynamicsProcessing band edges; null or short means "the centres".
+     * All arrays are read up to the shortest of centres and gains (max 32).
+     */
+    public static void broadcastGraphicLayout(float[] centresHz, float[] cutoffsHz,
+                                              float[] gainsDb) {
+        if (centresHz == null || gainsDb == null) return;
+        int count = Math.min(Math.min(centresHz.length, gainsDb.length), 32);
+        if (count < 1) return;
+        float[] centres = java.util.Arrays.copyOf(centresHz, count);
+        float[] gains = java.util.Arrays.copyOf(gainsDb, count);
+        synchronized (graphicLock) {
+            cachedLayoutReceived = true;
+            cachedGraphicCount = count;
+            for (int i = 0; i < 32; i++) {
+                cachedGraphicCentres[i] = i < count ? centres[i] : 0f;
+                cachedGraphicCutoffs[i] = i < count
+                        ? (cutoffsHz != null && i < cutoffsHz.length ? cutoffsHz[i] : centres[i])
+                        : 0f;
+                cachedGraphicGains[i] = i < count ? gains[i] : 0f;
+            }
+        }
+        for (RoomEffectsProcessor p : playerInstances) p.setGraphicLayout(centres, gains);
+        syncGlobalEq();
+    }
+
+    /**
+     * {centres, gains}, both trimmed to the cached band count, read together;
+     * null while no layout has been received.
+     */
+    private static float[][] snapshotGraphicLayout() {
+        synchronized (graphicLock) {
+            if (!cachedLayoutReceived) return null;
+            return new float[][] {
+                java.util.Arrays.copyOf(cachedGraphicCentres, cachedGraphicCount),
+                java.util.Arrays.copyOf(cachedGraphicGains, cachedGraphicCount)
+            };
+        }
     }
 
     public static void broadcastParametricBand(int band, float freq, float gainDb,
@@ -782,8 +952,21 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     static boolean isCachedEqEnabled() { return cachedEqEnabled; }
     static float[] getCachedGraphicGains() {
         float[] copy = new float[32];
-        System.arraycopy(cachedGraphicGains, 0, copy, 0, 32);
+        synchronized (graphicLock) {
+            System.arraycopy(cachedGraphicGains, 0, copy, 0, 32);
+        }
         return copy;
+    }
+    static int getCachedGraphicCount() {
+        synchronized (graphicLock) { return cachedGraphicCount; }
+    }
+    /** Band centres (Hz), 32 slots; the first getCachedGraphicCount() are in use. */
+    static float[] getCachedGraphicCentres() {
+        synchronized (graphicLock) { return cachedGraphicCentres.clone(); }
+    }
+    /** DynamicsProcessing band edges (Hz), 32 slots; the first getCachedGraphicCount() are in use. */
+    static float[] getCachedGraphicCutoffs() {
+        synchronized (graphicLock) { return cachedGraphicCutoffs.clone(); }
     }
     static boolean isCachedToneEnabled() { return cachedToneEnabled; }
     static float getCachedBassGain() { return cachedBassGain; }
@@ -791,8 +974,9 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     static float getCachedTrebleGain() { return cachedTrebleGain; }
     static float getCachedTrebleFreq() { return cachedTrebleFreq; }
     static boolean isCachedLimiterEnabled() { return cachedLimiterEnabled; }
-    static float getCachedLimiterCeiling() { return cachedLimiterCeiling; }
-    static float getCachedLimiterRelease() { return cachedLimiterRelease; }
+    static float getCachedHeadroomDb() { return cachedHeadroomDb; }
+    static boolean isCachedSmoothGains() { return cachedSmoothGains; }
+    static float getCachedSystemVolumeDb() { return cachedSystemVolumeDb; }
 
     /** Sync global EQ sessions when EQ-related params change. */
     private static void syncGlobalEq() {
@@ -952,18 +1136,6 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         syncGlobalEq();
     }
 
-    public static void broadcastLimiterCeiling(float v) {
-        cachedLimiterCeiling = v;
-        for (RoomEffectsProcessor p : playerInstances) p.setLimiterCeiling(v);
-        syncGlobalEq();
-    }
-
-    public static void broadcastLimiterRelease(float ms) {
-        cachedLimiterRelease = ms;
-        for (RoomEffectsProcessor p : playerInstances) p.setLimiterRelease(ms);
-        syncGlobalEq();
-    }
-
     public static void broadcastLimiterKnee(float dB) {
         cachedLimiterKnee = dB;
         for (RoomEffectsProcessor p : playerInstances) p.setLimiterKnee(dB);
@@ -999,15 +1171,23 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
                                                     boolean surroundL, boolean surroundR);
 
     private native void nativeSetEqEnabled(long handle, boolean enabled);
+    /** Platform equalizer (system-wide) mode: the engine holds its duplicated stages neutral. */
+    private native void nativeSetPlatformEqActive(long handle, boolean active);
     private native void nativeSetPreampGain(long handle, float dB);
     private native void nativeSetHeadroomDb(long handle, float dB);
     private native void nativeSetSpeakerPreampDb(long handle, float dB);
     private native void nativeSetTrackGainDb(long handle, float dB);
     private native void nativeSetMasterVolumeDb(long handle, float dB);
+    private native void nativeSetSmoothGains(long handle, boolean on);
+    private native void nativeSetSystemVolumeDb(long handle, float dB);
+    /** The smooth-gain rule for a level: {eqDb, bassDb} (see smooth_gains.h). */
+    static native float[] nativeSmoothScales(float levelDb, boolean on);
     private native void nativeSetMono(long handle, boolean on);
     private native void nativeSetBalance(long handle, float balance);
     private native void nativeSetGraphicBandGain(long handle, int band, float dB);
     private native void nativeSetGraphicAllBands(long handle, float[] gains);
+    // Layout and gains in one call; gains may be null (layout only).
+    private native void nativeSetGraphicLayout(long handle, float[] centresHz, float[] gainsDb);
     private native void nativeSetParametricBand(long handle, int band, float freq,
                                                 float gainDb, float q, int filterType,
                                                 boolean enabled);

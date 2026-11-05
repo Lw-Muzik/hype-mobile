@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <android/log.h>
+#include <algorithm>
 #include <mutex>
 #include "room_dsp_engine.h"
 #include "fft_visualizer.h"
@@ -194,6 +195,15 @@ Java_x_a_zix_RoomEffectsProcessor_nativeSetEqEnabled(JNIEnv*, jobject, jlong han
     if (engine) engine->setEqEnabled(enabled);
 }
 
+// Android system-wide EQ: the platform equalizer applies the graphic EQ, tone,
+// preamp and headroom to the whole mix (this app included), so the engine
+// holds those stages (and track gain, balance, mono, stereo expand) neutral.
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetPlatformEqActive(JNIEnv*, jobject, jlong handle, jboolean active) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setPlatformEqActive(active == JNI_TRUE);
+}
+
 JNIEXPORT void JNICALL
 Java_x_a_zix_RoomEffectsProcessor_nativeSetPreampGain(JNIEnv*, jobject, jlong handle, jfloat dB) {
     auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
@@ -210,6 +220,29 @@ JNIEXPORT void JNICALL
 Java_x_a_zix_RoomEffectsProcessor_nativeSetHeadroomDb(JNIEnv*, jobject, jlong handle, jfloat v) {
     auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
     if (engine) engine->setHeadroomDb(v);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetSmoothGains(JNIEnv*, jobject, jlong handle, jboolean on) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setSmoothGains(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetSystemVolumeDb(JNIEnv*, jobject, jlong handle, jfloat v) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (engine) engine->setSystemVolumeDb(v);
+}
+
+// The smooth-gain rule for a level, for callers without an engine (the
+// platform equalizer in system-wide mode): {eqDb, bassDb}.
+JNIEXPORT jfloatArray JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSmoothScales(JNIEnv* env, jclass, jfloat levelDb, jboolean on) {
+    const SmoothScales s = smoothGainScales(levelDb, on == JNI_TRUE);
+    const jfloat out[2] = {s.eqDb, s.bassDb};
+    jfloatArray result = env->NewFloatArray(2);
+    if (result) env->SetFloatArrayRegion(result, 0, 2, out);
+    return result;
 }
 
 JNIEXPORT void JNICALL
@@ -253,6 +286,25 @@ Java_x_a_zix_RoomEffectsProcessor_nativeSetGraphicAllBands(JNIEnv* env, jobject,
     int count = env->GetArrayLength(gains);
     engine->setGraphicAllBands(data, count);
     env->ReleaseFloatArrayElements(gains, data, JNI_ABORT);
+}
+
+// Layout and gains in one call. `gains` may be null (layout only); a longer
+// array than `centres` is read only as far as the centres go, a shorter one
+// shortens the layout so no value is read past an array's end.
+JNIEXPORT void JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeSetGraphicLayout(JNIEnv* env, jobject, jlong handle,
+                                                          jfloatArray centres, jfloatArray gains) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    if (!engine || !centres) return;
+    int count = env->GetArrayLength(centres);
+    if (gains) count = std::min(count, static_cast<int>(env->GetArrayLength(gains)));
+    if (count <= 0) return;
+    jfloat* c = env->GetFloatArrayElements(centres, nullptr);
+    if (!c) return;
+    jfloat* g = gains ? env->GetFloatArrayElements(gains, nullptr) : nullptr;
+    if (!gains || g) engine->setGraphicLayout(c, count, g);
+    if (g) env->ReleaseFloatArrayElements(gains, g, JNI_ABORT);
+    env->ReleaseFloatArrayElements(centres, c, JNI_ABORT);
 }
 
 JNIEXPORT void JNICALL

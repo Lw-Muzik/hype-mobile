@@ -130,7 +130,11 @@ with its −23 LUFS reference converted to the 89 dB ReplayGain reference),
 MP4 freeform `----:com.apple.iTunes:replaygain_*` (M4A/ALAC). Streams and
 cloud tracks without readable tags count as untagged. Replaces Hype's current
 "Replay gain" switch (ID3 track gain only); an existing "on" migrates to
-"Apply gain" + Track.
+"Apply gain, prevent clipping by peak" + Track (owner-relayed note, 2026-11-05:
+the old switch could only turn songs down, so plain "Apply gain" would push
+boosted songs past full scale). Mono files get Replay Gain too (the engine
+upmixes them). On iOS, Music-library songs (`ipod-library://`) have their
+tags read natively.
 
 ### 4. Audio Focus — Both (iOS: see column)
 

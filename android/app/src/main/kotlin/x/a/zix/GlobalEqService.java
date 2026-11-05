@@ -25,6 +25,8 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
+import io.flutter.plugin.common.EventChannel;
+
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -58,11 +60,39 @@ public class GlobalEqService extends Service {
     // notification. The preset is kept even while the service is stopped, so
     // the notification is right from the moment the service starts.
     private static GlobalEqService instance;
+
+    // Tells Dart when the notification's Stop ends the service (Dart did not
+    // ask for it, so it would otherwise keep believing system-wide mode is on).
+    // Main thread only.
+    private static EventChannel.EventSink stoppedSink;
+
+    // True after the notification's Stop (a person asked for it), until the
+    // service is created again or Dart starts/stops it itself. Lets Dart tell
+    // that apart from a start that failed. Also written to Dart's own setting
+    // so a Stop with no Dart isolate alive is still remembered.
+    static volatile boolean stoppedByUser = false;
+    private static final String FLUTTER_PREFS = "FlutterSharedPreferences";
+    private static final String FLUTTER_ENABLED_KEY = "flutter.globalEqEnabled";
+
+    public static void setupEventChannel(EventChannel channel) {
+        channel.setStreamHandler(new EventChannel.StreamHandler() {
+            @Override
+            public void onListen(Object arguments, EventChannel.EventSink sink) {
+                stoppedSink = sink;
+            }
+
+            @Override
+            public void onCancel(Object arguments) {
+                stoppedSink = null;
+            }
+        });
+    }
     private static String presetLabel;
 
     /** Sets the preset named in the notification; refreshes it if running. */
     static void updatePreset(String preset) {
-        presetLabel = preset;
+        // No preset selected arrives as an empty name: no line at all.
+        presetLabel = (preset == null || preset.isEmpty()) ? null : preset;
         GlobalEqService svc = instance;
         if (svc == null) return;
         NotificationManager nm = svc.getSystemService(NotificationManager.class);
@@ -81,6 +111,8 @@ public class GlobalEqService extends Service {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        stoppedByUser = false;
+        SystemVolumeObserver.start(getApplicationContext());
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification());
 
@@ -120,6 +152,10 @@ public class GlobalEqService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stoppedByUser = true;
+            getSharedPreferences(FLUTTER_PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(FLUTTER_ENABLED_KEY, false).apply();
+            if (stoppedSink != null) stoppedSink.success(false);
             stopSelf();
             return START_NOT_STICKY;
         }

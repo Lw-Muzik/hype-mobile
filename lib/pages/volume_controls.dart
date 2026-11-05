@@ -9,6 +9,10 @@ import '../themes/ember.dart';
 /// change back through [onChanged] / [onStereoExpand]. Stereo Expand's own
 /// slider lives on the Space page; it appears here only because Reset clears
 /// it too.
+///
+/// A non-null [disabledReason] (system-wide equalizer mode) greys out Balance
+/// and Mono, which the platform equalizer cannot carry, and shows the reason;
+/// Tempo and Reset keep working.
 class VolumeControls extends StatelessWidget {
   const VolumeControls({
     super.key,
@@ -16,12 +20,14 @@ class VolumeControls extends StatelessWidget {
     required this.onChanged,
     required this.stereoExpand,
     required this.onStereoExpand,
+    this.disabledReason,
   });
 
   final DspCoreSettings settings;
   final ValueChanged<DspCoreSettings> onChanged;
   final double stereoExpand;
   final ValueChanged<double> onStereoExpand;
+  final String? disabledReason;
 
   static const double _tempoMin = 0.5;
   static const double _tempoMax = 3.0;
@@ -32,9 +38,22 @@ class VolumeControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = settings;
+    final reason = disabledReason;
+    final locked = reason != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (locked)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+            child: Text(
+              reason,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
         _sliderRow(
           context,
           label: 'Balance',
@@ -42,7 +61,7 @@ class VolumeControls extends StatelessWidget {
           min: -1,
           max: 1,
           display: s.balance.toStringAsFixed(2),
-          onChanged: (v) => onChanged(s.copyWith(balance: v)),
+          onChanged: locked ? null : (v) => onChanged(s.copyWith(balance: v)),
           ends: const ('L', 'R'),
         ),
         SwitchListTile.adaptive(
@@ -51,7 +70,7 @@ class VolumeControls extends StatelessWidget {
           title: const Text('Mono'),
           subtitle: const Text('Left and right mixed into one'),
           value: s.mono,
-          onChanged: (v) => onChanged(s.copyWith(mono: v)),
+          onChanged: locked ? null : (v) => onChanged(s.copyWith(mono: v)),
         ),
         SwitchListTile.adaptive(
           dense: true,
@@ -133,7 +152,7 @@ class VolumeControls extends StatelessWidget {
     required double min,
     required double max,
     required String display,
-    required ValueChanged<double> onChanged,
+    required ValueChanged<double>? onChanged,
     required (String, String) ends,
   }) {
     return Padding(
@@ -173,7 +192,7 @@ class VolumeControls extends StatelessWidget {
     required double value,
     required double min,
     required double max,
-    required ValueChanged<double> onChanged,
+    required ValueChanged<double>? onChanged,
   }) {
     return SliderTheme(
       data: SliderThemeData(

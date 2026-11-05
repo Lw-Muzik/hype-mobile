@@ -21,6 +21,9 @@ public class HypeApplication extends Application {
     public void onCreate() {
         super.onCreate();
         createPushChannels();
+        // Engines also come up without the activity (headless engine, media-button
+        // restart, ConnectService); the volume feed must run in every process start.
+        SystemVolumeObserver.start(this);
         try {
             // The companion method isn't @JvmStatic, so it's reached via .Companion.
             // The plugin keeps a list of listeners, so these don't displace each other.

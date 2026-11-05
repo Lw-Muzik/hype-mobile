@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../audio/eq/eq_labels.dart';
+import '../audio/eq/eq_layout.dart';
 import '../controllers/app_controller.dart';
-import '../models/eq_models.dart';
 import 'audio_fx.dart';
+import 'eq_preset_sheet.dart';
 import '../themes/ember.dart';
 
 /// The app's one accent, not a fifth colour invented for this screen.
@@ -38,8 +40,8 @@ class _GraphicEqViewState extends State<GraphicEqView> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final mapping = controller.currentBandMapping;
-    final displayGains = controller.displayBandGains;
+    final centres = controller.eqCentres;
+    final gains = controller.eqGains;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -64,7 +66,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
                   ),
                   Expanded(
                     flex: 3,
-                    child: _buildCurve(controller, displayGains, mapping),
+                    child: _buildCurve(controller, gains, centres),
                   ),
                   const SizedBox(height: 2),
                   Expanded(
@@ -75,8 +77,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxHeight: 300),
-                        child: _buildBandSliders(
-                            controller, displayGains, mapping),
+                        child: _buildBandSliders(controller, gains, centres),
                       ),
                     ),
                   ),
@@ -101,9 +102,8 @@ class _GraphicEqViewState extends State<GraphicEqView> {
       children: [
         Text(
           "Graphic EQ",
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
         ),
         const Spacer(),
         // Flatten all bands to 0 dB
@@ -118,13 +118,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
               color: Colors.white.withValues(alpha: 0.35),
             ),
             tooltip: "Flatten bands",
-            onPressed: () {
-              final gains = controller.displayBandGains;
-              for (int i = 0; i < gains.length; i++) {
-                controller.setDisplayBandGain(i, 0.0);
-              }
-              controller.activePresetName = 'Flat';
-            },
+            onPressed: controller.flattenEq,
           ),
         ),
         const SizedBox(width: 4),
@@ -135,23 +129,39 @@ class _GraphicEqViewState extends State<GraphicEqView> {
             borderRadius: BorderRadius.circular(8),
           ),
           child: DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: controller.eqBandCount,
-              isDense: true,
-              dropdownColor: const Color(0xFF1E1E2E),
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-              items: BandMapping.supportedCounts
-                  .map(
-                    (c) => DropdownMenuItem(value: c, child: Text('$c bands')),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) controller.eqBandCount = v;
-              },
-            ),
+            child: _buildBandCountPicker(controller),
           ),
         ),
       ],
+    );
+  }
+
+  /// The eight standard band counts, plus "Custom (N)" while custom bands are
+  /// on. Picking a standard count turns custom bands off.
+  Widget _buildBandCountPicker(AppController controller) {
+    const customValue = -1;
+    final settings = controller.eqSettings;
+    return DropdownButton<int>(
+      value: settings.customBands ? customValue : settings.bandCount,
+      isDense: true,
+      dropdownColor: const Color(0xFF1E1E2E),
+      style: const TextStyle(color: Colors.white70, fontSize: 13),
+      items: [
+        for (final c in kStandardBandCounts)
+          DropdownMenuItem(value: c, child: Text('${bandCountLabel(c)} bands')),
+        if (settings.customBands)
+          DropdownMenuItem(
+            value: customValue,
+            child: Text('Custom (${settings.customCount})'),
+          ),
+      ],
+      onChanged: (v) {
+        if (v == null || v == customValue) return;
+        controller.eqSettings = settings.copyWith(
+          bandCount: v,
+          customBands: false,
+        );
+      },
     );
   }
 
@@ -249,7 +259,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
   Widget _buildCurve(
     AppController controller,
     List<double> gains,
-    BandMapping mapping,
+    List<double> centres,
   ) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -261,7 +271,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
             _curveDragBand = _findNearestBand(
               details.localPosition,
               gains,
-              mapping.frequencies,
+              centres,
               width,
               height,
             );
@@ -286,13 +296,13 @@ class _GraphicEqViewState extends State<GraphicEqView> {
           },
           onPanEnd: (_) {
             _curveDragBand = -1;
-            controller.commitGraphicGains();
+            controller.commitEqGains();
           },
           child: RepaintBoundary(
             child: CustomPaint(
               painter: _FrequencyCurvePainter(
                 gains: gains,
-                frequencies: mapping.frequencies,
+                frequencies: centres,
                 accent: _kAccent,
                 activeBand: _curveDragBand,
               ),
@@ -346,12 +356,11 @@ class _GraphicEqViewState extends State<GraphicEqView> {
     // Real-time audio only — persisted once on pan-end (same pattern as the
     // band sliders); the debounced safety net in the controller covers any
     // path that never reaches pan-end.
-    controller.setDisplayBandGain(
+    controller.setEqBandGain(
       band,
       rounded.clamp(_kMinGain, _kMaxGain),
       persist: false,
     );
-    controller.activePresetName = 'Custom';
     setState(() {});
   }
 
@@ -362,10 +371,9 @@ class _GraphicEqViewState extends State<GraphicEqView> {
   Widget _buildBandSliders(
     AppController controller,
     List<double> displayGains,
-    BandMapping mapping,
+    List<double> frequencies,
   ) {
-    final bandCount = mapping.displayCount;
-    final frequencies = mapping.frequencies;
+    final bandCount = displayGains.length;
 
     bool showLabel(int i) {
       if (bandCount <= 10) return true;
@@ -382,22 +390,23 @@ class _GraphicEqViewState extends State<GraphicEqView> {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(bandCount, (i) {
-              return _BandSlider(
+              return EqBandSlider(
                 frequency: frequencies[i],
                 gain: displayGains[i],
+                valueLabel: eqValueLabel(
+                  displayGains[i],
+                  controller.eqSettings.eqValues,
+                ),
                 width: bandWidth,
                 isActive: _activeBand == i,
                 showLabel: showLabel(i),
                 onChanged: (value) {
                   // Real-time audio only; persist once on drag-end (below).
-                  controller.setDisplayBandGain(i, value, persist: false);
+                  controller.setEqBandGain(i, value, persist: false);
                 },
-                onDragStart: () {
-                  controller.activePresetName = 'Custom';
-                  setState(() => _activeBand = i);
-                },
+                onDragStart: () => setState(() => _activeBand = i),
                 onDragEnd: () {
-                  controller.commitGraphicGains();
+                  controller.commitEqGains();
                   setState(() => _activeBand = -1);
                 },
               );
@@ -412,22 +421,23 @@ class _GraphicEqViewState extends State<GraphicEqView> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(bandCount, (i) {
-              return _BandSlider(
+              return EqBandSlider(
                 frequency: frequencies[i],
                 gain: displayGains[i],
+                valueLabel: eqValueLabel(
+                  displayGains[i],
+                  controller.eqSettings.eqValues,
+                ),
                 width: fixedBandWidth,
                 isActive: _activeBand == i,
                 showLabel: showLabel(i),
                 onChanged: (value) {
                   // Real-time audio only; persist once on drag-end (below).
-                  controller.setDisplayBandGain(i, value, persist: false);
+                  controller.setEqBandGain(i, value, persist: false);
                 },
-                onDragStart: () {
-                  controller.activePresetName = 'Custom';
-                  setState(() => _activeBand = i);
-                },
+                onDragStart: () => setState(() => _activeBand = i),
                 onDragEnd: () {
-                  controller.commitGraphicGains();
+                  controller.commitEqGains();
                   setState(() => _activeBand = -1);
                 },
               );
@@ -474,7 +484,9 @@ class _GraphicEqViewState extends State<GraphicEqView> {
                   const SizedBox(height: 1),
                   Text(
                     controller.activePresetName.isEmpty
-                        ? 'Custom'
+                        ? 'Unsaved'
+                        : controller.eqPresetDirty
+                        ? '${controller.activePresetName} *'
                         : controller.activePresetName,
                     style: const TextStyle(
                       fontSize: 14,
@@ -501,9 +513,34 @@ class _GraphicEqViewState extends State<GraphicEqView> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PresetBottomSheet(
-        controller: controller,
-        onSave: () => _showSaveDialog(context, controller),
+      builder: (sheetContext) => ListenableBuilder(
+        listenable: controller,
+        builder: (_, _) {
+          final eq = controller.eq;
+          final names = eq.visibleNames;
+          return EqPresetSheet(
+            names: names,
+            builtIns: {
+              for (final n in names)
+                if (eq.isBuiltIn(n)) n,
+            },
+            selected: eq.selected,
+            dirty: eq.dirty,
+            autoSave: controller.eqSettings.autoSave,
+            onApply: (name) {
+              controller.applyEqPreset(name);
+              Navigator.pop(sheetContext);
+            },
+            onDelete: controller.deleteEqPreset,
+            onAutoSave: (on) => controller.eqSettings = controller.eqSettings
+                .copyWith(autoSave: on),
+            onSave: controller.saveEqPreset,
+            onSaveAs: () {
+              Navigator.pop(sheetContext);
+              _showSaveDialog(context, controller);
+            },
+          );
+        },
       ),
     );
   }
@@ -537,8 +574,7 @@ class _GraphicEqViewState extends State<GraphicEqView> {
             onPressed: () {
               final name = nameController.text.trim();
               if (name.isNotEmpty) {
-                controller.savePreset(name);
-                controller.activePresetName = name;
+                controller.saveEqPresetAs(name);
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -553,272 +589,6 @@ class _GraphicEqViewState extends State<GraphicEqView> {
             child: const Text("Save"),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Preset Bottom Sheet
-// =============================================================================
-
-class _PresetBottomSheet extends StatefulWidget {
-  final AppController controller;
-  final VoidCallback onSave;
-
-  const _PresetBottomSheet({required this.controller, required this.onSave});
-
-  @override
-  State<_PresetBottomSheet> createState() => _PresetBottomSheetState();
-}
-
-class _PresetBottomSheetState extends State<_PresetBottomSheet> {
-  String _query = '';
-  final _searchController = TextEditingController();
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final builtIn = BuiltInPresets.names;
-    final saved = widget.controller.savedPresets.keys
-        .where((k) => !k.startsWith('_device_'))
-        .toList();
-    final all = [...builtIn, ...saved];
-    final filtered = _query.isEmpty
-        ? all
-        : all
-              .where((n) => n.toLowerCase().contains(_query.toLowerCase()))
-              .toList();
-    final active = widget.controller.activePresetName;
-    final screenH = MediaQuery.of(context).size.height;
-
-    return Container(
-      constraints: BoxConstraints(maxHeight: screenH * 0.6),
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 6),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          // Title row
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 8, 8),
-            child: Row(
-              children: [
-                const Icon(Icons.tune_rounded, color: _kAccent, size: 20),
-                const SizedBox(width: 8),
-                const Text(
-                  "EQ Presets",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                // Save button
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    widget.onSave();
-                  },
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text("Save Current"),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _kAccent,
-                    textStyle: const TextStyle(fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Search
-          if (all.length > 8)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _query = v),
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: 'Search presets...',
-                  hintStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.3),
-                  ),
-                  prefixIcon: Icon(
-                    Icons.search_rounded,
-                    size: 20,
-                    color: Colors.white.withValues(alpha: 0.3),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white.withValues(alpha: 0.08),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ),
-          // Preset list
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).padding.bottom + 16,
-              ),
-              itemCount: filtered.length,
-              itemBuilder: (context, index) {
-                final name = filtered[index];
-                final isActive = name == active;
-                final isUser = saved.contains(name);
-                return _PresetTile(
-                  name: name,
-                  isActive: isActive,
-                  isUser: isUser,
-                  onTap: () {
-                    if (isUser) {
-                      widget.controller.loadPreset(name);
-                    } else {
-                      widget.controller.applyBuiltInPreset(name);
-                    }
-                    Navigator.pop(context);
-                  },
-                  onDelete: isUser
-                      ? () {
-                          widget.controller.deletePreset(name);
-                          setState(() {});
-                        }
-                      : null,
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PresetTile extends StatelessWidget {
-  final String name;
-  final bool isActive;
-  final bool isUser;
-  final VoidCallback onTap;
-  final VoidCallback? onDelete;
-
-  const _PresetTile({
-    required this.name,
-    required this.isActive,
-    required this.isUser,
-    required this.onTap,
-    this.onDelete,
-  });
-
-  IconData get _icon {
-    final lower = name.toLowerCase();
-    if (lower.contains('bass')) return Icons.speaker_rounded;
-    if (lower.contains('rock')) return Icons.whatshot_rounded;
-    if (lower.contains('pop')) return Icons.stars_rounded;
-    if (lower.contains('jazz')) return Icons.piano_rounded;
-    if (lower.contains('classical')) return Icons.music_note_rounded;
-    if (lower.contains('vocal') || lower.contains('voice'))
-      return Icons.mic_rounded;
-    if (lower.contains('dance') || lower.contains('edm'))
-      return Icons.nightlife_rounded;
-    if (lower.contains('flat')) return Icons.horizontal_rule_rounded;
-    if (lower.contains('treble')) return Icons.graphic_eq_rounded;
-    if (lower.contains('loudness')) return Icons.volume_up_rounded;
-    if (isUser) return Icons.person_rounded;
-    return Icons.equalizer_rounded;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        color: isActive ? _kAccent.withValues(alpha: 0.1) : null,
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: isActive
-                    ? _kAccent.withValues(alpha: 0.2)
-                    : Colors.white.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                _icon,
-                size: 18,
-                color: isActive
-                    ? _kAccent
-                    : Colors.white.withValues(alpha: 0.4),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      color: isActive
-                          ? _kAccent
-                          : Colors.white.withValues(alpha: 0.85),
-                      fontSize: 14,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  if (isUser)
-                    Text(
-                      "Custom preset",
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.35),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (isActive)
-              const Icon(Icons.check_rounded, color: _kAccent, size: 20),
-            if (onDelete != null && !isActive)
-              GestureDetector(
-                onTap: onDelete,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Icon(
-                    Icons.delete_outline_rounded,
-                    size: 18,
-                    color: Colors.white.withValues(alpha: 0.25),
-                  ),
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -840,9 +610,13 @@ class _PresetTile extends StatelessWidget {
 /// Gain is signed, so the fill starts at the centre and runs up for a boost or
 /// down for a cut, against a rule drawn at 0. Flat now reads as flat: no fill
 /// at all, just the rule.
-class _BandSlider extends StatefulWidget {
+@visibleForTesting
+class EqBandSlider extends StatefulWidget {
   final double frequency;
   final double gain;
+
+  /// Null hides the readout (labels set to Hidden).
+  final String? valueLabel;
   final double width;
   final bool isActive;
   final bool showLabel;
@@ -850,9 +624,10 @@ class _BandSlider extends StatefulWidget {
   final VoidCallback onDragStart;
   final VoidCallback onDragEnd;
 
-  const _BandSlider({
+  const EqBandSlider({
     required this.frequency,
     required this.gain,
+    required this.valueLabel,
     required this.width,
     required this.isActive,
     required this.showLabel,
@@ -862,10 +637,10 @@ class _BandSlider extends StatefulWidget {
   });
 
   @override
-  State<_BandSlider> createState() => _BandSliderState();
+  State<EqBandSlider> createState() => EqBandSliderState();
 }
 
-class _BandSliderState extends State<_BandSlider> {
+class EqBandSliderState extends State<EqBandSlider> {
   /// Height of the last laid-out track, so a tap can be turned into a gain.
   double _trackHeight = 0;
 
@@ -914,18 +689,19 @@ class _BandSliderState extends State<_BandSlider> {
       width: widget.width,
       child: Column(
         children: [
-          // Reserved whether or not it is showing, so nothing below it moves
-          // when a drag starts.
+          // Always shown unless the setting is Hidden; brighter while dragged.
+          // Reserved either way so the track never shifts.
           SizedBox(
             height: 16,
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 120),
-              opacity: active ? 1 : 0,
+              opacity: active ? 1 : 0.7,
               child: FittedBox(
                 child: Text(
-                  '${widget.gain > 0 ? '+' : ''}${widget.gain.toStringAsFixed(1)}',
+                  widget.valueLabel ?? '',
                   style: TextStyle(
                     fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                     fontWeight: FontWeight.w700,
                     color: widget.gain == 0 ? Ember.textSecondary : fillColor,
                   ),
@@ -1225,7 +1001,11 @@ class _FrequencyCurvePainter extends CustomPainter {
   static double _logNormalize(double freq) {
     const logMin = 1.3010299957; // log10(20)
     const logMax = 4.3010299957; // log10(20000)
-    return (math.log(freq) / math.ln10 - logMin) / (logMax - logMin);
+    // First/Last frequency can put a band outside 20 Hz - 20 kHz.
+    return ((math.log(freq) / math.ln10 - logMin) / (logMax - logMin)).clamp(
+      0.0,
+      1.0,
+    );
   }
 
   void _drawGrid(

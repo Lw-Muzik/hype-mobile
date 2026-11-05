@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -20,6 +21,9 @@ class ToneKnob extends StatefulWidget {
   final ValueChanged<double> onChanged;
   final double size;
 
+  /// Text in the knob centre; null hides it.
+  final String? valueText;
+
   const ToneKnob({
     super.key,
     required this.label,
@@ -29,6 +33,7 @@ class ToneKnob extends StatefulWidget {
     this.activeColor = _kAccent,
     required this.onChanged,
     this.size = 250,
+    this.valueText,
   });
 
   @override
@@ -81,17 +86,19 @@ class _ToneKnobState extends State<ToneKnob> {
                 isDragging: _dragging,
               ),
               child: Center(
-                child: Text(
-                  _formatValue(widget.value),
-                  style: TextStyle(
-                    fontSize: widget.size * 0.15,
-                    fontWeight: FontWeight.w700,
-                    color: isActive
-                        ? widget.activeColor
-                        : Colors.white.withValues(alpha: 0.5),
-                    letterSpacing: -0.5,
-                  ),
-                ),
+                child: widget.valueText == null
+                    ? null
+                    : Text(
+                        widget.valueText!,
+                        style: TextStyle(
+                          fontSize: widget.size * 0.15,
+                          fontWeight: FontWeight.w700,
+                          color: isActive
+                              ? widget.activeColor
+                              : Colors.white.withValues(alpha: 0.5),
+                          letterSpacing: -0.5,
+                        ),
+                      ),
               ),
             ),
           ),
@@ -110,11 +117,6 @@ class _ToneKnobState extends State<ToneKnob> {
         ),
       ],
     );
-  }
-
-  String _formatValue(double v) {
-    if (v < 0.05) return "0";
-    return v.toStringAsFixed(1);
   }
 
   // ---------------------------------------------------------------------------

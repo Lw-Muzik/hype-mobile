@@ -143,6 +143,15 @@ class Channel {
 
   // ==================== Global EQ (System-Wide) ====================
 
+  /// Emits `false` when the global EQ service is stopped from its own
+  /// notification (Dart did not ask for it). Android only.
+  static const EventChannel _globalEqStoppedChannel = EventChannel(
+    "eq_app/global_eq_stopped",
+  );
+
+  static Stream<bool> get globalEqStoppedStream =>
+      _globalEqStoppedChannel.receiveBroadcastStream().map((e) => e == true);
+
   /// Enable or disable global EQ (applies EQ to all apps). [preset] is the
   /// name shown in its notification.
   /// Returns true if the command was accepted, false if API < 28.
@@ -164,6 +173,15 @@ class Channel {
   static Future<bool> isGlobalEqEnabled() async {
     return await _invokeRequired<bool>("isGlobalEqEnabled", false);
   }
+
+  /// As [isGlobalEqEnabled], but null when the question could not be asked
+  /// (a channel error): "unknown" must not be read as "stopped".
+  static Future<bool?> isGlobalEqRunning() => _invoke<bool>("isGlobalEqEnabled");
+
+  /// Whether the service was last stopped from its notification by a person
+  /// (null when unknown).
+  static Future<bool?> globalEqStoppedByUser() =>
+      _invoke<bool>("globalEqStoppedByUser");
 
   /// Check if global EQ is available on this device (API 28+).
   static Future<bool> isGlobalEqAvailable() async {
@@ -242,6 +260,12 @@ class Channel {
     await _invoke("dspSetHeadroomDb", {"value": dB});
   }
 
+  /// Smooth equalizer/tone gains on or off: the engine plays the graphic EQ
+  /// and tone boosts scaled by the playback level (see smooth_gains.h).
+  static Future<void> dspSetSmoothGains(bool enabled) async {
+    await _invoke("dspSetSmoothGains", {"enabled": enabled});
+  }
+
   /// Preamp in dB (-24..+24) of the active speaker/headphone correction
   /// profile; the engine applies it only while the speaker EQ is on.
   static Future<void> dspSetSpeakerPreampDb(double dB) async {
@@ -252,6 +276,38 @@ class Channel {
   /// [AudioPlayer.playerId]. Native caches it per id.
   static Future<void> dspSetTrackGainDb(String playerId, double dB) async {
     await _invoke("dspSetTrackGainDb", {"playerId": playerId, "value": dB});
+  }
+
+  /// iOS only: the raw Replay Gain tag strings of a Music-library item
+  /// (`ipod-library://…`), keyed `trackGain`, `trackPeak`, `albumGain`,
+  /// `albumPeak`; null when it has none, is protected, cannot be read, or on
+  /// a platform without the method.
+  static Future<Map<String, String>?> rgReadTags(String uri) async {
+    final raw = await _invoke<Map<Object?, Object?>>("rgReadTags", {
+      "uri": uri,
+    });
+    if (raw == null) return null;
+    final out = <String, String>{};
+    raw.forEach((k, v) {
+      if (k is String && v is String) out[k] = v;
+    });
+    return out.isEmpty ? null : out;
+  }
+
+  /// The track gain in dB the player's NEXT queue item takes at the sample
+  /// boundary where it starts playing (gapless queues, where one player plays
+  /// every item). [uri] is the item's URL exactly as the platform player sees
+  /// it: iOS matches its tap by it, Android ignores it. Latest value wins.
+  static Future<void> dspSetNextTrackGainDb(
+    String playerId,
+    String uri,
+    double dB,
+  ) async {
+    await _invoke("dspSetNextTrackGainDb", {
+      "playerId": playerId,
+      "uri": uri,
+      "dB": dB,
+    });
   }
 
   /// Master volume in dB, -30..0 (-30 is silence); applied to every engine.
@@ -451,6 +507,23 @@ class Channel {
 
   static Future<void> setGraphicAllBands(List<double> gains) async {
     await _invoke("setGraphicAllBands", {"gains": gains});
+  }
+
+  /// Sets the graphic EQ layout and all band gains in one native call, so no
+  /// audio block plays old gains at new centres. [centresHz] are the band
+  /// centres, [cutoffsHz] the system-wide effect's band edges (Android only;
+  /// iOS ignores them), [gainsDb] the nominal gain of each band. All three
+  /// lists have one entry per band.
+  static Future<void> setGraphicLayout(
+    List<double> centresHz,
+    List<double> cutoffsHz,
+    List<double> gainsDb,
+  ) async {
+    await _invoke("setGraphicLayout", {
+      "freqs": centresHz,
+      "cutoffs": cutoffsHz,
+      "gains": gainsDb,
+    });
   }
 
   static Future<List<double>> getGraphicAllBands() async {

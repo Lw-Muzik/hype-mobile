@@ -5,8 +5,9 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio/video.dart';
-import 'package:id3tag/id3tag.dart';
 
+import '../Helpers/Channel.dart';
+import '../player/engine_track_gain.dart';
 import '../player/fade_cancellation.dart';
 import '../player/fade_curve.dart';
 import '../player/fade_settings.dart';
@@ -87,14 +88,41 @@ class HypeAudioHandler extends BaseAudioHandler {
     (player, volume) => unawaited(player.setVolume(volume)),
   );
 
-  /// Sets [player]'s track gain: ReplayGain, or unity for a video. Applied
-  /// under the crossfade, the play/pause fade and the listener volume, none of
-  /// which it overwrites — see [OutputGain].
+  /// Sets [player]'s player-volume track gain, which is unity for every track
+  /// (Replay Gain goes to the engine — see [setEngineTrackGainDb]) and a video
+  /// player's own level. Applied under the crossfade, the play/pause fade and
+  /// the listener volume, none of which it overwrites — see [OutputGain].
   void setTrackGain(AudioPlayer player, double gain) =>
       _gain.setTrack(player, gain);
 
   /// [player]'s track gain, before the listener volume.
   double trackGainOf(AudioPlayer player) => _gain.trackOf(player);
+
+  late final EngineTrackGain<AudioPlayer> _engineGain = EngineTrackGain(
+    idOf: (p) => p.playerId,
+    idStream: (p) => p.platformIdStream,
+    send: Channel.dspSetTrackGainDb,
+  );
+
+  /// Gives [player] a Replay Gain of [dB] in the native engine, ahead of its
+  /// volume. Remembered, and sent again whenever the player is rebuilt under a
+  /// new platform id (after a `stop()`) — see [EngineTrackGain]. 0 is unity.
+  /// [subject] is the song it was worked out for, for a later re-gain.
+  void setEngineTrackGainDb(AudioPlayer player, double dB, {Object? subject}) =>
+      _engineGain.set(player, dB, subject: subject);
+
+  /// The engine track gain last given to [player], dB; 0 if never set.
+  double engineTrackGainDbOf(AudioPlayer player) => _engineGain.dbOf(player);
+
+  /// What [player]'s engine gain was worked out for, if it was said.
+  Object? engineGainSubjectOf(AudioPlayer player) =>
+      _engineGain.subjectOf(player);
+
+  /// Changes whenever [player] is given an engine gain.
+  int engineGainSeqOf(AudioPlayer player) => _engineGain.seqOf(player);
+
+  /// Both players, whichever is playing.
+  List<AudioPlayer> get enginePlayers => [_playerA, _playerB];
 
   /// How loud the listener wants it, 0..1 — where a Hype Connect remote's
   /// volume lands on iOS. Survives loads and crossfades; 1 until set.
@@ -638,7 +666,6 @@ class HypeAudioHandler extends BaseAudioHandler {
   Future<void> crossfade({
     required Future<void> Function(AudioPlayer incoming) load,
     required int fadeMs,
-    double targetGain = 1.0,
     FutureOr<MediaItem?> Function()? mediaItem,
     int earlyFadeOutMs = 0,
     Duration? startAt,
@@ -703,7 +730,7 @@ class HypeAudioHandler extends BaseAudioHandler {
       _cancelTransport([incoming]);
       _gain.setFade(incoming, 1.0);
       _gain.setMix(incoming, 0.0);
-      setTrackGain(incoming, targetGain);
+      setTrackGain(incoming, 1.0);
 
       // While the new track opens, the old one may already be on its way out:
       // at once for a change the listener asked for, from [startAt] for a
@@ -891,35 +918,6 @@ class HypeAudioHandler extends BaseAudioHandler {
     } catch (_) {}
     resetLevels(incoming);
     setTrackGain(incoming, 1.0);
-  }
-
-  /// Compute replay gain volume from ID3 tags
-  static Future<double> computeReplayGainVolume(String filePath) async {
-    try {
-      final parser = ID3TagReader.path(filePath);
-      final tag = await parser.readTag();
-      // Look for TXXX frames with replaygain_track_gain
-      final txxxFrames = tag.framesWithName('TXXX');
-      for (final frame in txxxFrames) {
-        if (frame is TextInformation) {
-          final val = frame.value.toLowerCase();
-          if (val.contains('replaygain_track_gain')) {
-            final gainStr = frame.value
-                .replaceAll(
-                  RegExp(r'replaygain_track_gain', caseSensitive: false),
-                  '',
-                )
-                .replaceAll(RegExp(r'[^\d.\-+]'), '');
-            final dB = double.tryParse(gainStr) ?? 0.0;
-            final linear = math.pow(10, dB / 20).toDouble();
-            return linear.clamp(0.1, 2.5);
-          }
-        }
-      }
-    } catch (_) {
-      // If we can't read tags, return default
-    }
-    return 1.0;
   }
 
   List<MediaControl> _controlsFor({required bool playing}) => [

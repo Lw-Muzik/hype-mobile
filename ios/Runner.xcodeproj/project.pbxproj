@@ -20,6 +20,8 @@
 		A1B2C3D4E5F60718DEADBEEF /* HypeAudioTap.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718DEAD0001 /* HypeAudioTap.m */; };
 		BACC8D019D4ADE3A7FD23536 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 40EBBE594CFF4DF8E9763B67 /* Pods_RunnerTests.framework */; };
 		DD89CFA0F9A8E1064F765C4E /* DSPManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295F574948FD2D66F6D7EB4E /* DSPManager.swift */; };
+		C7E4A91D5B3F4026A8D1E5F3 /* DSPReplayLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E4A91D5B3F4026A8D1E5F4 /* DSPReplayLog.swift */; };
+		C7E4A91D5B3F4026A8D1E601 /* SystemVolume.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E4A91D5B3F4026A8D1E600 /* SystemVolume.swift */; };
 		DFA58493DF9C8B4C604BEC85 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 0D7B510D734F2CE26AF01A63 /* GoogleService-Info.plist */; };
 /* End PBXBuildFile section */
 
@@ -54,6 +56,8 @@
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		1BA4424177B1F8662D1DF7C1 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		295F574948FD2D66F6D7EB4E /* DSPManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DSPManager.swift; sourceTree = "<group>"; };
+		C7E4A91D5B3F4026A8D1E5F4 /* DSPReplayLog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DSPReplayLog.swift; sourceTree = "<group>"; };
+		C7E4A91D5B3F4026A8D1E600 /* SystemVolume.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemVolume.swift; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
@@ -175,6 +179,8 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				295F574948FD2D66F6D7EB4E /* DSPManager.swift */,
+				C7E4A91D5B3F4026A8D1E5F4 /* DSPReplayLog.swift */,
+				C7E4A91D5B3F4026A8D1E600 /* SystemVolume.swift */,
 				A1B2C3D4E5F60718DEAD0002 /* HypeAudioTap.h */,
 				A1B2C3D4E5F60718DEAD0001 /* HypeAudioTap.m */,
 				A1B2C3D4E5F60718DEAD0004 /* ProjectMRenderer.swift */,
@@ -436,6 +442,8 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				DD89CFA0F9A8E1064F765C4E /* DSPManager.swift in Sources */,
+				C7E4A91D5B3F4026A8D1E5F3 /* DSPReplayLog.swift in Sources */,
+				C7E4A91D5B3F4026A8D1E601 /* SystemVolume.swift in Sources */,
 				A1B2C3D4E5F60718DEADBEEF /* HypeAudioTap.m in Sources */,
 				A1B2C3D4E5F60718DEAD0003 /* ProjectMRenderer.swift in Sources */,
 				A1B2C3D4E5F60718DEAD0006 /* YtDownloadFinisher.swift in Sources */,

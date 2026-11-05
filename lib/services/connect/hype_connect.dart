@@ -248,8 +248,9 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
     final volume = AppConnectDeviceVolume(
       bridge: bridge,
       // DVC exists only on Android; the iOS toggle drives native no-ops, so a
-      // remote's volume routed there would vanish.
-      dvcEnabled: () => Platform.isAndroid && app.dvcEnabled,
+      // remote's volume routed there would vanish. It is also suspended while
+      // the equalizer applies to all apps, when the system volume rules.
+      dvcEnabled: () => app.dvcRunning,
       dvcGainDb: () => app.dvcGain,
       setDvcGainDb: (db) => app.dvcGain = db,
       // The listener volume, not a player's gain: it survives loads and

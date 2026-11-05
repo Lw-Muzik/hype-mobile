@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '/controllers/app_controller.dart';
+import '/audio/eq/eq_labels.dart';
 import '/extensions/build_context_extension.dart';
 import '/widgets/tone_knob.dart';
 import 'audio_fx.dart';
@@ -50,8 +51,10 @@ class ToneView extends StatelessWidget {
                           child: LayoutBuilder(
                             builder: (context, constraints) {
                               final knobSize = context.isMobile
-                                  ? (constraints.maxWidth / 2 - 8)
-                                        .clamp(0.0, 220.0)
+                                  ? (constraints.maxWidth / 2 - 8).clamp(
+                                      0.0,
+                                      220.0,
+                                    )
                                   : 350.0;
                               return Row(
                                 mainAxisAlignment:
@@ -60,6 +63,12 @@ class ToneView extends StatelessWidget {
                                   ToneKnob(
                                     label: "BASS",
                                     value: controller.bassGain,
+                                    max: 22.5,
+                                    valueText: toneValueLabel(
+                                      controller.bassGain,
+                                      bass: true,
+                                      mode: controller.eqSettings.toneValues,
+                                    ),
                                     activeColor: _kAccent,
                                     size: knobSize,
                                     onChanged: controller.toneEnabled
@@ -69,6 +78,11 @@ class ToneView extends StatelessWidget {
                                   ToneKnob(
                                     label: "TREBLE",
                                     value: controller.trebleGain,
+                                    valueText: toneValueLabel(
+                                      controller.trebleGain,
+                                      bass: false,
+                                      mode: controller.eqSettings.toneValues,
+                                    ),
                                     activeColor: _kCut,
                                     size: knobSize,
                                     onChanged: controller.toneEnabled
@@ -96,6 +110,7 @@ class ToneView extends StatelessWidget {
                         onChanged: (v) => controller.dspCore = v,
                         stereoExpand: controller.stereoExpand,
                         onStereoExpand: (v) => controller.stereoExpand = v,
+                        disabledReason: controller.systemWideDisabledReason,
                       ),
                     ),
                   ),
@@ -122,9 +137,8 @@ class ToneView extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           "Tone Controls",
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
         ),
         const Spacer(),
         SizedBox(
@@ -141,14 +155,15 @@ class ToneView extends StatelessWidget {
   }
 
   Widget _buildInfoRow(AppController controller) {
+    final e = controller.eqSettings;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _infoLabel(
-          "Bass: ${controller.bassFreq.round()} Hz  Q ${controller.bassQ.toStringAsFixed(2)}",
+          "${e.bassFreq.round()} Hz · Q ${e.bassQ.toStringAsFixed(2)}",
         ),
         _infoLabel(
-          "Treble: ${_formatFreq(controller.trebleFreq)}  Q ${controller.trebleQ.toStringAsFixed(2)}",
+          "${(e.trebleFreq / 1000).toStringAsFixed(1)} kHz · Q ${e.trebleQ.toStringAsFixed(2)}",
         ),
       ],
     );
@@ -163,15 +178,5 @@ class ToneView extends StatelessWidget {
         fontWeight: FontWeight.w500,
       ),
     );
-  }
-
-  String _formatFreq(double freq) {
-    if (freq >= 1000) {
-      final k = freq / 1000;
-      return k == k.roundToDouble()
-          ? '${k.round()} kHz'
-          : '${k.toStringAsFixed(1)} kHz';
-    }
-    return '${freq.round()} Hz';
   }
 }

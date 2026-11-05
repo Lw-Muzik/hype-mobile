@@ -22,6 +22,7 @@ void main() {
     WidgetTester tester,
     DspCoreSettings settings, {
     double stereoExpand = 0.0,
+    String? disabledReason,
   }) async {
     tester.view.physicalSize = const Size(1200, 3000);
     tester.view.devicePixelRatio = 1.0;
@@ -36,6 +37,7 @@ void main() {
             onChanged: changes.add,
             stereoExpand: stereoExpand,
             onStereoExpand: expands.add,
+            disabledReason: disabledReason,
           ),
         ),
       ),
@@ -111,5 +113,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(r.changes, isEmpty);
     expect(r.expands, isEmpty);
+  });
+
+  group('with a disabled reason (system-wide equalizer)', () {
+    testWidgets('shows the reason; Balance and Mono report nothing',
+        (tester) async {
+      final r = await pump(tester, base, disabledReason: 'X');
+      expect(find.text('X'), findsOneWidget);
+      await tester.drag(find.byType(Slider).first, const Offset(200, 0));
+      await tester.pump();
+      await tester.tap(find.byType(Switch).first);
+      await tester.pump();
+      expect(r.changes, isEmpty);
+      final balance = tester.widget<Slider>(find.byType(Slider).first);
+      expect(balance.onChanged, isNull);
+      final mono = tester.widget<Switch>(find.byType(Switch).first);
+      expect(mono.onChanged, isNull);
+    });
+
+    testWidgets('Tempo plus still reports 1.05', (tester) async {
+      final r = await pump(tester, base, disabledReason: 'X');
+      await tester.tap(find.byIcon(Icons.add));
+      expect(r.changes.single.tempo, closeTo(1.05, 1e-9));
+    });
+
+    testWidgets('Reset stays usable', (tester) async {
+      final r = await pump(tester, base.copyWith(tempo: 1.5),
+          disabledReason: 'X');
+      await tester.tap(find.text('Reset'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Reset'),
+      ));
+      await tester.pumpAndSettle();
+      expect(r.changes.single.tempo, 1.0);
+    });
+
+    testWidgets('without a reason nothing is disabled or shown', (tester) async {
+      final r = await pump(tester, base);
+      expect(find.text('X'), findsNothing);
+      await tester.tap(find.byType(Switch).first);
+      expect(r.changes.single.mono, isTrue);
+      final balance = tester.widget<Slider>(find.byType(Slider).first);
+      expect(balance.onChanged, isNotNull);
+    });
   });
 }

@@ -387,6 +387,8 @@ public class MainActivity extends AudioServiceFragmentActivity {
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
 
+        SystemVolumeObserver.start(getApplicationContext());
+
         // Hype Connect's background service channel. Also attached by
         // ConnectService itself when it creates this engine with no activity.
         ConnectChannel.attach(flutterEngine, this);
@@ -396,6 +398,12 @@ public class MainActivity extends AudioServiceFragmentActivity {
         EventChannel dvcEventChannel = new EventChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(), "eq_app/dvc_volume_button");
         DvcController.setupEventChannel(dvcEventChannel);
+        // Global EQ: the notification's Stop ends the service without Dart.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            GlobalEqService.setupEventChannel(new EventChannel(
+                    flutterEngine.getDartExecutor().getBinaryMessenger(),
+                    "eq_app/global_eq_stopped"));
+        }
 
         // Live stems: engine init + status events (cpp/stems)
         StemEngineBridge.init(this);
@@ -975,10 +983,23 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             result.success(null);
                             break;
                         }
+                        case "dspSetSmoothGains": {
+                            Boolean on = call.argument("enabled");
+                            RoomEffectsProcessor.broadcastSmoothGains(Boolean.TRUE.equals(on));
+                            result.success(null);
+                            break;
+                        }
                         case "dspSetTrackGainDb": {
                             String playerId = call.argument("playerId");
                             double v = call.argument("value");
                             RoomEffectsProcessor.setTrackGainDb(playerId, (float) v);
+                            result.success(null);
+                            break;
+                        }
+                        case "dspSetNextTrackGainDb": {
+                            String playerId = call.argument("playerId");
+                            double v = call.argument("dB");
+                            RoomEffectsProcessor.setNextTrackGainDb(playerId, (float) v);
                             result.success(null);
                             break;
                         }
@@ -1073,6 +1094,21 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             // No longer queried from DynamicsProcessing — Dart holds the state
                             result.success(new ArrayList<Double>());
                             break;
+                        case "setGraphicLayout": {
+                            // Band centres, DynamicsProcessing band edges and the gains,
+                            // always together (one call: no block at old gains on new centres).
+                            List<Double> lFreqs = call.argument("freqs");
+                            List<Double> lCutoffs = call.argument("cutoffs");
+                            List<Double> lGains = call.argument("gains");
+                            if (lFreqs != null && lGains != null) {
+                                RoomEffectsProcessor.broadcastGraphicLayout(
+                                        toFloatArray(lFreqs),
+                                        lCutoffs != null ? toFloatArray(lCutoffs) : null,
+                                        toFloatArray(lGains));
+                            }
+                            result.success(null);
+                            break;
+                        }
 
                         // ==================== 32-Band Parametric EQ ====================
                         case "setParametricBand": {
@@ -1186,6 +1222,10 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         // ==================== Global EQ (System-Wide) ====================
                         case "enableGlobalEq": {
                             boolean globalOn = call.argument("enable");
+                            // Dart is deciding now: an earlier Stop no longer applies.
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                GlobalEqService.stoppedByUser = false;
+                            }
                             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                                 result.success(false);
                                 break;
@@ -1211,6 +1251,10 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             } else {
                                 result.success(false);
                             }
+                            break;
+                        case "globalEqStoppedByUser":
+                            result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                                    && GlobalEqService.stoppedByUser);
                             break;
                         case "isGlobalEqAvailable":
                             result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P);
@@ -1717,6 +1761,16 @@ public class MainActivity extends AudioServiceFragmentActivity {
             // Implement the code to start playing the next track, e.g., with a media player
             // or your audio playback logic.
         }
+    }
+
+    /** A method-channel list of numbers as a float[] (a null entry reads as 0). */
+    private static float[] toFloatArray(List<? extends Number> values) {
+        float[] out = new float[values.size()];
+        for (int i = 0; i < out.length; i++) {
+            Number n = values.get(i);
+            out[i] = n != null ? n.floatValue() : 0f;
+        }
+        return out;
     }
 
     private static Bitmap drawableToBitmap(Drawable drawable) {

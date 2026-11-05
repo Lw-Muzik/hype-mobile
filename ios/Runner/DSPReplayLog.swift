@@ -21,6 +21,21 @@ struct PlayerValueBook {
     }
 }
 
+/// The key a queue item is announced and matched by. Mirrors how just_audio's
+/// iOS UriAudioSource builds the item's URL (percent-decode a file URL, rebuild
+/// it from the path; anything else is parsed as is), so a key built from the
+/// Dart-side uri equals the `absoluteString` the item's tap sees, however the
+/// name is normalised or escaped (accents, Hangul, ';', '#', spaces).
+enum NextGainKey {
+    static func normalize(_ uri: String) -> String {
+        if uri.hasPrefix("file://") {
+            let decoded = uri.removingPercentEncoding ?? uri
+            return URL(fileURLWithPath: String(decoded.dropFirst(7))).absoluteString
+        }
+        return URL(string: uri)?.absoluteString ?? uri
+    }
+}
+
 /// Remembers the last value of every DSP setting so a freshly created engine
 /// can be brought to the current state. Re-recording a key replaces its
 /// closure in place, so replay order is the order keys were first recorded and
@@ -40,6 +55,22 @@ final class DSPReplayLog {
 
     func record(key: String, apply: @escaping (UnsafeMutableRawPointer) -> Void) {
         lock.lock(); defer { lock.unlock() }
+        if actions[key] == nil { keys.append(key) }
+        actions[key] = apply
+    }
+
+    /// Records `key` after dropping every setting whose key starts with one of
+    /// `prefixes`, in one step under the lock. For a call that carries the
+    /// state of earlier ones (a graphic layout carries its gains), so those
+    /// are not replayed over it; a later call of the same family still
+    /// replays after it. The key itself is re-appended when it matches a prefix.
+    func record(key: String, superseding prefixes: [String],
+                apply: @escaping (UnsafeMutableRawPointer) -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        keys.removeAll { k in prefixes.contains { k.hasPrefix($0) } }
+        for k in Array(actions.keys) where prefixes.contains(where: { k.hasPrefix($0) }) {
+            actions[k] = nil
+        }
         if actions[key] == nil { keys.append(key) }
         actions[key] = apply
     }

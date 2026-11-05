@@ -5,7 +5,8 @@
 
 static constexpr int MAX_EQ_BANDS = 32;
 
-// 32-band ISO 1/3-octave center frequencies (Hz)
+// 32-band ISO 1/3-octave center frequencies (Hz): the legacy grid, and the
+// default layout of GraphicEQ until one is set.
 static constexpr float ISO_FREQUENCIES[MAX_EQ_BANDS] = {
     20.0f, 25.0f, 31.5f, 40.0f, 50.0f, 63.0f, 80.0f, 100.0f,
     125.0f, 160.0f, 200.0f, 250.0f, 315.0f, 400.0f, 500.0f, 630.0f,
@@ -39,20 +40,6 @@ public:
         numBands_ = std::min(numBands, MAX_EQ_BANDS);
         for (int i = 0; i < numBands_; i++) {
             params_[i] = EqBandParams();
-            biquads_[i].reset();
-        }
-    }
-
-    // Initialize as graphic EQ with fixed ISO 1/3-octave frequencies
-    void initGraphic(float sampleRate, int numBands = MAX_EQ_BANDS) {
-        sampleRate_ = sampleRate;
-        numBands_ = std::min(numBands, MAX_EQ_BANDS);
-        for (int i = 0; i < numBands_; i++) {
-            params_[i].frequency = ISO_FREQUENCIES[i];
-            params_[i].gainDb = 0.0f;
-            params_[i].q = GRAPHIC_Q;
-            params_[i].type = BiquadType::Peaking;
-            params_[i].enabled = true;
             biquads_[i].reset();
         }
     }
@@ -99,17 +86,6 @@ public:
         }
     }
 
-    // Scan all bands for maximum boost (for auto-gain compensation)
-    float getPeakGain() const {
-        float peak = 0.0f;
-        for (int i = 0; i < numBands_; i++) {
-            if (params_[i].enabled && params_[i].gainDb > peak) {
-                peak = params_[i].gainDb;
-            }
-        }
-        return peak;
-    }
-
     // Process audio — cascade all active biquads
     void process(float* left, float* right, int numFrames) {
         if (!enabled_.load(std::memory_order_relaxed)) return;
@@ -118,6 +94,25 @@ public:
             if (!params_[i].enabled || std::fabs(params_[i].gainDb) < 0.05f) continue;
             biquads_[i].process(left, right, numFrames);
         }
+    }
+
+    // Zero every band's delay state; coefficients stay. For the audio thread
+    // when the EQ is switched back on after sitting idle, so stale state from
+    // before it was bypassed is not played into the new signal.
+    void clearState() {
+        for (int i = 0; i < numBands_; i++) biquads_[i].clearState();
+    }
+
+    // The lowest frequency among the bands that are doing something; a huge
+    // value when none is. Used to pick the length of a fade of the whole EQ.
+    float lowestActiveFreq() const {
+        float lowest = 1e9f;
+        for (int i = 0; i < numBands_; i++) {
+            if (params_[i].enabled && std::fabs(params_[i].gainDb) >= 0.05f) {
+                lowest = std::min(lowest, params_[i].frequency);
+            }
+        }
+        return lowest;
     }
 
     void setEnabled(bool enabled) { enabled_.store(enabled); }

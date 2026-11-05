@@ -284,6 +284,12 @@ class _AppLifecycleGateState extends State<_AppLifecycleGate>
         break;
       case AppLifecycleState.resumed:
         AppController.instanceOrNull?.resumeVisualTap();
+        // DVC held back while Hype was in the background can run now.
+        AppController.instanceOrNull?.resumeDvcIfPending();
+        // The global EQ service can be stopped from its notification.
+        unawaited(
+          AppController.instanceOrNull?.resyncGlobalEq() ?? Future.value(),
+        );
         // A library scan that ran before there was a screen failed; now it can
         // work.
         unawaited(context.read<LibraryController>().retryIfFailed());

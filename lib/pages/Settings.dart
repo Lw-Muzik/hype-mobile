@@ -12,14 +12,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wiredash/wiredash.dart';
 
 import '../config/app_config.dart';
-import '../models/eq_models.dart';
 import '../onboarding/coach_marks.dart';
 import '../onboarding/interactions_guide.dart';
 import '../services/streaming_data_guard.dart';
 import '../services/share_service.dart';
 import '../services/connect/hype_connect.dart';
 import 'crossfade_settings_section.dart';
+import 'equalizer_settings_section.dart';
 import 'hype_connect_page.dart';
+import 'replay_gain_settings_section.dart';
 import 'stream_server.dart';
 import 'volume_controls.dart';
 
@@ -141,7 +142,26 @@ const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('Cellular Data Limit', SettingsCategory.streaming, 'cap mb quota'),
   SettingsEntry('Equalizer', SettingsCategory.equalizer, 'eq bands preset'),
   SettingsEntry('Global equalizer', SettingsCategory.equalizer, 'system wide other apps'),
-  SettingsEntry('Replay gain', SettingsCategory.playback, 'loudness volume normalise'),
+  SettingsEntry('Number of bands', SettingsCategory.equalizer, 'eq band count 5 10 12 15 16 24 31 32 iso'),
+  SettingsEntry('Enable custom bands', SettingsCategory.equalizer, 'eq custom band count'),
+  SettingsEntry('Custom number of bands', SettingsCategory.equalizer, 'eq custom band count 5 32'),
+  SettingsEntry('First frequency', SettingsCategory.equalizer, 'eq lowest band hz'),
+  SettingsEntry('Last frequency', SettingsCategory.equalizer, 'eq highest band khz'),
+  SettingsEntry('Bass frequency', SettingsCategory.equalizer, 'bass shelf hz tone'),
+  SettingsEntry('Bass Q', SettingsCategory.equalizer, 'bass shelf slope tone'),
+  SettingsEntry('Treble frequency', SettingsCategory.equalizer, 'treble shelf khz tone'),
+  SettingsEntry('Treble Q', SettingsCategory.equalizer, 'treble shelf slope tone'),
+  SettingsEntry('Equalizer values', SettingsCategory.equalizer, 'eq labels db percent hidden numbers'),
+  SettingsEntry('Tone values', SettingsCategory.equalizer, 'bass treble labels db percent hidden numbers'),
+  SettingsEntry('Auto save', SettingsCategory.equalizer, 'eq preset edits keep'),
+  SettingsEntry('Smooth equalizer/tone gains', SettingsCategory.equalizer, 'eq glide ramp zipper click'),
+  SettingsEntry('Suggest AutoEq presets', SettingsCategory.equalizer, 'headphones bluetooth usb autoeq suggestion'),
+  SettingsEntry('Reset disabled AutoEq suggestions', SettingsCategory.equalizer, 'headphones autoeq dismissed ask again'),
+  SettingsEntry('Restore equalizer presets', SettingsCategory.equalizer, 'eq factory default reset presets'),
+  SettingsEntry('Replay Gain', SettingsCategory.playback, 'loudness volume normalise normalize'),
+  SettingsEntry('Source', SettingsCategory.playback, 'replay gain album track'),
+  SettingsEntry('RG preamp', SettingsCategory.playback, 'replay gain preamp loudness db'),
+  SettingsEntry('Preamp for songs without RG info', SettingsCategory.playback, 'replay gain untagged no tags db'),
   SettingsEntry('Bass', SettingsCategory.tone, 'low end boost'),
   SettingsEntry('Treble', SettingsCategory.tone, 'high end'),
   SettingsEntry('Audio enhancement', SettingsCategory.tone, 'effects reverb virtualizer'),
@@ -440,7 +460,18 @@ class _SettingsState extends State<Settings> {
             _buildGlobalEqSection(controller),
             const SizedBox(height: 12),
           ],
-          _buildEqualizerSection(controller),
+          EqualizerSettingsSection(
+            settings: controller.eqSettings,
+            onChanged: (value) => controller.eqSettings = value,
+            onResetAutoEqSuggestions: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              await controller.resetAutoEqSuggestions();
+              messenger.showSnackBar(
+                const SnackBar(content: Text('AutoEq suggestions reset')),
+              );
+            },
+            onRestorePresets: controller.restoreEqPresets,
+          ),
         ]),
       SettingsCategory.tone => Column(children: [
           if (!controller.isEqMode) ...[
@@ -571,11 +602,10 @@ class _SettingsState extends State<Settings> {
         _buildSectionHeader(Icons.headphones, "Playback"),
         _buildSectionCard([
           // Gapless and crossfade moved to their own page, Crossfade & Gapless.
-          SwitchListTile.adaptive(
-            value: controller.replayGain,
-            title: const Text("Replay gain"),
-            subtitle: const Text("Volume normalization via ID3 tags"),
-            onChanged: (enabled) => controller.replayGain = enabled,
+          ReplayGainSettingsSection(
+            settings: controller.replayGainSettings,
+            onChanged: (v) => controller.replayGainSettings = v,
+            disabledReason: controller.systemWideDisabledReason,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
           // Gates every radio request Discover would otherwise make — with this
@@ -608,20 +638,23 @@ class _SettingsState extends State<Settings> {
           SwitchListTile.adaptive(
             value: controller.dvcEnabled,
             title: const Text("Direct volume control"),
-            subtitle: const Text(
-              "Bypasses system volume for higher fidelity audio output",
+            subtitle: Text(
+              controller.systemWideDisabledReason ??
+                  "Bypasses system volume for higher fidelity audio output",
             ),
-            onChanged: (enabled) {
-              if (enabled && !controller.dvcEnabled) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("System volume will be set to maximum"),
-                    duration: Duration(seconds: 3),
-                  ),
-                );
-              }
-              controller.dvcEnabled = enabled;
-            },
+            onChanged: controller.systemWideActive
+                ? null
+                : (enabled) {
+                    if (enabled && !controller.dvcEnabled) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("System volume will be set to maximum"),
+                          duration: Duration(seconds: 3),
+                        ),
+                      );
+                    }
+                    controller.dvcEnabled = enabled;
+                  },
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
           ],
@@ -629,9 +662,11 @@ class _SettingsState extends State<Settings> {
           if (Platform.isAndroid && controller.dvcEnabled) ...[
             const Divider(height: 1, indent: 16, endIndent: 16),
             ListTile(
+              enabled: !controller.systemWideActive,
               title: const Text("DVC Volume"),
               subtitle: Text(
-                "${((controller.dvcGain + 30) / 30 * 100).round()}%",
+                controller.systemWideDisabledReason ??
+                    "${((controller.dvcGain + 30) / 30 * 100).round()}%",
               ),
             ),
             Padding(
@@ -647,13 +682,18 @@ class _SettingsState extends State<Settings> {
                       divisions: 20,
                       label:
                           "${((controller.dvcGain + 30) / 30 * 100).round()}%",
-                      onChanged: (value) => controller.dvcGain = value,
+                      onChanged: controller.systemWideActive
+                          ? null
+                          : (value) => controller.dvcGain = value,
                     ),
                   ),
                   const Text("100%"),
                 ],
               ),
             ),
+            // The note is about DVC holding the system volume at max: not true
+            // while DVC is suspended by system-wide mode.
+            if (controller.dvcRunning) ...[
             const Divider(height: 1, indent: 16, endIndent: 16),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -681,12 +721,18 @@ class _SettingsState extends State<Settings> {
                 ],
               ),
             ),
+            ],
             const Divider(height: 1, indent: 16, endIndent: 16),
             SwitchListTile.adaptive(
               value: controller.dvcFineSteps,
               title: const Text("Fine volume steps"),
-              subtitle: const Text("1% steps instead of 5% (hardware buttons)"),
-              onChanged: (value) => controller.dvcFineSteps = value,
+              subtitle: Text(
+                controller.systemWideDisabledReason ??
+                    "1% steps instead of 5% (hardware buttons)",
+              ),
+              onChanged: controller.systemWideActive
+                  ? null
+                  : (value) => controller.dvcFineSteps = value,
             ),
           ],
         ]),
@@ -696,7 +742,9 @@ class _SettingsState extends State<Settings> {
 
   /// Headroom ahead of the effects, for when direct volume control is off.
   Widget _buildNoDvcPreamp(AppController controller) {
-    final dvc = Platform.isAndroid && controller.dvcEnabled;
+    // Not in effect while the equalizer applies to all apps: the platform
+    // equalizer applies this headroom then.
+    final dvc = controller.dvcRunning;
     final db = controller.dspCore.headroomDb;
     return Opacity(
       opacity: dvc ? 0.5 : 1.0,
@@ -746,6 +794,7 @@ class _SettingsState extends State<Settings> {
               onChanged: (v) => controller.dspCore = v,
               stereoExpand: controller.stereoExpand,
               onStereoExpand: (v) => controller.stereoExpand = v,
+              disabledReason: controller.systemWideDisabledReason,
             ),
           ),
         ]),
@@ -923,42 +972,6 @@ class _SettingsState extends State<Settings> {
     );
   }
 
-  // -- Equalizer Section --
-
-  Widget _buildEqualizerSection(AppController controller) {
-    final bandCount = controller.eqBandCount;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.equalizer, "Equalizer"),
-        _buildSectionCard([
-          ListTile(
-            title: const Text("Band count"),
-            subtitle: Text("$bandCount bands"),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: SegmentedButton<int>(
-              segments: BandMapping.supportedCounts
-                  .map((c) => ButtonSegment<int>(value: c, label: Text('$c')))
-                  .toList(),
-              selected: {bandCount},
-              onSelectionChanged: (values) {
-                controller.eqBandCount = values.first;
-              },
-              style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: Theme.of(
-                  context,
-                ).colorScheme.primary.withValues(alpha: 0.15),
-                selectedForegroundColor: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          ),
-        ]),
-      ],
-    );
-  }
-
   // -- Tone Settings Section --
 
   Widget _buildToneSection(AppController controller) {
@@ -975,90 +988,6 @@ class _SettingsState extends State<Settings> {
             ),
             onChanged: (enabled) => controller.toneEnabled = enabled,
           ),
-          if (controller.toneEnabled) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            // Bass settings
-            Padding(
-              padding: const EdgeInsets.only(left: 16, top: 12),
-              child: Text(
-                "Bass",
-                style: Theme.of(
-                  context,
-                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-            ListTile(
-              dense: true,
-              title: const Text("Frequency"),
-              subtitle: Text("${controller.bassFreq.round()} Hz"),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Slider.adaptive(
-                value: controller.bassFreq,
-                min: 20,
-                max: 250,
-                divisions: 23,
-                onChanged: (v) => controller.bassFreq = v,
-              ),
-            ),
-            ListTile(
-              dense: true,
-              title: const Text("Q Factor"),
-              subtitle: Text(controller.bassQ.toStringAsFixed(2)),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Slider.adaptive(
-                value: controller.bassQ,
-                min: 0.1,
-                max: 2.0,
-                divisions: 19,
-                onChanged: (v) => controller.bassQ = v,
-              ),
-            ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            // Treble settings
-            Padding(
-              padding: const EdgeInsets.only(left: 16, top: 12),
-              child: Text(
-                "Treble",
-                style: Theme.of(
-                  context,
-                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-            ListTile(
-              dense: true,
-              title: const Text("Frequency"),
-              subtitle: Text("${controller.trebleFreq.round()} Hz"),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Slider.adaptive(
-                value: controller.trebleFreq,
-                min: 5000,
-                max: 15000,
-                divisions: 10,
-                onChanged: (v) => controller.trebleFreq = v,
-              ),
-            ),
-            ListTile(
-              dense: true,
-              title: const Text("Q Factor"),
-              subtitle: Text(controller.trebleQ.toStringAsFixed(2)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Slider.adaptive(
-                value: controller.trebleQ,
-                min: 0.1,
-                max: 2.0,
-                divisions: 19,
-                onChanged: (v) => controller.trebleQ = v,
-              ),
-            ),
-          ],
           const Divider(height: 1, indent: 16, endIndent: 16),
           // Output limiter
           SwitchListTile.adaptive(

@@ -22,12 +22,28 @@ class DSPManager {
     private final class EngineRecord {
         let playerId: String
         let handle: UnsafeMutableRawPointer
+        /// Written by a tap's audio thread at a gapless boundary (lock-free);
+        /// read under the manager's lock. Freed with the engine.
+        let gainCell: UnsafeMutablePointer<HypeGainCell>
         var refs = 0
         var retired = false
         init(playerId: String, handle: UnsafeMutableRawPointer) {
             self.playerId = playerId
             self.handle = handle
+            gainCell = UnsafeMutablePointer<HypeGainCell>.allocate(capacity: 1)
+            gainCell.initialize(to: HypeGainCell(db: 0, set: 0))
         }
+    }
+
+    /// The gain waiting for each upcoming queue item of a player, by the URL
+    /// its tap carries. Latest per URL wins; a handful at most.
+    private var nextGains: [String: [(uri: String, dB: Float)]] = [:]
+    private let maxNextGains = 4
+
+    /// Destroys a retired engine and frees its cell. Not under the lock.
+    private func destroy(_ record: EngineRecord) {
+        dsp_destroy(record.handle)
+        record.gainCell.deallocate()
     }
 
     private let log = DSPReplayLog()
@@ -43,7 +59,21 @@ class DSPManager {
     private(set) var cachedPreampGain: Float = 0.0
     private(set) var cachedMbcEnabled: Bool = false
 
+    private var volumeObservation: NSKeyValueObservation?
+
     private init() {}
+
+    /// Feeds the system output volume (as dB) to every engine, now and on
+    /// each volume change. Safe to call more than once.
+    private func startSystemVolumeObservation() {
+        if volumeObservation != nil { return }
+        volumeObservation = AVAudioSession.sharedInstance().observe(
+            \.outputVolume, options: [.initial, .new]
+        ) { _, change in
+            guard let v = change.newValue else { return }
+            DSPManager.shared.setSystemVolumeDb(SystemVolume.db(fromOutputVolume: v))
+        }
+    }
 
     /// Records the session format and wires the tap to this registry.
     func initialize(sampleRate: Int = 48000, channels: Int = 2) {
@@ -54,6 +84,12 @@ class DSPManager {
         tap.engineRelease = { handle in DSPManager.shared.releaseEngine(handle) }
         tap.engineReinitialised = { handle in DSPManager.shared.engineReinitialised(handle) }
         tap.playerReleased = { playerId in DSPManager.shared.releasePlayer(playerId: playerId) }
+        tap.keyNormaliser = { uri in NextGainKey.normalize(uri) }
+        tap.engineGainCell = { handle in DSPManager.shared.gainCell(for: handle) }
+        tap.nextGainLookup = { handle, uri, out in
+            DSPManager.shared.nextGain(for: handle, uri: uri, into: out)
+        }
+        startSystemVolumeObservation()
     }
 
     /// The engine for `playerId`, created on first use and brought to the
@@ -83,19 +119,20 @@ class DSPManager {
         let dead = record.retired && record.refs <= 0
         if dead { byHandle[handle] = nil }
         lock.unlock()
-        if dead { dsp_destroy(handle) }
+        if dead { destroy(record) }
     }
 
     /// The player was disposed: forget it now; destroy once no tap uses it.
     func releasePlayer(playerId: String) {
         lock.lock()
         trackGains.release(playerId)
+        nextGains[playerId] = nil
         guard let record = registry.removeValue(forKey: playerId) else { lock.unlock(); return }
         record.retired = true
         let dead = record.refs <= 0
         if dead { byHandle[record.handle] = nil }
         lock.unlock()
-        if dead { dsp_destroy(record.handle) }
+        if dead { destroy(record) }
     }
 
     /// `dsp_reinit` (run when a tap prepares for a new item) resets the EQ and
@@ -108,7 +145,13 @@ class DSPManager {
     /// Caller holds `lock`.
     private func replayState(onto record: EngineRecord) {
         log.replay(onto: record.handle)
-        if let gain = trackGains.value(for: record.playerId) {
+        // A gain a tap applied at a gapless boundary is newer than the last
+        // one Dart sent (setTrackGainDb clears the cell); the engine must come
+        // back with the gain of the item actually playing.
+        var boundaryDb: Float = 0
+        if HypeGainCellRead(record.gainCell, &boundaryDb) {
+            dsp_set_track_gain_db(record.handle, boundaryDb)
+        } else if let gain = trackGains.value(for: record.playerId) {
             dsp_set_track_gain_db(record.handle, gain)
         }
     }
@@ -117,6 +160,15 @@ class DSPManager {
     private func apply(key: String, _ body: @escaping (UnsafeMutableRawPointer) -> Void) {
         lock.lock(); defer { lock.unlock() }
         log.record(key: key, apply: body)
+        for record in registry.values { body(record.handle) }
+    }
+
+    /// As `apply(key:)`, but first drops the recorded settings the new one
+    /// carries the state of, so a replay never applies them over it.
+    private func apply(key: String, superseding prefixes: [String],
+                       _ body: @escaping (UnsafeMutableRawPointer) -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        log.record(key: key, superseding: prefixes, apply: body)
         for record in registry.values { body(record.handle) }
     }
 
@@ -134,6 +186,16 @@ class DSPManager {
         apply(key: "setMasterVolumeDb") { h in dsp_set_master_volume_db(h, dB) }
     }
 
+    /// Smooth equalizer/tone gains (recorded, so a re-created engine gets it back).
+    func setSmoothGains(_ enabled: Bool) {
+        apply(key: "setSmoothGains") { h in dsp_set_smooth_gains(h, enabled) }
+    }
+
+    /// The output volume in dB (-96...0) the smooth gains follow.
+    func setSystemVolumeDb(_ dB: Float) {
+        apply(key: "setSystemVolumeDb") { h in dsp_set_system_volume_db(h, dB) }
+    }
+
     func setMono(_ enabled: Bool) {
         apply(key: "setMono") { h in dsp_set_mono(h, enabled) }
     }
@@ -148,7 +210,49 @@ class DSPManager {
     func setTrackGainDb(_ dB: Float, playerId: String) {
         lock.lock(); defer { lock.unlock() }
         trackGains.set(dB, for: playerId)
-        if let record = registry[playerId] { dsp_set_track_gain_db(record.handle, dB) }
+        // A new current gain supersedes anything announced for upcoming items;
+        // Dart announces the next one again right after.
+        nextGains[playerId] = nil
+        if let record = registry[playerId] {
+            HypeGainCellClear(record.gainCell)
+            dsp_set_track_gain_db(record.handle, dB)
+        }
+    }
+
+    /// The gain the item at `uri` takes where it starts in a gapless queue.
+    /// Kept per player until the item's tap picks it up.
+    func setNextTrackGainDb(_ dB: Float, uri: String, playerId: String) {
+        lock.lock()
+        let uri = NextGainKey.normalize(uri)
+        var entries = nextGains[playerId] ?? []
+        entries.removeAll { $0.uri == uri }
+        entries.append((uri: uri, dB: dB))
+        if entries.count > maxNextGains { entries.removeFirst(entries.count - maxNextGains) }
+        nextGains[playerId] = entries
+        let handle = registry[playerId]?.handle
+        lock.unlock()
+        // Outside the lock: the tap takes its own, and its init path takes ours.
+        if let handle = handle {
+            HypeAudioTap.shared().pushNextGainDb(dB, forUri: uri, engine: handle)
+        }
+    }
+
+    // MARK: - Tap hooks (called off the audio thread)
+
+    func gainCell(for handle: UnsafeMutableRawPointer) -> UnsafeMutablePointer<HypeGainCell>? {
+        lock.lock(); defer { lock.unlock() }
+        return byHandle[handle]?.gainCell
+    }
+
+    func nextGain(for handle: UnsafeMutableRawPointer, uri: String,
+                  into out: UnsafeMutablePointer<Float>) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let uri = NextGainKey.normalize(uri)
+        guard let record = byHandle[handle],
+              let entry = nextGains[record.playerId]?.last(where: { $0.uri == uri })
+        else { return false }
+        out.pointee = entry.dB
+        return true
     }
 
     // MARK: - EQ
@@ -178,6 +282,25 @@ class DSPManager {
             gains.withUnsafeBufferPointer { ptr in
             dsp_set_graphic_all_bands(h, ptr.baseAddress, Int32(gains.count))
         }
+        }
+    }
+
+    /// Band centres (Hz) and gains (dB) travel together, so no block plays old
+    /// gains at new centres. Supersedes earlier per-band and all-band gain
+    /// calls; a later `setGraphicAllBands` replays after it. An engine created
+    /// later gets the layout with these gains, then any newer gains.
+    func setGraphicLayout(_ centres: [Float], gains: [Float]) {
+        let n = min(centres.count, gains.count)
+        guard n > 0 else { return }
+        let c = Array(centres.prefix(n))
+        let g = Array(gains.prefix(n))
+        apply(key: "setGraphicLayout",
+              superseding: ["setGraphicBandGain.", "setGraphicAllBands"]) { h in
+            c.withUnsafeBufferPointer { cp in
+                g.withUnsafeBufferPointer { gp in
+                    dsp_set_graphic_layout(h, cp.baseAddress, gp.baseAddress, Int32(n))
+                }
+            }
         }
     }
 

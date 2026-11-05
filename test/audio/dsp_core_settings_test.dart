@@ -96,6 +96,17 @@ void main() {
           -4.0);
     });
 
+    test('the stored preamp is not a boost', () async {
+      expect(await headroom({'preampGain': 6.0}), 0.0);
+      expect(
+          await headroom({
+            'preampGain': 3.0,
+            'graphicEqEnabled': true,
+            'graphicBandGains': graphic(6.0),
+          }),
+          -6.0);
+    });
+
     test('an EQ or tone that is off adds nothing', () async {
       expect(await headroom({'graphicBandGains': graphic(8.0)}), 0.0);
       expect(await headroom({'bassGain': 8.0}), 0.0);

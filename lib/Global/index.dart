@@ -21,6 +21,7 @@ import '../pages/equalizer.dart';
 import '../player/lyrics_view.dart';
 import '../widgets/artwork_widget.dart';
 import '../widgets/listen_sheet.dart';
+import '../audio/replay_gain/replay_gain.dart';
 import '../player/fade_settings.dart';
 import '../services/video/video_registry.dart';
 import '../services/ytmusic/yt_audio_source.dart';
@@ -482,12 +483,16 @@ Widget headerWidget(
 }
 
 /// A track made ready for a player: what to open, what the notification
-/// shows, and the gain to play it at.
+/// shows, and the Replay Gain to play it at.
+///
+/// The player-volume track gain is unity for every track; [rgDb] goes to the
+/// engine of whichever player will play it, via
+/// [HypeAudioHandler.setEngineTrackGainDb].
 class PreparedTrack {
-  const PreparedTrack(this.source, this.item, this.gain);
+  const PreparedTrack(this.source, this.item, this.rgDb);
   final AudioSource source;
   final MediaItem item;
-  final double gain;
+  final double rgDb;
 }
 
 /// Works out what a player has to open for [song], without touching a player.
@@ -499,8 +504,9 @@ class PreparedTrack {
 /// Null when the data guard forbids streaming it.
 Future<PreparedTrack?> prepareTrack(
   SongModel song, {
-  bool replayGain = false,
+  ReplayGainSettings? replayGain,
 }) async {
+  final rg = replayGain ?? ReplayGainSettings();
   final isCloud = song.data.startsWith('http');
 
   // Artwork: cloud tracks store thumbnail URL in album field
@@ -538,13 +544,14 @@ Future<PreparedTrack?> prepareTrack(
       debugPrint('Streaming blocked: $blockReason');
       return null;
     }
-    // Replay gain is read from ID3 tags, which a manifest has none of, so a
-    // video always plays at unity — and must say so, or it inherits whatever
-    // gain the last local file left behind.
-    return PreparedTrack(video.toAudioSource(tag: item), item, 1.0);
+    // A manifest has no tags, so a video gets the untagged preamp — and must
+    // be given it, or its player keeps the last local file's gain.
+    final videoDb = await trackGainDbFor(path: '', settings: rg);
+    return PreparedTrack(video.toAudioSource(tag: item), item, videoDb);
   }
 
   final AudioSource source;
+  var gainPath = song.data;
   if (isCloud) {
     final guard = StreamingDataGuard.instance;
 
@@ -566,6 +573,7 @@ Future<PreparedTrack?> prepareTrack(
 
       if (cache.isCached(fileId)) {
         // Cached — play from disk, zero data usage
+        gainPath = cache.cacheFile(fileId).path; // its tags are on disk
         cache.markAccessed(fileId);
         source = AudioSource.file(cache.cacheFile(fileId).path, tag: item);
       } else {
@@ -608,17 +616,15 @@ Future<PreparedTrack?> prepareTrack(
     source = AudioSource.uri(Uri.parse(item.id), tag: item);
   }
 
-  // Replay gain only for local files (needs ID3 tags)
-  final gain = replayGain && !isCloud
-      ? await HypeAudioHandler.computeReplayGainVolume(song.data)
-      : 1.0;
-  return PreparedTrack(source, item, gain);
+  // Only a local file has tags to read; anything else gets the untagged preamp.
+  final rgDb = await trackGainDbFor(path: gainPath, settings: rg);
+  return PreparedTrack(source, item, rgDb);
 }
 
 Future<void> loadAudioSource(
   HypeAudioHandler handler,
   SongModel song, {
-  bool replayGain = false,
+  ReplayGainSettings? replayGain,
 
   /// Where to start the track. For a session restored from the last run, which
   /// has to resume mid-song rather than from the beginning.
@@ -661,13 +667,16 @@ Future<void> loadAudioSource(
   if (fade != null && fade.crossfadeMs > 0 && autoPlay && handler.isAudible) {
     try {
       await handler.crossfade(
-        load: (player) => player.setAudioSource(
-          prepared.source,
-          initialPosition: initialPosition,
-        ),
+        load: (player) {
+          // The incoming player's engine, before its source is set.
+          handler.setEngineTrackGainDb(player, prepared.rgDb, subject: song);
+          return player.setAudioSource(
+            prepared.source,
+            initialPosition: initialPosition,
+          );
+        },
         fadeMs: fade.crossfadeMs,
         earlyFadeOutMs: fade.earlyFadeOutMs,
-        targetGain: prepared.gain,
         mediaItem: () => prepared.item,
         token: token,
       );
@@ -689,11 +698,12 @@ Future<void> loadAudioSource(
   // whatever it is given at once.
   if (!autoPlay && handler.player.playing) await handler.player.pause();
   handler.setCurrentMediaItem(prepared.item);
+  handler.setEngineTrackGainDb(handler.player, prepared.rgDb, subject: song);
   await handler.player.setAudioSource(
     prepared.source,
     initialPosition: initialPosition,
   );
-  handler.setTrackGain(handler.player, prepared.gain);
+  handler.setTrackGain(handler.player, 1.0);
   if (autoPlay) {
     handler.startPlayback(
       fadeInMs: fade == null

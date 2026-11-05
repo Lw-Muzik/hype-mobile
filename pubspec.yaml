@@ -43,6 +43,7 @@ dependencies:
 
   permission_handler: ^13.0.1
   shared_preferences: ^2.2.1
+  audio_session: ^0.2.4
   flutter_bloc: ^9.1.1
   audio_service: ^0.18.15
   animations: ^3.0.0

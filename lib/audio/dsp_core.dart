@@ -2,6 +2,11 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// True when [prefs] holds any key an earlier version wrote, i.e. the app was
+/// used before the newer settings existed.
+bool isExistingInstall(SharedPreferences prefs) =>
+    DspCoreSettings._legacyKeys.any(prefs.containsKey);
+
 /// Master volume (dB) that every player's engine applies, derived from the
 /// Direct Volume Control setting.
 ///
@@ -13,7 +18,7 @@ double masterVolumeFor({required bool dvcEnabled, required double dvcGainDb}) {
 }
 
 /// One step of switching DVC on or off.
-enum DvcStep { pushMasterVolume, enableDvc, disableDvc }
+enum DvcStep { pushMasterVolume, flushIfPaused, enableDvc, disableDvc }
 
 /// Order of the native calls when DVC is toggled.
 ///
@@ -22,9 +27,47 @@ enum DvcStep { pushMasterVolume, enableDvc, disableDvc }
 /// unity gain has drained (it cannot be recalled), so it is never played at
 /// full device volume. Turning off: the system volume is restored first, then
 /// the master returns to 0 dB.
+///
+/// While paused, the buffered unity-gain audio would otherwise play at full
+/// device volume on resume, so it is flushed before the system raise.
 List<DvcStep> dvcToggleSteps({required bool enable}) => enable
-    ? const [DvcStep.pushMasterVolume, DvcStep.enableDvc]
+    ? const [
+        DvcStep.pushMasterVolume,
+        DvcStep.flushIfPaused,
+        DvcStep.enableDvc,
+      ]
     : const [DvcStep.disableDvc, DvcStep.pushMasterVolume];
+
+/// Whether Direct Volume Control is actually running: Android only, the
+/// setting on, and the equalizer not applied system-wide. In system-wide mode
+/// the platform equalizer owns the level other apps are heard at, so DVC is
+/// suspended (the stored setting is untouched) and resumes when it ends.
+bool dvcInEffect({
+  required bool isAndroid,
+  required bool dvcEnabled,
+  required bool systemWide,
+}) => isAndroid && dvcEnabled && !systemWide;
+
+/// The DVC steps for turning system-wide mode on or off. With DVC set, going
+/// on suspends it in the safe order (system volume restored first) and going
+/// off resumes it; with DVC off there is nothing to do.
+List<DvcStep> systemWideDvcSteps({
+  required bool systemWideOn,
+  required bool dvcEnabled,
+}) => dvcEnabled ? dvcToggleSteps(enable: !systemWideOn) : const [];
+
+/// Whether the DVC steps that follow system-wide mode ending must wait.
+///
+/// DVC's enable raises the music stream to maximum whenever any app is
+/// playing, so with Hype in the background (say the notification's Stop while
+/// another app plays) it would blast that app. They wait until Hype itself
+/// plays or comes to the foreground.
+bool deferDvcResume({required bool appInForeground, required bool hypePlaying}) =>
+    !appInForeground && !hypePlaying;
+
+/// Why a control is disabled while the equalizer applies to all apps: the
+/// platform equalizer cannot carry it.
+const kSystemWideReason = 'Not available while the equalizer applies to all apps';
 
 /// Headroom (dB, <= 0) the engine applies ahead of the DSP chain.
 ///
@@ -97,7 +140,7 @@ class DspCoreSettings {
   /// Auto-gain lowered the input by the largest positive gain among the EQ
   /// curves and the tone shelves. Without it an existing install with boosts
   /// would come out louder and clip, so the first headroom is minus that peak
-  /// (the stored preamp counts as a boost too), snapped to 0.5 dB and clamped
+  /// (the stored preamp does not count: it was always applied as-is), snapped to 0.5 dB and clamped
   /// to -10..0. No boost gives 0.
   static double headroomFromBoost(SharedPreferences prefs) {
     var peak = 0.0;
@@ -129,7 +172,6 @@ class DspCoreSettings {
       take(prefs.getDouble('bassGain'));
       take(prefs.getDouble('trebleGain'));
     }
-    take(prefs.getDouble(_kPreamp));
     return normHeadroom(-peak);
   }
 
@@ -138,7 +180,7 @@ class DspCoreSettings {
   /// never makes users louder or clipped; on a fresh install to 0 on iOS and
   /// -6 dB on Android.
   static DspCoreSettings load(SharedPreferences prefs, {required bool isIos}) {
-    final existingInstall = _legacyKeys.any(prefs.containsKey);
+    final existingInstall = isExistingInstall(prefs);
     final defaultHeadroom = existingInstall
         ? headroomFromBoost(prefs)
         : (isIos ? 0.0 : -6.0);

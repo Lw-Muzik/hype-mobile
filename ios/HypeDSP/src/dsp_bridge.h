@@ -25,6 +25,10 @@ void  dsp_set_eq_enabled(void* handle, bool enabled);
 void  dsp_set_preamp_gain(void* handle, float dB);
 float dsp_get_preamp_gain(void* handle);
 void  dsp_set_headroom_db(void* handle, float dB);
+// Smooth equalizer/tone gains on or off, and the system (output) volume in dB
+// (-96..0) they follow together with the engine's own levels.
+void  dsp_set_smooth_gains(void* handle, bool on);
+void  dsp_set_system_volume_db(void* handle, float dB);
 void  dsp_set_speaker_preamp_db(void* handle, float dB);
 void  dsp_set_track_gain_db(void* handle, float dB);
 void  dsp_set_master_volume_db(void* handle, float dB);
@@ -32,6 +36,10 @@ void  dsp_set_mono(void* handle, bool enabled);
 void  dsp_set_balance(void* handle, float balance);
 void  dsp_set_graphic_band_gain(void* handle, int band, float dB);
 void  dsp_set_graphic_all_bands(void* handle, const float* gains, int count);
+// Sets the graphic EQ layout (band centres, Hz) and, when `gainsDb` is not
+// NULL, all band gains in the same call. `count` values in each array.
+void  dsp_set_graphic_layout(void* handle, const float* centresHz,
+                             const float* gainsDb, int count);
 void  dsp_set_parametric_band(void* handle, int band, float freq, float gainDb,
                                float q, int filterType, bool enabled);
 void  dsp_set_parametric_all_bands(void* handle, const float* freqs,

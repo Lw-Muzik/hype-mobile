@@ -2,15 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:eq_app/global/index.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 
 import '/exports/exports.dart';
 
 import '../audio/dsp_core.dart';
+import '../audio/eq/eq_layout.dart';
+import '../audio/eq/eq_presets.dart';
+import '../audio/eq/autoeq_suggest.dart';
+import '../audio/eq/eq_sync.dart';
+import '../audio/eq/equalizer_settings.dart';
 import '../data/library_repository.dart';
 import '../helpers/audio_handler.dart';
 import '../player/queue_sync.dart';
 import '../data/streamed_track.dart';
 import '../Helpers/Channel.dart';
+import '../audio/replay_gain/replay_gain.dart';
 import '../helpers/index.dart';
 import '../models/eq_models.dart';
 import '../models/room_preset.dart';
@@ -21,7 +28,9 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/cloud_file.dart';
+import '../services/autoeq_suggestions.dart';
 import '../services/cloud_auth_service.dart';
+import '../services/connect/remote/connect_ui_host.dart';
 import '../services/connect/remote/connect_play_router.dart';
 import '../services/cloud_cache_service.dart';
 import '../services/cloud_metadata_service.dart';
@@ -137,7 +146,7 @@ class AppController with ChangeNotifier implements StationSink {
   // Audio feature settings
   /// Crossfade, fade and gapless behaviour — see `lib/player/fade_settings.dart`.
   FadeSettings _fades = const FadeSettings();
-  bool _replayGain = false;
+  ReplayGainSettings _replayGain = ReplayGainSettings();
   bool _dvcEnabled = false;
   double _dvcGain = -30.0; // dB, range -30 to 0 (0% to 100%)
   bool _dvcFineSteps = false; // false=1.5dB (5%), true=0.3dB (1%)
@@ -148,19 +157,23 @@ class AppController with ChangeNotifier implements StationSink {
   // Global EQ (system-wide)
   bool _globalEqEnabled = false;
   bool _globalEqAvailable = false;
+  // False until the first availability probe has answered. The channel can be
+  // missing (a headless start has none), which reads as "not available".
+  bool _globalEqProbed = false;
+  // System-wide mode ended while Hype was in the background: DVC's steps wait
+  // for Hype to play or come to the foreground (see [deferDvcResume]).
+  bool _dvcResumePending = false;
   List<Map<String, String>> _playingApps = [];
 
   // Song list/grid zoom: continuous extent (80=tiny grid, 300=list mode)
   double _songGridExtent = 300.0; // default list mode
 
-  // Configurable EQ band count (UI-layer only, native always 32)
-  int _eqBandCount = 32;
-
-  // 32-band Graphic EQ state
-  List<double> _graphicBandGains = List.filled(32, 0.0);
+  // Graphic EQ: layout/tone/Auto save settings and the preset list + live
+  // curve. `_eq.live` is on `_eq.live.hz`, which is `bandCentres(_eqSettings)`.
+  late EqualizerSettings _eqSettings;
+  late EqState _eq;
+  Timer? _eqPersistTimer;
   bool _graphicEqEnabled = false;
-  String _activePresetName = 'Flat';
-  Map<String, EqPreset> _savedPresets = {};
   String _lastOutputDevice = 'speaker';
   bool _linkAllDevices = true;
 
@@ -200,13 +213,10 @@ class AppController with ChangeNotifier implements StationSink {
   double _crossfeedFeed = 4.5; // dB (1-15)
 
   // Tone controls (bass/treble shelf filters)
+  // Frequency and Q live in [_eqSettings].
   bool _toneEnabled = false;
-  double _bassGain = 0.0; // 0 to 20 dB
-  double _bassFreq = 80.0; // 20-500 Hz
-  double _bassQ = 0.707; // 0.1-4.0
-  double _trebleGain = 0.0; // 0 to 20 dB
-  double _trebleFreq = 10000.0; // 1000-20000 Hz
-  double _trebleQ = 0.707; // 0.1-4.0
+  double _bassGain = 0.0; // 0 to 22.5 dB
+  double _trebleGain = 0.0; // 0 to 15 dB
 
   // Output limiter (on by default)
   /// Headroom, balance, mono, limiter, preamp and tempo (see dsp_core.dart).
@@ -216,6 +226,22 @@ class AppController with ChangeNotifier implements StationSink {
   bool _speakerEqEnabled = false;
   String? _activeSpeakerProfile;
   final SpeakerProfileService _speakerProfileService = SpeakerProfileService();
+
+  /// Offers an AutoEq preset when headphones connect (Equalizer settings).
+  late final AutoEqSuggestions _autoEq = AutoEqSuggestions(
+    enabled: () => _eqSettings.suggestAutoEq,
+    systemWide: () => systemWideActive,
+    activeProfile: () => _activeSpeakerProfile,
+    apply: applySpeakerProfile,
+    profiles: () async {
+      if (_speakerProfileService.profiles.isEmpty) {
+        await _speakerProfileService.load();
+      }
+      return _speakerProfileService.profiles;
+    },
+    prefs: _prefs,
+    navigatorKey: ConnectUiHost.navigatorKey,
+  );
 
   // Live stems (vocals / drums / instruments). The native engine follows the
   // player by itself; this holds the mix, the model download and the
@@ -233,79 +259,222 @@ class AppController with ChangeNotifier implements StationSink {
     }
   }
 
-  // EQ band count getters/setters
-  int get eqBandCount => _eqBandCount;
-  set eqBandCount(int value) {
-    if (BandMapping.supportedCounts.contains(value)) {
-      _prefs.setInt("eqBandCount", value);
-      _eqBandCount = value;
-      notifyListeners();
+  // ---------------------------------------------------------------------------
+  // Equalizer
+  // ---------------------------------------------------------------------------
+
+  EqualizerSettings get eqSettings => _eqSettings;
+
+  /// Saves the settings. A different layout re-interpolates the curve onto the
+  /// new centres and sends layout and gains together; changed tone
+  /// frequencies and Qs go to the engine.
+  set eqSettings(EqualizerSettings value) {
+    final old = _eqSettings;
+    if (value == old) return;
+    _eqSettings = value;
+    unawaited(value.save(_prefs));
+    final centres = bandCentres(value);
+    if (!listEquals(centres, _eq.live.hz)) {
+      _setEq(_eq.withLayout(centres), notify: false);
+    }
+    if (value.bassFreq != old.bassFreq) Channel.dspSetBassFreq(value.bassFreq);
+    if (value.bassQ != old.bassQ) Channel.dspSetBassQ(value.bassQ);
+    if (value.trebleFreq != old.trebleFreq) {
+      Channel.dspSetTrebleFreq(value.trebleFreq);
+    }
+    if (value.trebleQ != old.trebleQ) Channel.dspSetTrebleQ(value.trebleQ);
+    if (value.smoothGains != old.smoothGains) {
+      Channel.dspSetSmoothGains(value.smoothGains);
+    }
+    notifyListeners();
+  }
+
+  EqState get eq => _eq;
+
+  /// Band centres of the current layout, in Hz.
+  List<double> get eqCentres => _eq.live.hz;
+
+  /// Gain of each band in dB, on [eqCentres].
+  List<double> get eqGains => _eq.live.db;
+
+  /// The selected preset's curve has been edited and not saved.
+  bool get eqPresetDirty => _eq.dirty;
+
+  /// The selected preset's name, or '' when none is selected (also what the
+  /// system-wide EQ notification gets: no name, not "Custom").
+  String get activePresetName => _eq.selected;
+
+  /// Makes [next] the equalizer state: sends what the engine needs to hear,
+  /// saves it (at once, or after a pause while a drag is going on) and tells
+  /// listeners.
+  void _setEq(EqState next, {bool persist = true, bool notify = true}) {
+    final prev = _eq;
+    if (identical(next, prev)) return;
+    _eq = next;
+    for (final push in eqPushes(prev, next)) {
+      _pushEq(push);
+    }
+    if (next.selected != prev.selected && _globalEqEnabled) {
+      Channel.updateGlobalEqPreset(next.selected);
+    }
+    if (persist) {
+      commitEqGains();
+    } else {
+      // Keyboard/TalkBack value changes fire onChanged WITHOUT
+      // onChangeStart/onChangeEnd (flutter/flutter#123315), so a drag-end
+      // commit never comes. Debounce a save so those edits aren't lost.
+      _eqPersistTimer?.cancel();
+      _eqPersistTimer = Timer(const Duration(seconds: 1), commitEqGains);
+    }
+    if (notify) notifyListeners();
+  }
+
+  void _pushEq(EqPush push) {
+    switch (push.kind) {
+      case EqPushKind.layout:
+        Channel.setGraphicLayout(push.values!, push.cutoffs!, push.gains!);
+      case EqPushKind.allGains:
+        Channel.setGraphicAllBands(push.values!);
+      case EqPushKind.bandGain:
+        Channel.setGraphicBandGain(push.band!, push.values!.first);
     }
   }
 
-  BandMapping get currentBandMapping => BandMapping.forCount(_eqBandCount);
-
-  List<double> get displayBandGains =>
-      currentBandMapping.nativeToDisplay(_graphicBandGains);
-
-  Timer? _graphicGainsPersistTimer;
-
-  void setDisplayBandGain(int displayBand, double gain, {bool persist = true}) {
-    final mapping = currentBandMapping;
-    if (displayBand >= 0 && displayBand < mapping.nativeGroups.length) {
-      for (final nativeIdx in mapping.nativeGroups[displayBand]) {
-        _graphicBandGains[nativeIdx] = gain;
-      }
-      Channel.setGraphicAllBands(_graphicBandGains);
-      // During a slider drag this fires ~60-90x/sec. The native call above must
-      // happen every delta for real-time audio, but the json.encode + disk write
-      // must NOT — pass persist:false while dragging and call commitGraphicGains()
-      // on drag-end instead.
-      if (persist) {
-        _persistGraphicGains();
-      } else {
-        // Safety net: keyboard/TalkBack value changes fire onChanged WITHOUT
-        // onChangeStart/onChangeEnd (flutter/flutter#123315), so a drag-end
-        // commit never comes. Debounce a persist so those edits aren't lost.
-        _graphicGainsPersistTimer?.cancel();
-        _graphicGainsPersistTimer = Timer(
-          const Duration(seconds: 1),
-          _persistGraphicGains,
-        );
-      }
-      notifyListeners();
-    }
+  /// Layout and gains in one call, whatever the engine had.
+  void _pushEqLayout() {
+    final centres = _eq.live.hz;
+    _pushEq(
+      EqPush.layout(centres, platformBandCutoffs(centres), _eq.live.db),
+    );
   }
 
-  /// Flush the current graphic EQ gains to disk once (call on drag/pan-end).
-  void commitGraphicGains() {
-    _graphicGainsPersistTimer?.cancel();
-    _graphicGainsPersistTimer = null;
-    _persistGraphicGains();
+  /// Sets one band. While dragging pass `persist: false` (the engine is
+  /// updated on every delta, the disk is not) and call [commitEqGains] on
+  /// drag end.
+  void setEqBandGain(int band, double db, {bool persist = true}) {
+    if (band < 0 || band >= _eq.live.db.length) return;
+    final gain = db.clamp(-15.0, 15.0).toDouble();
+    if (gain == _eq.live.db[band]) return;
+    _setEq(
+      _eq.withBandGain(band, gain, autoSave: _eqSettings.autoSave),
+      persist: persist,
+    );
+  }
+
+  /// Saves the equalizer state to disk now (call on drag/pan end).
+  void commitEqGains() {
+    _eqPersistTimer?.cancel();
+    _eqPersistTimer = null;
+    unawaited(_eq.saveTo(_prefs));
+  }
+
+  /// Zeroes the curve and selects Flat.
+  void flattenEq() => _setEq(_eq.flatten());
+
+  /// Applies a preset: its curve, and its preamp and parametric points when it
+  /// carries them (null means the preset leaves them alone).
+  void applyEqPreset(String name) {
+    final p = _eq.preset(name);
+    if (p == null) return;
+    _setEq(_eq.applyPreset(name));
+    final preamp = p.preampDb;
+    if (preamp != null) dspCore = _dspCore.copyWith(preampDb: preamp);
+    final points = p.parametric;
+    if (points != null) _restoreParametric(points);
+  }
+
+  /// Saves the curve as a new preset (with the preamp and parametric points)
+  /// and selects it.
+  void saveEqPresetAs(String name) {
+    final next = _eq.saveAs(name, preampDb: _dspCore.preampDb);
+    _setEq(
+      _withParametric(
+        next,
+        next.selected,
+        deviceType: _linkAllDevices ? null : _lastOutputDevice,
+      ),
+    );
+  }
+
+  /// Writes the curve into the selected preset, and the preamp only when that
+  /// preset already carries one (a built-in does not gain one).
+  void saveEqPreset() {
+    final carriesPreamp = _eq.preset(_eq.selected)?.preampDb != null;
+    final next = _eq.save(preampDb: carriesPreamp ? _dspCore.preampDb : null);
+    final p = next.preset(next.selected);
+    // A user preset also stores the current parametric points.
+    _setEq(p == null || p.builtIn ? next : _withParametric(next, p.name));
+  }
+
+  void deleteEqPreset(String name) => _setEq(_eq.delete(name));
+
+  /// Brings back every factory preset at its factory curve.
+  void restoreEqPresets() => _setEq(_eq.restoreFactory());
+
+  /// Forgets the devices the user said "Don't ask" for.
+  Future<void> resetAutoEqSuggestions() => AutoEqDismissals.reset(_prefs);
+
+  @override
+  void dispose() {
+    _globalEqStoppedSub?.cancel();
+    unawaited(_autoEq.dispose());
+    super.dispose();
+  }
+
+  /// [s] with the current parametric points stored in preset [name].
+  EqState _withParametric(EqState s, String name, {String? deviceType}) =>
+      EqState(
+        presets: [
+          for (final p in s.presets)
+            p.name == name
+                ? EqPreset(
+                    name: p.name,
+                    curve: p.curve,
+                    preampDb: p.preampDb,
+                    parametric: [for (final e in _parametricPoints) e.copyWith()],
+                    builtIn: p.builtIn,
+                    deviceType: deviceType ?? p.deviceType,
+                  )
+                : p,
+        ],
+        selected: s.selected,
+        dirty: s.dirty,
+        live: s.live,
+      );
+
+  void _restoreParametric(List<ParametricPoint> points) {
+    _parametricPoints = [for (final e in points) e.copyWith()];
+    _applyParametricToNative();
+    _persistParametricPoints();
   }
 
   // Graphic EQ getters/setters
-  List<double> get graphicBandGains => _graphicBandGains;
   bool get graphicEqEnabled => _graphicEqEnabled;
-  String get activePresetName => _activePresetName;
-  Map<String, EqPreset> get savedPresets => _savedPresets;
   String get lastOutputDevice => _lastOutputDevice;
   bool get linkAllDevices => _linkAllDevices;
   List<ParametricPoint> get parametricPoints => _parametricPoints;
   double get preampGain => _dspCore.preampDb;
   bool get mbcEnabled => _mbcEnabled;
 
-  set preampGain(double value) =>
-      dspCore = _dspCore.copyWith(preampDb: value);
+  /// The preamp also belongs to the selected preset when that preset has one:
+  /// with Auto save the preset takes the new value, otherwise it reads as
+  /// unsaved.
+  set preampGain(double value) {
+    dspCore = _dspCore.copyWith(preampDb: value);
+    _setEq(
+      _eq.withPreamp(_dspCore.preampDb, autoSave: _eqSettings.autoSave),
+      persist: false,
+    );
+  }
 
   // Tone controls getters/setters
   bool get toneEnabled => _toneEnabled;
   double get bassGain => _bassGain;
-  double get bassFreq => _bassFreq;
-  double get bassQ => _bassQ;
+  double get bassFreq => _eqSettings.bassFreq;
+  double get bassQ => _eqSettings.bassQ;
   double get trebleGain => _trebleGain;
-  double get trebleFreq => _trebleFreq;
-  double get trebleQ => _trebleQ;
+  double get trebleFreq => _eqSettings.trebleFreq;
+  double get trebleQ => _eqSettings.trebleQ;
   bool get limiterEnabled => _dspCore.limiter;
 
   DspCoreSettings get dspCore => _dspCore;
@@ -318,49 +487,31 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   set bassGain(double value) {
-    _bassGain = value.clamp(0.0, 15.0);
+    _bassGain = EqualizerSettings.normBassGainDb(value);
     _prefs.setDouble("bassGain", _bassGain);
     Channel.dspSetBassGain(_bassGain);
     notifyListeners();
   }
 
-  set bassFreq(double value) {
-    _bassFreq = value.clamp(20.0, 250.0);
-    _prefs.setDouble("bassFreq", _bassFreq);
-    Channel.dspSetBassFreq(_bassFreq);
-    notifyListeners();
-  }
+  set bassFreq(double value) =>
+      eqSettings = _eqSettings.copyWith(bassFreq: value);
 
-  set bassQ(double value) {
-    _bassQ = value.clamp(0.1, 2.0);
-    _prefs.setDouble("bassQ", _bassQ);
-    Channel.dspSetBassQ(_bassQ);
-    notifyListeners();
-  }
+  set bassQ(double value) => eqSettings = _eqSettings.copyWith(bassQ: value);
 
   set trebleGain(double value) {
-    _trebleGain = value.clamp(0.0, 15.0);
+    _trebleGain = EqualizerSettings.normTrebleGainDb(value);
     _prefs.setDouble("trebleGain", _trebleGain);
     Channel.dspSetTrebleGain(_trebleGain);
     notifyListeners();
   }
 
-  set trebleFreq(double value) {
-    _trebleFreq = value.clamp(5000.0, 15000.0);
-    _prefs.setDouble("trebleFreq", _trebleFreq);
-    Channel.dspSetTrebleFreq(_trebleFreq);
-    notifyListeners();
-  }
+  set trebleFreq(double value) =>
+      eqSettings = _eqSettings.copyWith(trebleFreq: value);
 
-  set trebleQ(double value) {
-    _trebleQ = value.clamp(0.1, 2.0);
-    _prefs.setDouble("trebleQ", _trebleQ);
-    Channel.dspSetTrebleQ(_trebleQ);
-    notifyListeners();
-  }
+  set trebleQ(double value) =>
+      eqSettings = _eqSettings.copyWith(trebleQ: value);
 
-  set limiterEnabled(bool value) =>
-      dspCore = _dspCore.copyWith(limiter: value);
+  set limiterEnabled(bool value) => dspCore = _dspCore.copyWith(limiter: value);
 
   /// Saves the core settings and pushes only the values that changed.
   set dspCore(DspCoreSettings value) {
@@ -372,6 +523,8 @@ class AppController with ChangeNotifier implements StationSink {
     if (value.mono != old.mono) Channel.dspSetMono(value.mono);
     if (value.limiter != old.limiter) {
       Channel.dspSetLimiterEnabled(value.limiter);
+      // With the limiter off, Replay Gain boosts are peak-capped.
+      _regainAll();
     }
     if (value.preampDb != old.preampDb) Channel.setPreamp(value.preampDb);
     if (value.tempoOn != old.tempoOn || value.tempo != old.tempo) {
@@ -380,17 +533,15 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
-  /// Headroom is skipped while DVC owns the level (Android only).
+  /// Headroom is skipped while DVC owns the level (Android only). In
+  /// system-wide mode DVC is suspended, so the headroom is the user's again
+  /// (the platform equalizer applies it to everything).
   void _pushHeadroom() => Channel.dspSetHeadroomDb(
-    headroomFor(
-      dvcActive: Platform.isAndroid && _dvcEnabled,
-      headroomDb: _dspCore.headroomDb,
-    ),
+    headroomFor(dvcActive: dvcRunning, headroomDb: _dspCore.headroomDb),
   );
 
-  void _pushTempo() => unawaited(
-    _handler.setTempo(_dspCore.tempoOn ? _dspCore.tempo : 1.0),
-  );
+  void _pushTempo() =>
+      unawaited(_handler.setTempo(_dspCore.tempoOn ? _dspCore.tempo : 1.0));
 
   set mbcEnabled(bool value) {
     _mbcEnabled = value;
@@ -457,75 +608,9 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
-  set activePresetName(String value) {
-    // Guard against redundant work: the EQ view used to assign 'Custom' on every
-    // slider delta, re-writing prefs + firing a platform call + notify each time.
-    if (_activePresetName == value) return;
-    _prefs.setString("activePresetName", value);
-    _activePresetName = value;
-    // Update the global EQ notification with the new preset name
-    if (_globalEqEnabled) {
-      Channel.updateGlobalEqPreset(value);
-    }
-    notifyListeners();
-  }
-
   set linkAllDevices(bool value) {
     _prefs.setBool("linkAllDevices", value);
     _linkAllDevices = value;
-    notifyListeners();
-  }
-
-  void setGraphicBandGain(int band, double gain) {
-    if (band >= 0 && band < _graphicBandGains.length) {
-      _graphicBandGains[band] = gain;
-      Channel.setGraphicBandGain(band, gain);
-      _persistGraphicGains();
-      notifyListeners();
-    }
-  }
-
-  void setGraphicAllBands(List<double> gains) {
-    _graphicBandGains = List<double>.from(gains);
-    Channel.setGraphicAllBands(gains);
-    _persistGraphicGains();
-    notifyListeners();
-  }
-
-  void applyBuiltInPreset(String name) {
-    final gains = BuiltInPresets.presets[name];
-    if (gains != null) {
-      setGraphicAllBands(gains);
-      activePresetName = name;
-    }
-  }
-
-  void savePreset(String name) {
-    _savedPresets[name] = EqPreset(
-      name: name,
-      graphicGains: List<double>.from(_graphicBandGains),
-      parametric: _parametricPoints.map((p) => p.copyWith()).toList(),
-      preamp: _dspCore.preampDb,
-      deviceType: _linkAllDevices ? null : _lastOutputDevice,
-    );
-    _prefs.setString("eqPresets", EqPreset.encodeList(_savedPresets));
-    notifyListeners();
-  }
-
-  void loadPreset(String name) {
-    final preset = _savedPresets[name];
-    if (preset != null) {
-      setGraphicAllBands(preset.graphicGains);
-      _parametricPoints = preset.parametric.map((p) => p.copyWith()).toList();
-      _applyParametricToNative();
-      preampGain = preset.preamp;
-      activePresetName = name;
-    }
-  }
-
-  void deletePreset(String name) {
-    _savedPresets.remove(name);
-    _prefs.setString("eqPresets", EqPreset.encodeList(_savedPresets));
     notifyListeners();
   }
 
@@ -586,10 +671,6 @@ class AppController with ChangeNotifier implements StationSink {
     Channel.setParametricAllBands(freqs, gains, qs: qs);
   }
 
-  void _persistGraphicGains() {
-    _prefs.setString("graphicBandGains", json.encode(_graphicBandGains));
-  }
-
   void _persistParametricPoints() {
     _prefs.setString(
       "parametricPoints",
@@ -600,25 +681,34 @@ class AppController with ChangeNotifier implements StationSink {
   Future<void> detectAndApplyDevicePreset() async {
     final device = await Channel.getAudioOutputType();
     if (device != _lastOutputDevice && !_linkAllDevices) {
-      // Save current for old device
-      _savedPresets['_device_$_lastOutputDevice'] = EqPreset(
-        name: '_device_$_lastOutputDevice',
-        graphicGains: List<double>.from(_graphicBandGains),
-        parametric: _parametricPoints.map((p) => p.copyWith()).toList(),
-        preamp: _dspCore.preampDb,
+      // Keep the current curve for the old device, as a hidden preset.
+      final oldKey = '_device_$_lastOutputDevice';
+      final saved = EqPreset(
+        name: oldKey,
+        curve: _eq.live,
+        preampDb: _dspCore.preampDb,
+        parametric: [for (final p in _parametricPoints) p.copyWith()],
         deviceType: _lastOutputDevice,
       );
-      _prefs.setString("eqPresets", EqPreset.encodeList(_savedPresets));
+      final kept = EqState(
+        presets: [
+          for (final p in _eq.presets)
+            if (p.name != oldKey) p,
+          saved,
+        ],
+        selected: _eq.selected,
+        dirty: _eq.dirty,
+        live: _eq.live,
+      );
+      _setEq(kept, notify: false);
 
-      // Load preset for new device if it exists
-      final devicePreset = _savedPresets['_device_$device'];
+      // Load the curve for the new device if there is one.
+      final devicePreset = _eq.preset('_device_$device');
       if (devicePreset != null) {
-        setGraphicAllBands(devicePreset.graphicGains);
-        _parametricPoints = devicePreset.parametric
-            .map((p) => p.copyWith())
-            .toList();
-        _applyParametricToNative();
-        preampGain = devicePreset.preamp;
+        _setEq(_eq.withDeviceCurve(devicePreset.curve), notify: false);
+        final points = devicePreset.parametric;
+        if (points != null) _restoreParametric(points);
+        dspCore = _dspCore.copyWith(preampDb: devicePreset.preampDb ?? 0.0);
       }
     }
     _lastOutputDevice = device;
@@ -628,8 +718,38 @@ class AppController with ChangeNotifier implements StationSink {
 
   // Audio feature getters
   FadeSettings get fadeSettings => _fades;
-  bool get replayGain => _replayGain;
+  ReplayGainSettings get replayGainSettings => _replayGain;
+
+  /// Whether Replay Gain is applied at all — what the current Settings switch
+  /// shows. Setting it picks "apply gain, prevent clipping by peak" per track;
+  /// clearing it turns it off.
+  bool get replayGain => _replayGain.mode != ReplayGainMode.off;
   bool get dvcEnabled => _dvcEnabled;
+
+  /// True on Android while the equalizer applies to all apps. The engine then
+  /// holds its own graphic EQ, tone, preamp, headroom, replay gain, balance,
+  /// mono and stereo expand neutral, so the controls that cannot be carried
+  /// system-wide are disabled with [kSystemWideReason].
+  bool get systemWideActive =>
+      Platform.isAndroid &&
+      _globalEqEnabled &&
+      (!_globalEqProbed || _globalEqAvailable);
+
+  /// Whether Direct Volume Control is actually running: the setting is on and
+  /// the equalizer is not applied system-wide. [dvcEnabled] is the stored
+  /// setting and is never changed by system-wide mode.
+  bool get dvcRunning =>
+      !_dvcResumePending &&
+      dvcInEffect(
+        isAndroid: Platform.isAndroid,
+        dvcEnabled: _dvcEnabled,
+        systemWide: systemWideActive,
+      );
+
+  /// The reason shown beside controls system-wide mode disables; null when
+  /// they are usable.
+  String? get systemWideDisabledReason =>
+      systemWideActive ? kSystemWideReason : null;
   double get dvcGain => _dvcGain;
   bool get dvcFineSteps => _dvcFineSteps;
   bool get globalEqEnabled => _globalEqEnabled;
@@ -658,18 +778,267 @@ class AppController with ChangeNotifier implements StationSink {
   bool get _gaplessQueue => usesGaplessQueue(_fades, shuffled: _isShuffled);
 
   set replayGain(bool value) {
-    _prefs.setBool("replayGain", value);
-    _replayGain = value;
-    // Apply immediately if a song is loaded
-    if (!value) {
-      handler.setTrackGain(handler.player, 1.0);
+    if (value == replayGain) return;
+    replayGainSettings = value
+        ? _replayGain.copyWith(
+            mode: ReplayGainMode.applyPreventClipping,
+            source: ReplayGainSource.track,
+          )
+        : _replayGain.copyWith(mode: ReplayGainMode.off);
+  }
+
+  /// The settings in force: the saved ones plus the output limiter's state,
+  /// which decides whether a boost must be peak-capped.
+  ReplayGainSettings get _rgNow =>
+      _replayGain.copyWith(limiterOn: _dspCore.limiter);
+
+  /// Re-gains both players for the settings in force (a crossfade in flight
+  /// has one on each track).
+  void _regainAll() {
+    _rgDbCache.clear();
+    for (final player in handler.enginePlayers) {
+      unawaited(_regainPlayer(player));
     }
+  }
+
+  /// Replaces the Replay Gain settings, saves them and re-gains what is
+  /// playing now.
+  set replayGainSettings(ReplayGainSettings value) {
+    if (value == _replayGain) return;
+    _replayGain = value;
+    unawaited(value.save(_prefs));
+    _regainAll();
     notifyListeners();
+  }
+
+  /// Gains already worked out, by song path; cleared when the settings change.
+  final Map<String, double> _rgDbCache = {};
+
+  /// The Replay Gain for [song] in dB under the current settings.
+  Future<double> _replayGainDbFor(SongModel song) async {
+    // A video's `data` is an identity, not a file with tags.
+    // A cloud track that plays from its cache file has tags to read there.
+    final fileId = song.id.toString();
+    final path = VideoRegistry.instance.sourceFor(song.id) != null
+        ? ''
+        : (song.data.startsWith('http') && cloudCache.isCached(fileId))
+        ? cloudCache.cacheFile(fileId).path
+        : song.data;
+    final cached = _rgDbCache[path];
+    if (cached != null) return cached;
+    final settings = _rgNow;
+    final db = await trackGainDbFor(path: path, settings: settings);
+    // A settings change while the file was being read makes this stale.
+    if (settings == _rgNow) {
+      if (_rgDbCache.length > 500) _rgDbCache.clear();
+      _rgDbCache[path] = db;
+    }
+    return db;
+  }
+
+  /// Newest Replay Gain request per player; an older one finishing late
+  /// must not overwrite it.
+  final Map<AudioPlayer, int> _rgRequest = Map.identity();
+
+  /// Gives the player now playing the Replay Gain of the track at [index].
+  ///
+  /// Used wherever one player changes track without a load of its own: a
+  /// gapless queue moving on. A tag read that finishes after something newer —
+  /// another request, a load, the queue moving on — is dropped; see
+  /// [shouldApplyGain].
+  Future<void> _applyReplayGain(int index) async {
+    if (index < 0 || index >= songs.length) return;
+    final player = handler.player;
+    // The index stream replays its last value (and may repeat the outgoing
+    // item's): nothing to redo for an index already gained.
+    if (_gainedIndex[player] == index) return;
+    final song = songs[index];
+    final request = _rgRequest[player] = (_rgRequest[player] ?? 0) + 1;
+    final seq = handler.engineGainSeqOf(player);
+    final db = await _replayGainDbFor(song);
+    final isQueue = player.audioSources.length > 1;
+    if (!shouldApplyGain(
+      requestAtStart: request,
+      requestNow: _rgRequest[player] ?? 0,
+      gainSeqAtStart: seq,
+      gainSeqNow: handler.engineGainSeqOf(player),
+      index: index,
+      playerIndexNow: isQueue ? player.currentIndex : null,
+      songStillMatches:
+          identical(handler.player, player) &&
+          index < songs.length &&
+          songs[index].id == song.id,
+    )) {
+      return;
+    }
+    handler.setEngineTrackGainDb(player, db, subject: song);
+    _gainedIndex[player] = index;
+    unawaited(_sendNextGain(player, index));
+  }
+
+  /// Works the Replay Gain out again for what [player] was last gained for —
+  /// after a settings change, for each of the two players.
+  Future<void> _regainPlayer(AudioPlayer player) async {
+    var song = handler.engineGainSubjectOf(player);
+    if (song is! SongModel) {
+      if (!identical(player, handler.player) ||
+          _songId < 0 ||
+          _songId >= songs.length) {
+        return;
+      }
+      song = songs[_songId];
+    }
+    final request = _rgRequest[player] = (_rgRequest[player] ?? 0) + 1;
+    final seq = handler.engineGainSeqOf(player);
+    final db = await _replayGainDbFor(song);
+    if (request != (_rgRequest[player] ?? 0) ||
+        seq != handler.engineGainSeqOf(player)) {
+      return;
+    }
+    handler.setEngineTrackGainDb(player, db, subject: song);
+    // Setting a current gain clears the native side's pending next gain (on
+    // both platforms), so a queue player is told its next item's again.
+    final at = player.currentIndex;
+    if (at != null) unawaited(_sendNextGain(player, at));
+  }
+
+  /// The queue index that plays after [index] on [player] (just_audio's own
+  /// `nextIndex` for the current item; the same rule applied to another item
+  /// for a seek's target).
+  int? _nextQueueIndex(AudioPlayer player, int index) {
+    int? next;
+    if (index == player.currentIndex) {
+      next = player.nextIndex;
+    } else if (player.loopMode == LoopMode.one) {
+      next = index;
+    } else {
+      final order = player.effectiveIndices;
+      final pos = order.indexOf(index);
+      if (pos >= 0) {
+        if (pos + 1 < order.length) {
+          next = order[pos + 1];
+        } else if (player.loopMode == LoopMode.all && order.isNotEmpty) {
+          next = order.first;
+        }
+      }
+    }
+    return nextGaplessIndex(playerNext: next, length: songs.length);
+  }
+
+  /// The URL the platform player is given for the queue entry at [index]: the
+  /// uri of its source, however the song is stored (a cached cloud track plays
+  /// from a cache file, a video from a manifest). Null for a source with no
+  /// plain uri.
+  String? _gainUriAt(AudioPlayer player, int index) {
+    final sources = player.audioSources;
+    if (index < 0 || index >= sources.length) return null;
+    var source = sources[index];
+    if (source is ClippingAudioSource) source = source.child;
+    return source is UriAudioSource ? source.uri.toString() : null;
+  }
+
+  final List<StreamSubscription<Object?>> _gainSubs = [];
+
+  /// Keeps the native "next item" gain right across a platform-id rebuild
+  /// (stop(), an error to idle) and across a seek, which can land the sink
+  /// on the other side of a boundary it has already crossed.
+  void _bindGainRecovery() {
+    for (final player in handler.enginePlayers) {
+      _gainSubs.add(
+        player.platformIdStream.listen((id) {
+          if (id == null || id.isEmpty) return;
+          _gainedIndex.remove(player);
+          final at = player.currentIndex;
+          if (identical(handler.player, player) &&
+              player.audioSources.length > 1 &&
+              at != null) {
+            unawaited(_sendNextGain(player, at));
+          }
+        }),
+      );
+      _gainSubs.add(
+        player.positionDiscontinuityStream.listen((d) {
+          if (d.reason != PositionDiscontinuityReason.seek) return;
+          if (!identical(handler.player, player) ||
+              player.audioSources.length <= 1) {
+            return;
+          }
+          final at = player.currentIndex;
+          if (at == null) return;
+          // The seek event fires inside seek(), before the index moves: a
+          // seek to another item still reports the outgoing index here, and
+          // the skip path has already gained the target. Only a seek within
+          // the item last gained needs re-applying.
+          if (_gainedIndex[player] != at) return;
+          _gainedIndex.remove(player);
+          unawaited(_applyReplayGain(at));
+        }),
+      );
+    }
+  }
+
+  /// Newest next-gain request per player; an older tag read must not land last.
+  final Map<AudioPlayer, int> _nextGainRequest = Map.identity();
+
+  /// The queue index each player's gain was last worked out for, so the index
+  /// stream replaying a value does not re-send it.
+  final Map<AudioPlayer, int> _gainedIndex = Map.identity();
+
+  /// Where a skip inside a queue is seeking to, and when it started. Until the
+  /// player's index reaches it, index events still naming another item (seek
+  /// replays the old index before the platform answers) must not re-gain the
+  /// player. Expires so a seek that never lands cannot block re-gains.
+  final Map<AudioPlayer, ({int index, DateTime at})> _seekTarget =
+      Map.identity();
+
+  /// Whether an index event for [player] should drive its Replay Gain.
+  bool _indexEventGains(AudioPlayer player, int index) {
+    final t = _seekTarget[player];
+    if (t == null) return true;
+    if (index == t.index ||
+        DateTime.now().difference(t.at) > const Duration(seconds: 3)) {
+      _seekTarget.remove(player);
+      return true;
+    }
+    return false;
+  }
+
+  /// Tells the native side the gain of the item that plays after [index], so
+  /// it is applied at the sample boundary rather than when `currentIndex`
+  /// catches up. Gapless queues only. Failures are swallowed: the Dart-side
+  /// re-gain on the index change is still there.
+  Future<void> _sendNextGain(AudioPlayer player, int index) async {
+    if (player.audioSources.length <= 1) return;
+    final next = _nextQueueIndex(player, index);
+    if (next == null) return;
+    final song = songs[next];
+    final request = _nextGainRequest[player] =
+        (_nextGainRequest[player] ?? 0) + 1;
+    try {
+      final db = await _replayGainDbFor(song);
+      final id = player.playerId;
+      if (id.isEmpty || !identical(handler.player, player)) return;
+      if (request != (_nextGainRequest[player] ?? 0)) return;
+      if (next >= songs.length || songs[next].id != song.id) return;
+      final uri = _gainUriAt(player, next);
+      if (uri == null) return;
+      await Channel.dspSetNextTrackGainDb(id, uri, db);
+    } catch (e) {
+      debugPrint('dspSetNextTrackGainDb: $e');
+    }
+  }
+
+  /// Works out the gain of the track after [index] ahead of time, so the next
+  /// boundary of a gapless queue needs no tag read.
+  void _prefetchReplayGain(int index) {
+    if (index < 0 || index + 1 >= songs.length) return;
+    _replayGainDbFor(songs[index + 1]).then<void>((_) {}, onError: (_) {});
   }
 
   set dvcEnabled(bool value) {
     _prefs.setBool("dvcEnabled", value);
     _dvcEnabled = value;
+    _dvcResumePending = false;
     if (value) {
       // Start at 0% (silence) so enabling DVC never blasts at full volume
       if (!_prefs.containsKey("dvcGain")) {
@@ -677,18 +1046,54 @@ class AppController with ChangeNotifier implements StationSink {
         _prefs.setDouble("dvcGain", _dvcGain);
       }
     }
-    for (final step in dvcToggleSteps(enable: value)) {
+    final gen = ++_dvcToggleGen;
+    // Suspended while the equalizer applies to all apps: only the setting
+    // changes, and the steps run when system-wide mode ends.
+    if (!systemWideActive) {
+      unawaited(_runDvcSteps(
+        dvcToggleSteps(enable: value),
+        gen,
+        stillWanted: () => _dvcEnabled == value && !systemWideActive,
+      ));
+    }
+    _pushHeadroom();
+    notifyListeners();
+  }
+
+  int _dvcToggleGen = 0;
+
+  /// Runs [steps] in order. A newer toggle (a later [_dvcToggleGen]) or a
+  /// [stillWanted] that has turned false supersedes it (e.g. DVC switched off
+  /// while the paused-buffer flush was awaited): stop so a stale enable cannot
+  /// fire.
+  Future<void> _runDvcSteps(
+    List<DvcStep> steps,
+    int gen, {
+    required bool Function() stillWanted,
+  }) async {
+    for (final step in steps) {
+      if (gen != _dvcToggleGen || !stillWanted()) return;
       switch (step) {
         case DvcStep.pushMasterVolume:
           _pushMasterVolume();
+        case DvcStep.flushIfPaused:
+          await _flushIfPaused();
         case DvcStep.enableDvc:
           Channel.enableDvc();
         case DvcStep.disableDvc:
           Channel.disableDvc();
       }
     }
-    _pushHeadroom();
-    notifyListeners();
+  }
+
+  /// A seek in place empties the AudioTrack's buffered unity-gain audio, so a
+  /// paused track does not blast at the raised system volume on resume.
+  Future<void> _flushIfPaused() async {
+    final p = handler.player;
+    if (p.processingState == ProcessingState.idle || p.playing) return;
+    try {
+      await p.seek(p.position).timeout(const Duration(milliseconds: 500));
+    } catch (_) {} // timeout or seek failure: continue the enable
   }
 
   set dvcGain(double value) {
@@ -702,7 +1107,7 @@ class AppController with ChangeNotifier implements StationSink {
   void _pushMasterVolume() {
     if (!Platform.isAndroid) return; // iOS has no DVC; master stays at 0 dB
     Channel.dspSetMasterVolumeDb(
-      masterVolumeFor(dvcEnabled: _dvcEnabled, dvcGainDb: _dvcGain),
+      masterVolumeFor(dvcEnabled: dvcRunning, dvcGainDb: _dvcGain),
     );
   }
 
@@ -715,13 +1120,69 @@ class AppController with ChangeNotifier implements StationSink {
   set globalEqEnabled(bool value) {
     _prefs.setBool("globalEqEnabled", value);
     _globalEqEnabled = value;
-    Channel.enableGlobalEq(value, preset: _activePresetName);
+    // DVC is suspended while the equalizer applies to all apps and resumes
+    // after (the stored setting never changes). Going on, the steps come first
+    // so the system volume is back before the platform equalizer starts;
+    // going off, the equalizer stops first.
+    final dvcSteps = Platform.isAndroid
+        ? systemWideDvcSteps(systemWideOn: value, dvcEnabled: _dvcEnabled)
+        : const <DvcStep>[];
+    if (value) _globalEqRequestedAt = DateTime.now();
+    _dvcResumePending = false;
+    final gen = ++_dvcToggleGen;
+    void runDvc() => unawaited(_runDvcSteps(
+      dvcSteps,
+      gen,
+      stillWanted: () => _globalEqEnabled == value && _dvcEnabled,
+    ));
+    if (value) runDvc();
+    Channel.enableGlobalEq(value, preset: _eq.selected);
+    if (!value) {
+      // DVC's enable raises the music stream to max whenever any app plays:
+      // from the background (the notification's Stop) that would blast another
+      // app, so it waits until Hype plays or is in front.
+      if (dvcSteps.isNotEmpty &&
+          deferDvcResume(
+            appInForeground: _appInForeground,
+            hypePlaying: _handler.player.playing,
+          )) {
+        _dvcResumePending = true;
+      } else {
+        runDvc();
+      }
+    }
+    // Headroom is the user's again (or DVC's, 0) with the mode change.
+    _pushHeadroom();
     if (value) {
       // Give the service a moment to start and detect sessions
       Future.delayed(const Duration(milliseconds: 800), refreshPlayingApps);
     } else {
       _playingApps = [];
     }
+    notifyListeners();
+  }
+
+  bool get _appInForeground {
+    try {
+      return WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    } catch (_) {
+      return false; // no binding: a headless isolate
+    }
+  }
+
+  /// Runs the DVC steps that were held back when system-wide mode ended in the
+  /// background. Called when Hype plays and when it comes to the foreground.
+  void resumeDvcIfPending() {
+    if (!_dvcResumePending) return;
+    _dvcResumePending = false;
+    if (systemWideActive || !_dvcEnabled || !Platform.isAndroid) return;
+    final gen = ++_dvcToggleGen;
+    unawaited(_runDvcSteps(
+      dvcToggleSteps(enable: true),
+      gen,
+      stillWanted: () => _dvcEnabled && !systemWideActive,
+    ));
+    _pushHeadroom();
     notifyListeners();
   }
 
@@ -821,6 +1282,8 @@ class AppController with ChangeNotifier implements StationSink {
   StreamSubscription<int?>? _indexSub;
   StreamSubscription<int?>? _sessionIdSub;
   StreamSubscription<String>? _dvcVolumeSub;
+  StreamSubscription<bool>? _globalEqStoppedSub;
+  DateTime _globalEqRequestedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // DVC volume overlay state
   bool _showDvcOverlay = false;
@@ -853,7 +1316,10 @@ class AppController with ChangeNotifier implements StationSink {
 
     // The last session comes back as a queue and a position; the player stays
     // empty until the first press of play, which is what loads it.
-    _handler.onBeforePlay = _resumePendingSession;
+    _handler.onBeforePlay = () async {
+      resumeDvcIfPending();
+      await _resumePendingSession();
+    };
     // The ticker only runs while playing, so without this a pause followed by a
     // swipe-kill loses up to its whole interval. The store debounces, so this
     // costs one write.
@@ -874,8 +1340,8 @@ class AppController with ChangeNotifier implements StationSink {
     // Re-bind all player streams after a crossfade player swap
     _handler.onPlayerSwapped = _rebindPlayerStreams;
 
-    // Apply DVC state on startup
-    if (_dvcEnabled) {
+    // Apply DVC state on startup (not while the equalizer applies to all apps)
+    if (dvcRunning) {
       _pushMasterVolume(); // before DVC raises the system stream
       Channel.enableDvc();
     }
@@ -883,7 +1349,13 @@ class AppController with ChangeNotifier implements StationSink {
     // Global EQ: check availability and restore state
     _initGlobalEq();
 
+    // Headphone suggestions; a missing audio session just means none.
+    unawaited(_autoEq.start().catchError(
+      (Object e) => debugPrint('AutoEq start failed: $e'),
+    ));
+
     _bindDvcVolumeButtons();
+    _bindGainRecovery();
     _bindProcessingState();
     _bindCurrentIndex();
     _bindPositionSampling();
@@ -931,7 +1403,7 @@ class AppController with ChangeNotifier implements StationSink {
     if (!Platform.isAndroid) return;
     _dvcVolumeSub?.cancel();
     _dvcVolumeSub = Channel.dvcVolumeButtonStream.listen((direction) {
-      if (!_dvcEnabled) return;
+      if (!dvcRunning) return;
       final step = _dvcFineSteps ? 0.3 : 1.5;
       if (direction == "up") {
         dvcGain = (_dvcGain + step).clamp(-30.0, 0.0);
@@ -1000,6 +1472,14 @@ class AppController with ChangeNotifier implements StationSink {
         // The outgoing player of a crossfade runs on into its own next entry
         // while it fades; that is not the app changing track.
         if (handler.crossfadeInFlight) return;
+        // A queue shares one player, so its Replay Gain follows the index —
+        // whoever moved it.
+        if (index != null &&
+            handler.player.audioSources.length > 1 &&
+            _indexEventGains(handler.player, index)) {
+          unawaited(_applyReplayGain(index));
+          _prefetchReplayGain(index);
+        }
         // Already the current track: whoever made it so — the `songId` setter
         // ahead of a skip, a crossfade's start, a reorder — has done the work
         // below. Re-running it counted the track twice, and the stream replays
@@ -1167,11 +1647,15 @@ class AppController with ChangeNotifier implements StationSink {
       final handoff = fadeMs <= 0;
 
       final Future<void> Function(AudioPlayer) load;
-      var gain = 1.0;
       final FutureOr<MediaItem?> Function() item;
       if (inQueue) {
         final sources = await _queueSources();
-        load = (p) => p.setAudioSources(sources, initialIndex: nextIdx);
+        final queueDb = await _replayGainDbFor(nextSong);
+        load = (p) {
+          handler.setEngineTrackGainDb(p, queueDb, subject: nextSong);
+          _gainedIndex.remove(p);
+          return p.setAudioSources(sources, initialIndex: nextIdx);
+        };
         item = () => _mediaItemFor(nextSong);
       } else {
         // An expired stream link is renewed on the way in, as every other
@@ -1179,13 +1663,15 @@ class AppController with ChangeNotifier implements StationSink {
         await _refreshTarget(nextIdx);
         final song = _songAt(nextIdx, nextSong.id);
         if (song == null) return;
-        final prepared = await prepareTrack(song, replayGain: _replayGain);
+        final prepared = await prepareTrack(song, replayGain: _rgNow);
         if (prepared == null) {
           _crossfadeFailedIdx = nextIdx;
           return;
         }
-        load = (p) => p.setAudioSource(prepared.source);
-        gain = prepared.gain;
+        load = (p) {
+          handler.setEngineTrackGainDb(p, prepared.rgDb, subject: song);
+          return p.setAudioSource(prepared.source);
+        };
         item = () => prepared.item;
       }
 
@@ -1193,7 +1679,6 @@ class AppController with ChangeNotifier implements StationSink {
       final fade = handler.crossfade(
         load: load,
         fadeMs: fadeMs,
-        targetGain: gain,
         mediaItem: item,
         startAt: handoff ? null : duration - Duration(milliseconds: fadeMs),
         startAtEnd: handoff,
@@ -1277,13 +1762,18 @@ class AppController with ChangeNotifier implements StationSink {
     final load = () async {
       await handler.abortCrossfade();
       final sources = await _queueSources();
+      final rgDb = await _replayGainDbFor(song);
       if (_overtaken(token)) return;
       await handler.crossfade(
-        load: (p) => p.setAudioSources(
-          sources,
-          initialIndex: index,
-          initialPosition: initialPosition,
-        ),
+        load: (p) {
+          handler.setEngineTrackGainDb(p, rgDb, subject: song);
+          _gainedIndex.remove(p);
+          return p.setAudioSources(
+            sources,
+            initialIndex: index,
+            initialPosition: initialPosition,
+          );
+        },
         fadeMs: fade.crossfadeMs,
         earlyFadeOutMs: fade.earlyFadeOutMs,
         mediaItem: () => _mediaItemFor(song),
@@ -1463,7 +1953,7 @@ class AppController with ChangeNotifier implements StationSink {
     return loadAudioSource(
       handler,
       songList[index],
-      replayGain: _replayGain,
+      replayGain: _rgNow,
       initialPosition: initialPosition,
       fade: fade,
     );
@@ -1612,6 +2102,9 @@ class AppController with ChangeNotifier implements StationSink {
           await handler.player.addAudioSources([
             for (final s in songs.sublist(from)) _gaplessSourceFor(s),
           ]);
+          // The last item's "next" may now exist.
+          final at = handler.player.currentIndex;
+          if (at != null) unawaited(_sendNextGain(handler.player, at));
         } catch (e) {
           // A queue that won't extend still plays what it already holds.
           debugPrint('Queue append: $e');
@@ -1683,6 +2176,16 @@ class AppController with ChangeNotifier implements StationSink {
     // That's fine — just_audio handles cancellation gracefully.
     _loadingQueue = true;
     final sources = await _queueSources();
+    // The starting track's Replay Gain, worked out before the overtaken check
+    // so a newer load arriving during the tag read is caught by it. A start
+    // index outside the queue gets the untagged preamp rather than failing the
+    // whole load.
+    final startSong = startIndex >= 0 && startIndex < songs.length
+        ? songs[startIndex]
+        : null;
+    final startDb = startSong != null
+        ? await _replayGainDbFor(startSong)
+        : await trackGainDbFor(path: '', settings: _rgNow);
     if (_overtaken(token)) {
       _loadingQueue = false;
       return;
@@ -1691,14 +2194,19 @@ class AppController with ChangeNotifier implements StationSink {
     // start whatever it is given at once.
     if (!autoPlay && handler.player.playing) await handler.player.pause();
     try {
+      // Ahead of its source; later tracks are gained as the index moves — see
+      // [_bindCurrentIndex].
+      handler.setEngineTrackGainDb(handler.player, startDb, subject: startSong);
       await handler.player.setAudioSources(
         sources,
         initialIndex: startIndex,
         initialPosition: initialPosition,
       );
-      // Replay gain is per track and a queue shares one player gain, so a
-      // queue plays at unity — and says so, rather than inheriting whatever
-      // the last single track or crossfade left on this player.
+      // The item after the first one, gained at the boundary into it.
+      _gainedIndex[handler.player] = startIndex;
+      unawaited(_sendNextGain(handler.player, startIndex));
+      // Player volume stays at unity — and says so, rather than inheriting
+      // whatever the last video or crossfade left on this player.
       handler.setTrackGain(handler.player, 1.0);
       await _updateMediaItemForIndex(startIndex);
       if (autoPlay) {
@@ -1770,8 +2278,20 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _loadSettings() {
-    // First: it inspects which prefs earlier versions wrote.
+    // First: it inspects which prefs earlier versions wrote, and reads the
+    // legacy curve for the boost-seeded headroom.
     _dspCore = DspCoreSettings.load(_prefs, isIos: Platform.isIOS);
+    // Then the equalizer, before anything below writes a prefs key that
+    // `isExistingInstall` looks at (DspCoreSettings.save writes
+    // `limiterEnabled`): a fresh install must still read as fresh here.
+    _eqSettings = EqualizerSettings.load(_prefs);
+    _eq = EqState.load(_prefs, centres: bandCentres(_eqSettings));
+    // Pin what the loads decided so it survives later launches. Without it a
+    // fresh install would read as existing from its second launch
+    // (`detectAndApplyDevicePreset` writes the legacy `lastOutputDevice` on
+    // every launch), and a migration would run again.
+    unawaited(_eqSettings.save(_prefs));
+    unawaited(_eq.saveTo(_prefs));
     // Pin the install-dependent headroom default so it survives later launches.
     if (!_prefs.containsKey("dspHeadroomDb")) unawaited(_dspCore.save(_prefs));
     _appMode = AppMode.values[_prefs.getInt("appMode") ?? 0];
@@ -1807,7 +2327,7 @@ class AppController with ChangeNotifier implements StationSink {
     // Audio features
     _fades = FadeSettings.load(_prefs);
     _handler.fades = _fades;
-    _replayGain = _prefs.getBool("replayGain") ?? false;
+    _replayGain = ReplayGainSettings.load(_prefs);
     _dvcEnabled = _prefs.getBool("dvcEnabled") ?? false;
     _dvcGain = _prefs.getDouble("dvcGain") ?? -30.0;
     _dvcFineSteps = _prefs.getBool("dvcFineSteps") ?? false;
@@ -1827,38 +2347,21 @@ class AppController with ChangeNotifier implements StationSink {
           ? 180.0
           : 120.0;
     }
-    // EQ band count
-    _eqBandCount = _prefs.getInt("eqBandCount") ?? 32;
     // Preamp & MBC
     _mbcEnabled = _prefs.getBool("mbcEnabled") ?? false;
     // Speaker correction EQ
     _speakerEqEnabled = _prefs.getBool("speakerEqEnabled") ?? false;
     _activeSpeakerProfile = _prefs.getString("activeSpeakerProfile");
-    // 32-band Graphic EQ
+    // Graphic EQ (the curve and presets are loaded above)
     _graphicEqEnabled = _prefs.getBool("graphicEqEnabled") ?? false;
-    _activePresetName = _prefs.getString("activePresetName") ?? 'Flat';
     _linkAllDevices = _prefs.getBool("linkAllDevices") ?? true;
     _lastOutputDevice = _prefs.getString("lastOutputDevice") ?? 'speaker';
-    final graphicJson = _prefs.getString("graphicBandGains");
-    if (graphicJson != null) {
-      try {
-        _graphicBandGains = (json.decode(graphicJson) as List)
-            .map((e) => (e as num).toDouble())
-            .toList();
-      } catch (_) {}
-    }
     final parametricJson = _prefs.getString("parametricPoints");
     if (parametricJson != null) {
       try {
         _parametricPoints = (json.decode(parametricJson) as List)
             .map((e) => ParametricPoint.fromJson(e as Map<String, dynamic>))
             .toList();
-      } catch (_) {}
-    }
-    final presetsJson = _prefs.getString("eqPresets");
-    if (presetsJson != null) {
-      try {
-        _savedPresets = EqPreset.decodeList(presetsJson);
       } catch (_) {}
     }
     // Visualizer fine-tuning
@@ -1909,11 +2412,7 @@ class AppController with ChangeNotifier implements StationSink {
     // Tone controls
     _toneEnabled = _prefs.getBool("toneEnabled") ?? false;
     _bassGain = _prefs.getDouble("bassGain") ?? 0.0;
-    _bassFreq = _prefs.getDouble("bassFreq") ?? 80.0;
-    _bassQ = _prefs.getDouble("bassQ") ?? 0.707;
     _trebleGain = _prefs.getDouble("trebleGain") ?? 0.0;
-    _trebleFreq = _prefs.getDouble("trebleFreq") ?? 10000.0;
-    _trebleQ = _prefs.getDouble("trebleQ") ?? 0.707;
     // Load speaker profiles from asset, then apply DSP params
     loadSpeakerProfiles().then((_) => _applyAllDspParams());
   }
@@ -2058,7 +2557,7 @@ class AppController with ChangeNotifier implements StationSink {
   /// backgrounded so nothing is lost if the process is killed).
   void flushPendingWrites() {
     if (_playCountPersistTimer?.isActive ?? false) _persistPlayCounts();
-    if (_graphicGainsPersistTimer?.isActive ?? false) commitGraphicGains();
+    if (_eqPersistTimer?.isActive ?? false) commitEqGains();
     StreamingDataGuard.instance.flushPendingUsage();
   }
 
@@ -2438,8 +2937,63 @@ class AppController with ChangeNotifier implements StationSink {
   /// Check global EQ availability and restore state if previously enabled.
   Future<void> _initGlobalEq() async {
     _globalEqAvailable = await Channel.isGlobalEqAvailable();
+    _globalEqProbed = true;
     if (_globalEqAvailable && _globalEqEnabled) {
-      Channel.enableGlobalEq(true, preset: _activePresetName);
+      _globalEqRequestedAt = DateTime.now();
+      Channel.enableGlobalEq(true, preset: _eq.selected);
+    } else if (Platform.isAndroid && _globalEqEnabled && dvcRunning) {
+      // System-wide mode is on in the settings but cannot run here (no channel
+      // yet, as in a headless start): the DVC start-up held back for it runs.
+      _pushMasterVolume();
+      Channel.enableDvc();
+      _pushHeadroom();
+    }
+    notifyListeners();
+    // The notification's Stop ends the service without Dart's involvement.
+    if (Platform.isAndroid && _globalEqAvailable) {
+      _globalEqStoppedSub?.cancel();
+      _globalEqStoppedSub = Channel.globalEqStoppedStream.listen(
+        (_) => _globalEqEnded(),
+        onError: (Object e) => debugPrint('Global EQ stop events: $e'),
+      );
+    }
+  }
+
+  /// The service is no longer running although system-wide mode is on here:
+  /// take the same path as switching it off (DVC resumes, controls unlock).
+  void _globalEqEnded() {
+    if (_globalEqEnabled) globalEqEnabled = false;
+  }
+
+  /// Compares system-wide mode with the service on app resume, for the case
+  /// the stop event could not be delivered (no engine at the time). A service
+  /// that was only just asked to start is given a few seconds to come up.
+  Future<void> resyncGlobalEq() async {
+    if (!Platform.isAndroid) return;
+    if (!_globalEqAvailable) {
+      // A headless start has no channels: ask again now that there may be
+      // some. The setting may also have been turned off by the notification's
+      // Stop while no isolate was alive; read what native wrote.
+      await _prefs.reload();
+      _globalEqEnabled = _prefs.getBool("globalEqEnabled") ?? false;
+      await _initGlobalEq();
+      return;
+    }
+    if (!_globalEqEnabled) return;
+    if (DateTime.now().difference(_globalEqRequestedAt) <
+        const Duration(seconds: 5)) {
+      return;
+    }
+    // A channel error is "unknown", not "stopped".
+    final running = await Channel.isGlobalEqRunning();
+    if (running != false) return;
+    if (await Channel.globalEqStoppedByUser() == true) {
+      _globalEqEnded();
+    } else {
+      // Not running and nobody stopped it: a start that failed. The setting
+      // stays on and the start is tried again.
+      _globalEqRequestedAt = DateTime.now();
+      Channel.enableGlobalEq(true, preset: _eq.selected);
     }
   }
 
@@ -2452,7 +3006,9 @@ class AppController with ChangeNotifier implements StationSink {
     // EQ
     Channel.enableEq(_graphicEqEnabled);
     Channel.setPreamp(_dspCore.preampDb);
-    Channel.setGraphicAllBands(_graphicBandGains);
+    // Layout and gains in one call, even when it is the legacy grid, so both
+    // platforms run the same Q-from-spacing layout from the first track.
+    _pushEqLayout();
     _applyParametricToNative();
     // MBC
     Channel.enableMbc(_mbcEnabled);
@@ -2477,11 +3033,12 @@ class AppController with ChangeNotifier implements StationSink {
     // Tone controls
     Channel.dspSetToneEnabled(_toneEnabled);
     Channel.dspSetBassGain(_bassGain);
-    Channel.dspSetBassFreq(_bassFreq);
-    Channel.dspSetBassQ(_bassQ);
+    Channel.dspSetBassFreq(_eqSettings.bassFreq);
+    Channel.dspSetBassQ(_eqSettings.bassQ);
     Channel.dspSetTrebleGain(_trebleGain);
-    Channel.dspSetTrebleFreq(_trebleFreq);
-    Channel.dspSetTrebleQ(_trebleQ);
+    Channel.dspSetTrebleFreq(_eqSettings.trebleFreq);
+    Channel.dspSetTrebleQ(_eqSettings.trebleQ);
+    Channel.dspSetSmoothGains(_eqSettings.smoothGains);
     // Output limiter
     Channel.dspSetLimiterEnabled(_dspCore.limiter);
     // Core: headroom, balance, mono, tempo
@@ -2735,7 +3292,7 @@ class AppController with ChangeNotifier implements StationSink {
       await loadAudioSource(
         handler,
         songs[_songId],
-        replayGain: _replayGain,
+        replayGain: _rgNow,
         initialPosition: position,
         autoPlay: false,
       );
@@ -2776,7 +3333,7 @@ class AppController with ChangeNotifier implements StationSink {
       await loadAudioSource(
         handler,
         songs[index],
-        replayGain: _replayGain,
+        replayGain: _rgNow,
         initialPosition: position,
         autoPlay: autoPlay,
         fade: fade,
@@ -2935,6 +3492,9 @@ class AppController with ChangeNotifier implements StationSink {
   /// every launch while its neighbour in the same row did not.
   Future<void> setLoopMode(LoopMode mode) async {
     await handler.setLoopMode(mode);
+    // The item after this one depends on the loop mode (repeat-one: itself).
+    final at = handler.player.currentIndex;
+    if (at != null) unawaited(_sendNextGain(handler.player, at));
     unawaited(_prefs.setInt('loopMode', mode.index));
     notifyListeners();
   }
@@ -3138,6 +3698,8 @@ class AppController with ChangeNotifier implements StationSink {
 
     // Invalidate fingerprint cache for this file
     fingerprintService.invalidateCache(song.data);
+    // Its tags may have changed, and with them its Replay Gain.
+    _rgDbCache.remove(song.data);
 
     notifyListeners();
 
@@ -3151,7 +3713,7 @@ class AppController with ChangeNotifier implements StationSink {
     if (isCurrentSong) {
       _lyricsService.invalidateCache(song.id);
       _lyricsLoadTarget = null;
-      loadAudioSource(_handler, song, replayGain: _replayGain);
+      loadAudioSource(_handler, song, replayGain: _rgNow);
       _loadLyricsForCurrentSong();
     }
   }
@@ -3252,6 +3814,19 @@ class AppController with ChangeNotifier implements StationSink {
       if (_overtaken(token)) return;
       final wasAudible = handler.isAudible;
       await handler.declickOut();
+      // Re-gained before the seek, or the new track's first moments play at
+      // the old one's gain.
+      if (index >= 0 && index < songs.length) {
+        final song = songs[index];
+        final db = await _replayGainDbFor(song);
+        if (_overtaken(token)) return;
+        handler.setEngineTrackGainDb(handler.player, db, subject: song);
+        _gainedIndex[handler.player] = index;
+        // Then the item after it, and only then the seek.
+        await _sendNextGain(handler.player, index);
+        if (_overtaken(token)) return;
+      }
+      _seekTarget[handler.player] = (index: index, at: DateTime.now());
       await handler.player.seek(Duration.zero, index: index);
       if (wasAudible) {
         handler.startPlayback(fadeInMs: kDeclickMs);

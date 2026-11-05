@@ -340,6 +340,10 @@ import AVFoundation
             dsp.setHeadroomDb(floatArg(args, "value"))
             result(nil)
 
+        case "dspSetSmoothGains":
+            dsp.setSmoothGains(args?["enabled"] as? Bool ?? false)
+            result(nil)
+
         case "dspSetSpeakerPreampDb":
             dsp.setSpeakerPreampDb(floatArg(args, "value"))
             result(nil)
@@ -347,6 +351,15 @@ import AVFoundation
         case "dspSetTrackGainDb":
             dsp.setTrackGainDb(floatArg(args, "value"),
                                playerId: args?["playerId"] as? String ?? "")
+            result(nil)
+
+        case "rgReadTags":
+            readReplayGainTags(uri: args?["uri"] as? String ?? "", result: result)
+
+        case "dspSetNextTrackGainDb":
+            dsp.setNextTrackGainDb(floatArg(args, "dB"),
+                                   uri: args?["uri"] as? String ?? "",
+                                   playerId: args?["playerId"] as? String ?? "")
             result(nil)
 
         case "dspSetMasterVolumeDb":
@@ -379,6 +392,14 @@ import AVFoundation
 
         case "getGraphicAllBands":
             result([Double]())
+
+        case "setGraphicLayout":
+            // `cutoffs` is Android-only (DynamicsProcessing band edges).
+            if let freqs = args?["freqs"] as? [Double],
+               let gains = args?["gains"] as? [Double] {
+                dsp.setGraphicLayout(freqs.map { Float($0) }, gains: gains.map { Float($0) })
+            }
+            result(nil)
 
         // ==================== 32-Band Parametric EQ ====================
         case "setParametricBand":
@@ -863,6 +884,56 @@ import AVFoundation
             DispatchQueue.main.async {
                 result(metadata)
             }
+        }
+    }
+
+    /// The Replay Gain tag strings of a Music-library item (`ipod-library://`),
+    /// keyed trackGain / trackPeak / albumGain / albumPeak; nil when the item
+    /// has none, is DRM-protected or cannot be read. Dart parses the numbers.
+    private func readReplayGainTags(uri: String, result: @escaping FlutterResult) {
+        guard uri.hasPrefix("ipod-library://"), let url = URL(string: uri) else {
+            result(nil)
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            var found: [String: String] = [:]
+            let asset = AVURLAsset(url: url)
+            if !asset.hasProtectedContent {
+                let wanted: [(tag: String, key: String)] = [
+                    ("replaygain_track_gain", "trackGain"),
+                    ("replaygain_track_peak", "trackPeak"),
+                    ("replaygain_album_gain", "albumGain"),
+                    ("replaygain_album_peak", "albumPeak"),
+                ]
+                for format in asset.availableMetadataFormats {
+                    for item in asset.metadata(forFormat: format) {
+                        // Where the tag's name sits depends on the format: ID3
+                        // TXXX keeps it as the description (an extra attribute),
+                        // an iTunes freeform atom in its key or extra attributes.
+                        var names: [String] = []
+                        if let k = item.key as? String { names.append(k) }
+                        if let id = item.identifier?.rawValue { names.append(id) }
+                        if let attrs = item.extraAttributes {
+                            for (_, v) in attrs {
+                                if let s = v as? String { names.append(s) }
+                            }
+                        }
+                        let hay = names.joined(separator: " ").lowercased()
+                        guard let hit = wanted.first(where: { hay.contains($0.tag) }),
+                              found[hit.key] == nil else { continue }
+                        var text = item.stringValue
+                        if text == nil, let data = item.dataValue {
+                            text = String(data: data, encoding: .utf8)
+                        }
+                        if text == nil, let n = item.numberValue { text = "\(n)" }
+                        let trimmed = text?
+                            .trimmingCharacters(in: .whitespacesAndNewlines
+                                .union(CharacterSet(charactersIn: "\u{0}")))
+                        if let t = trimmed, !t.isEmpty { found[hit.key] = t }
+                    }
+                }
+            }
+            DispatchQueue.main.async { result(found.isEmpty ? nil : found) }
         }
     }
 

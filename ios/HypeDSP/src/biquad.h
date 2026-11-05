@@ -176,6 +176,9 @@ struct BiquadDesign {
 // Coefficient crossfade (~96 samples / ~2ms at 48kHz) to prevent clicks.
 class Biquad {
 public:
+    // Length of the coefficient crossfade, in samples.
+    static constexpr int FADE_LENGTH = 96;
+
     Biquad() { reset(); }
 
     void setCoefficients(const BiquadCoeffs& c) {
@@ -194,6 +197,14 @@ public:
         target_ = c;
         fadeSamples_ = 0;
         initialized_ = true;
+    }
+
+    // True while a coefficient crossfade is still running.
+    bool fading() const { return fadeSamples_ > 0; }
+
+    // Zero the delay states only; coefficients and any running fade stay.
+    void clearState() {
+        s1L_ = s1R_ = s2L_ = s2R_ = 0.0f;
     }
 
     void reset() {
@@ -239,8 +250,6 @@ public:
     }
 
 private:
-    static constexpr int FADE_LENGTH = 96;
-
     BiquadCoeffs current_;
     BiquadCoeffs target_;
     BiquadCoeffs fadeFrom_;

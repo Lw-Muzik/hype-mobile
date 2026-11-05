@@ -12,7 +12,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 a="$repo/android/app/src/main/cpp"
 i="$repo/ios/HypeDSP/src"
-for h in output_stages.h limiter.h stereo_expander.h; do
+for h in graphic_eq.h smooth_gains.h tone_controls.h biquad.h parametric_eq.h output_stages.h limiter.h stereo_expander.h; do
   if ! cmp -s "$a/$h" "$i/$h"; then
     echo "$h differs between Android and iOS:" >&2
     diff "$a/$h" "$i/$h" >&2 || true

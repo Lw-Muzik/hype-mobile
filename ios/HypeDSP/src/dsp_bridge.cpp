@@ -52,6 +52,14 @@ void dsp_set_headroom_db(void* handle, float dB) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setHeadroomDb(dB);
 }
 
+void dsp_set_smooth_gains(void* handle, bool on) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setSmoothGains(on);
+}
+
+void dsp_set_system_volume_db(void* handle, float dB) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setSystemVolumeDb(dB);
+}
+
 void dsp_set_track_gain_db(void* handle, float dB) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setTrackGainDb(dB);
 }
@@ -79,6 +87,12 @@ void dsp_set_graphic_band_gain(void* handle, int band, float dB) {
 
 void dsp_set_graphic_all_bands(void* handle, const float* gains, int count) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setGraphicAllBands(gains, count);
+}
+
+void dsp_set_graphic_layout(void* handle, const float* centresHz,
+                            const float* gainsDb, int count) {
+    if (handle) static_cast<RoomDSPEngine*>(handle)->setGraphicLayout(
+        centresHz, count, gainsDb);
 }
 
 void dsp_set_parametric_band(void* handle, int band, float freq, float gainDb,
