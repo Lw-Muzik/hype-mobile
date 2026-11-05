@@ -73,7 +73,8 @@ String? bestThumbnail(Object? thumbs) {
     if (url is! String || url.isEmpty) continue;
     final width = ptr(thumb, 'width');
     final height = ptr(thumb, 'height');
-    final area = (width is num ? width.toInt() : 0) *
+    final area =
+        (width is num ? width.toInt() : 0) *
         (height is num ? height.toInt() : 0);
     if (area > bestArea) {
       bestArea = area;
@@ -132,9 +133,12 @@ double? parseDuration(String? raw) {
 
 /// The text of one flexible column of a list row.
 String? flexText(Object? row, int column) => joinRuns(
-      ptr(row, 'flexColumns/$column/musicResponsiveListItemFlexColumnRenderer'
-          '/text/runs'),
-    );
+  ptr(
+    row,
+    'flexColumns/$column/musicResponsiveListItemFlexColumnRenderer'
+    '/text/runs',
+  ),
+);
 
 /// Where a list row states what kind of video it is: hung off the play button
 /// in its thumbnail overlay.

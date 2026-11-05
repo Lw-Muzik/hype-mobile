@@ -183,8 +183,8 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
     bool backgroundAlways = false,
     ConnectServiceBridge? serviceBridge,
     Future<void> Function()? requestNotifications,
-  })  : _nowUs = nowUs ?? timelineNowUs,
-        _serviceBridge = serviceBridge {
+  }) : _nowUs = nowUs ?? timelineNowUs,
+       _serviceBridge = serviceBridge {
     _enabled = prefs.getBool(enabledKey) ?? false;
     _presence = ConnectPresence(
       onWanted: _onWanted,
@@ -470,7 +470,10 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
       localState: _stateSource,
       pauseLocal: _player.pause,
       playLocal: (command) => _executor!.execute(
-        CmdFrame(id: 'transfer-${DateTime.now().microsecondsSinceEpoch}', cmd: command),
+        CmdFrame(
+          id: 'transfer-${DateTime.now().microsecondsSinceEpoch}',
+          cmd: command,
+        ),
       ),
       select: (id) => client.send(SelectFrame(id)),
       nameOf: (id) {
@@ -546,7 +549,8 @@ class HypeConnect extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final foreground = state == AppLifecycleState.resumed ||
+    final foreground =
+        state == AppLifecycleState.resumed ||
         state == AppLifecycleState.inactive;
     _presence.foreground = foreground;
     // Resuming is also the moment to start a service that could not be started

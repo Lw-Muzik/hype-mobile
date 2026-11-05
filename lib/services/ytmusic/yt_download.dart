@@ -95,7 +95,9 @@ class YtDownloader {
       // reads, and only the finished file goes where music lives. `.part`
       // while it transfers, so a failed transfer is never mistaken for audio;
       // `.m4a` once complete, since iOS picks its reader by extension.
-      final work = Directory('${(await getTemporaryDirectory()).path}/yt_downloads');
+      final work = Directory(
+        '${(await getTemporaryDirectory()).path}/yt_downloads',
+      );
       if (!work.existsSync()) await work.create(recursive: true);
       final partial = File('${work.path}/${track.videoId}.part');
       raw = File('${work.path}/${track.videoId}.m4a');

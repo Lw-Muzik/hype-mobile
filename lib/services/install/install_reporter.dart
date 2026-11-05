@@ -43,12 +43,12 @@ class InstallDetails {
   final String? appVersion;
 
   Map<String, dynamic> toJson() => {
-        'platform': platform,
-        'os': platform,
-        if (osVersion != null) 'osVersion': osVersion,
-        if (deviceModel != null) 'deviceModel': deviceModel,
-        if (appVersion != null) 'appVersion': appVersion,
-      };
+    'platform': platform,
+    'os': platform,
+    if (osVersion != null) 'osVersion': osVersion,
+    if (deviceModel != null) 'deviceModel': deviceModel,
+    if (appVersion != null) 'appVersion': appVersion,
+  };
 }
 
 class InstallReporter {
@@ -60,12 +60,12 @@ class InstallReporter {
     DateTime Function()? now,
     String? apiBase,
     this.pingEvery = const Duration(hours: 6),
-  })  : _prefsOverride = prefs,
-        _installId = installId ?? hypeInstallId,
-        _details = details ?? _deviceDetails,
-        _post = post ?? _httpPost,
-        _now = now ?? DateTime.now,
-        _api = apiBase ?? AppConfig.hypeMuzikApiBase;
+  }) : _prefsOverride = prefs,
+       _installId = installId ?? hypeInstallId,
+       _details = details ?? _deviceDetails,
+       _post = post ?? _httpPost,
+       _now = now ?? DateTime.now,
+       _api = apiBase ?? AppConfig.hypeMuzikApiBase;
 
   static final InstallReporter instance = InstallReporter();
 
@@ -93,8 +93,9 @@ class InstallReporter {
       final registered = prefs.getString(_kRegistered) == id;
       final lastMs = prefs.getInt(_kLastAt);
       if (registered && lastMs != null) {
-        final age =
-            _now().difference(DateTime.fromMillisecondsSinceEpoch(lastMs));
+        final age = _now().difference(
+          DateTime.fromMillisecondsSinceEpoch(lastMs),
+        );
         if (age < pingEvery) return;
       }
       final body = (await _details()).toJson();
@@ -154,9 +155,11 @@ class InstallReporter {
 
   static Future<int> _httpPost(Uri url, Map<String, dynamic> body) async {
     final res = await http
-        .post(url,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(body))
+        .post(
+          url,
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
         .timeout(const Duration(seconds: 8));
     return res.statusCode;
   }

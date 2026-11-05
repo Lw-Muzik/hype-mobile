@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eq_app/audio/eq/equalizer_settings.dart';
 import 'package:eq_app/pages/Settings.dart';
+import 'package:eq_app/pages/audio_sub_page.dart';
 import 'package:eq_app/pages/equalizer_settings_section.dart';
 
 class _Calls {
@@ -225,11 +226,14 @@ void main() {
     expect(calls.resets, 1);
   });
 
-  test('every label has a search entry under Equalizer', () {
+  test('every label has a search entry under Audio > Equalizer', () {
     for (final label in EqualizerSettingsSection.labels) {
       expect(
         kSettingsIndex.where(
-          (e) => e.label == label && e.category == SettingsCategory.equalizer,
+          (e) =>
+              e.label == label &&
+              e.category == SettingsCategory.audio &&
+              e.subPage == AudioSubPage.equalizer,
         ),
         isNotEmpty,
         reason: label,

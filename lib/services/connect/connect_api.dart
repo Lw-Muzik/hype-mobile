@@ -69,8 +69,8 @@ class ConnectApi {
         ..body = jsonEncode(const <String, Object?>{});
     }
     final streamed = await _client.send(request).timeout(requestTimeout);
-    final response =
-        await http.Response.fromStream(streamed).timeout(requestTimeout);
+    final response = await http.Response.fromStream(streamed)
+        .timeout(requestTimeout);
     return ConnectAccount.decodeResponse(response);
   }
 }

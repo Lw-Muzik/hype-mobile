@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import '/Helpers/audio_visualizer.dart';
-import '/Helpers/channel.dart';
 import '/routes/routes.dart';
 import '/controllers/app_controller.dart';
 import '/widgets/body.dart';
@@ -18,12 +16,8 @@ import '../onboarding/interactions_guide.dart';
 import '../services/streaming_data_guard.dart';
 import '../services/share_service.dart';
 import '../services/connect/hype_connect.dart';
-import 'crossfade_settings_section.dart';
-import 'equalizer_settings_section.dart';
 import 'hype_connect_page.dart';
-import 'replay_gain_settings_section.dart';
 import 'stream_server.dart';
-import 'volume_controls.dart';
 
 import '/widgets/bottom_player.dart';
 import '../services/radio/radio_queue.dart';
@@ -31,11 +25,9 @@ import '../services/ytmusic/yt_download_repair.dart';
 import '/controllers/library_controller.dart';
 import 'package:just_audio/just_audio.dart' show UriAudioSource;
 import '../themes/ember.dart';
-import 'audio_focus_settings_section.dart';
+import 'audio_settings_page.dart';
+import 'audio_sub_page.dart';
 import 'headset_settings_section.dart';
-import 'dvc_settings_section.dart';
-import 'advanced_settings_section.dart';
-import 'output_profiles_page.dart';
 
 /// One group of settings, and the sections it gathers.
 ///
@@ -52,9 +44,7 @@ enum SettingsCategory {
   appMode('App Mode', Icons.swap_horiz_rounded,
       'Full player, or equalizer only', _SettingsGroup.playback),
   playback('Playback', Icons.play_circle_outline_rounded,
-      'Replay gain, audio focus, autoplay', _SettingsGroup.playback),
-  crossfade('Crossfade & Gapless', Icons.compare_arrows_rounded,
-      'Fading between tracks, on skip, pause and seek', _SettingsGroup.playback),
+      'Autoplay and related tracks', _SettingsGroup.playback),
   headset('Headset & Bluetooth', Icons.headset_rounded,
       'Resume on connect, pause on disconnect, headset buttons',
       _SettingsGroup.playback),
@@ -62,10 +52,9 @@ enum SettingsCategory {
       'Data saver and cellular limits', _SettingsGroup.playback),
 
   // ── Sound ──
-  equalizer('Equalizer', Icons.equalizer_rounded,
-      'Bands, presets, global EQ', _SettingsGroup.sound),
-  tone('Tone & Effects', Icons.tune_rounded,
-      'Bass, treble, enhancement', _SettingsGroup.sound),
+  audio('Audio', Icons.graphic_eq_rounded,
+      'Equalizer, effects, crossfade, replay gain, volume, outputs',
+      _SettingsGroup.sound),
 
   // ── Look ──
   appearance('Appearance', Icons.palette_outlined,
@@ -116,18 +105,36 @@ enum _SettingsGroup {
 /// and the whole point is to find a setting without knowing where it is.
 class SettingsEntry {
   const SettingsEntry(this.label, this.category, [this.keywords = ''])
-      : androidOnly = false;
+      : androidOnly = false,
+        subPage = null;
 
   /// A setting iOS does not have: hidden there, and left out of its search.
   const SettingsEntry.android(this.label, this.category,
       [this.keywords = ''])
-      : androidOnly = true;
+      : androidOnly = true,
+        subPage = null;
+
+  /// A control on one of the Audio sub-pages.
+  const SettingsEntry.audio(this.label, AudioSubPage this.subPage,
+      [this.keywords = ''])
+      : category = SettingsCategory.audio,
+        androidOnly = false;
+
+  /// A control on an Audio sub-page that only Android has.
+  const SettingsEntry.audioAndroid(this.label, AudioSubPage this.subPage,
+      [this.keywords = ''])
+      : category = SettingsCategory.audio,
+        androidOnly = true;
 
   final String label;
   final SettingsCategory category;
 
   /// Extra words someone might reach for. "loudness" finds Replay Gain.
   final String keywords;
+
+  /// For an [SettingsCategory.audio] entry, the Audio sub-page that holds the
+  /// control — a search result opens that page rather than the Audio list.
+  final AudioSubPage? subPage;
 
   /// True for a setting only Android has.
   final bool androidOnly;
@@ -139,72 +146,76 @@ class SettingsEntry {
     if (q.isEmpty) return false;
     return label.toLowerCase().contains(q) ||
         keywords.toLowerCase().contains(q) ||
+        (subPage?.title.toLowerCase().contains(q) ?? false) ||
         category.title.toLowerCase().contains(q);
   }
 }
 
 const kSettingsIndex = <SettingsEntry>[
   SettingsEntry('App mode', SettingsCategory.appMode, 'player equalizer only'),
-  SettingsEntry('Auto-advance fading', SettingsCategory.crossfade,
+  SettingsEntry.audio('Audio Info', AudioSubPage.info,
+      'processing chain codec sample rate channels bitrate output route '
+      'limiter what is playing'),
+  SettingsEntry.audio('Effects', AudioSubPage.effects,
+      'space reverb dynamics compressor speaker correction tone'),
+  SettingsEntry.audio('Auto-advance fading', AudioSubPage.crossfade,
       'crossfade gapless seamless blend overlap track end'),
-  SettingsEntry('Manual track change fading', SettingsCategory.crossfade,
+  SettingsEntry.audio('Manual track change fading', AudioSubPage.crossfade,
       'skip next previous fade crossfade'),
-  SettingsEntry('Crossfade length', SettingsCategory.crossfade,
+  SettingsEntry.audio('Crossfade length', AudioSubPage.crossfade,
       'crossfade duration seconds overlap'),
-  SettingsEntry('Short crossfade length', SettingsCategory.crossfade,
+  SettingsEntry.audio('Short crossfade length', AudioSubPage.crossfade,
       'skip fade duration'),
-  SettingsEntry('Fade play/pause/stop', SettingsCategory.crossfade,
+  SettingsEntry.audio('Fade play/pause/stop', AudioSubPage.crossfade,
       'fade in out pause resume'),
-  SettingsEntry('Play/pause/stop fade length', SettingsCategory.crossfade,
+  SettingsEntry.audio('Play/pause/stop fade length', AudioSubPage.crossfade,
       'fade duration'),
-  SettingsEntry('Fade on seek', SettingsCategory.crossfade, 'click jump scrub'),
-  SettingsEntry('Seek fade length', SettingsCategory.crossfade, 'fade duration'),
-  SettingsEntry('Preload gapless tracks', SettingsCategory.crossfade,
+  SettingsEntry.audio('Fade on seek', AudioSubPage.crossfade, 'click jump scrub'),
+  SettingsEntry.audio('Seek fade length', AudioSubPage.crossfade, 'fade duration'),
+  SettingsEntry.audio('Preload gapless tracks', AudioSubPage.crossfade,
       'gapless seamless buffer next track'),
-  SettingsEntry('Silence between tracks', SettingsCategory.crossfade,
+  SettingsEntry.audio('Silence between tracks', AudioSubPage.crossfade,
       'gap pause between songs'),
   SettingsEntry('Autoplay', SettingsCategory.playback, 'radio station endless'),
   SettingsEntry('Data Saver', SettingsCategory.streaming, 'quality data network'),
   SettingsEntry('Stream on Cellular', SettingsCategory.streaming, 'mobile wifi'),
   SettingsEntry('Cellular Data Limit', SettingsCategory.streaming, 'cap mb quota'),
-  SettingsEntry('Equalizer', SettingsCategory.equalizer, 'eq bands preset'),
-  SettingsEntry('Global equalizer', SettingsCategory.equalizer, 'system wide other apps'),
-  SettingsEntry('Number of bands', SettingsCategory.equalizer, 'eq band count 5 10 12 15 16 24 31 32 iso'),
-  SettingsEntry('Enable custom bands', SettingsCategory.equalizer, 'eq custom band count'),
-  SettingsEntry('Custom number of bands', SettingsCategory.equalizer, 'eq custom band count 5 32'),
-  SettingsEntry('First frequency', SettingsCategory.equalizer, 'eq lowest band hz'),
-  SettingsEntry('Last frequency', SettingsCategory.equalizer, 'eq highest band khz'),
-  SettingsEntry('Bass frequency', SettingsCategory.equalizer, 'bass shelf hz tone'),
-  SettingsEntry('Bass Q', SettingsCategory.equalizer, 'bass shelf slope tone'),
-  SettingsEntry('Treble frequency', SettingsCategory.equalizer, 'treble shelf khz tone'),
-  SettingsEntry('Treble Q', SettingsCategory.equalizer, 'treble shelf slope tone'),
-  SettingsEntry('Equalizer values', SettingsCategory.equalizer, 'eq labels db percent hidden numbers'),
-  SettingsEntry('Tone values', SettingsCategory.equalizer, 'bass treble labels db percent hidden numbers'),
-  SettingsEntry('Auto save', SettingsCategory.equalizer, 'eq preset edits keep'),
-  SettingsEntry('Smooth equalizer/tone gains', SettingsCategory.equalizer, 'eq glide ramp zipper click'),
-  SettingsEntry('Suggest AutoEq presets', SettingsCategory.equalizer, 'headphones bluetooth usb autoeq suggestion'),
-  SettingsEntry('Reset disabled AutoEq suggestions', SettingsCategory.equalizer, 'headphones autoeq dismissed ask again'),
-  SettingsEntry('Restore equalizer presets', SettingsCategory.equalizer, 'eq factory default reset presets'),
-  SettingsEntry('Replay Gain', SettingsCategory.playback, 'loudness volume normalise normalize'),
-  SettingsEntry('Source', SettingsCategory.playback, 'replay gain album track'),
-  SettingsEntry('RG preamp', SettingsCategory.playback, 'replay gain preamp loudness db'),
-  SettingsEntry('Preamp for songs without RG info', SettingsCategory.playback, 'replay gain untagged no tags db'),
-  SettingsEntry('Resume after call', SettingsCategory.playback,
+  SettingsEntry.audio('Equalizer', AudioSubPage.equalizer, 'eq bands preset'),
+  SettingsEntry.audioAndroid('Global equalizer', AudioSubPage.equalizer, 'system wide other apps'),
+  SettingsEntry.audio('Number of bands', AudioSubPage.equalizer, 'eq band count 5 10 12 15 16 24 31 32 iso'),
+  SettingsEntry.audio('Enable custom bands', AudioSubPage.equalizer, 'eq custom band count'),
+  SettingsEntry.audio('Custom number of bands', AudioSubPage.equalizer, 'eq custom band count 5 32'),
+  SettingsEntry.audio('First frequency', AudioSubPage.equalizer, 'eq lowest band hz'),
+  SettingsEntry.audio('Last frequency', AudioSubPage.equalizer, 'eq highest band khz'),
+  SettingsEntry.audio('Bass frequency', AudioSubPage.equalizer, 'bass shelf hz tone'),
+  SettingsEntry.audio('Bass Q', AudioSubPage.equalizer, 'bass shelf slope tone'),
+  SettingsEntry.audio('Treble frequency', AudioSubPage.equalizer, 'treble shelf khz tone'),
+  SettingsEntry.audio('Treble Q', AudioSubPage.equalizer, 'treble shelf slope tone'),
+  SettingsEntry.audio('Equalizer values', AudioSubPage.equalizer, 'eq labels db percent hidden numbers'),
+  SettingsEntry.audio('Tone values', AudioSubPage.equalizer, 'bass treble labels db percent hidden numbers'),
+  SettingsEntry.audio('Auto save', AudioSubPage.equalizer, 'eq preset edits keep'),
+  SettingsEntry.audio('Smooth equalizer/tone gains', AudioSubPage.equalizer, 'eq glide ramp zipper click'),
+  SettingsEntry.audio('Suggest AutoEq presets', AudioSubPage.equalizer, 'headphones bluetooth usb autoeq suggestion'),
+  SettingsEntry.audio('Reset disabled AutoEq suggestions', AudioSubPage.equalizer, 'headphones autoeq dismissed ask again'),
+  SettingsEntry.audio('Restore equalizer presets', AudioSubPage.equalizer, 'eq factory default reset presets'),
+  SettingsEntry.audio('Replay Gain', AudioSubPage.replayGain, 'loudness volume normalise normalize'),
+  SettingsEntry.audio('Source', AudioSubPage.replayGain, 'replay gain album track'),
+  SettingsEntry.audio('RG preamp', AudioSubPage.replayGain, 'replay gain preamp loudness db'),
+  SettingsEntry.audio('Preamp for songs without RG info', AudioSubPage.replayGain, 'replay gain untagged no tags db'),
+  SettingsEntry.audio('Resume after call', AudioSubPage.audioFocus,
       'audio focus phone call carry on'),
-  SettingsEntry('Resume on start', SettingsCategory.playback,
+  SettingsEntry.audio('Resume on start', AudioSubPage.audioFocus,
       'audio focus launch open app automatically play'),
-  SettingsEntry('Resume on reopen', SettingsCategory.playback,
+  SettingsEntry.audio('Resume on reopen', AudioSubPage.audioFocus,
       'audio focus return come back launcher automatically play'),
-  SettingsEntry.android('Short audio focus change / calls',
-      SettingsCategory.playback, 'audio focus transient interruption phone call'),
-  SettingsEntry.android('Pause in call', SettingsCategory.playback,
+  SettingsEntry.audioAndroid('Short audio focus change / calls', AudioSubPage.audioFocus, 'audio focus transient interruption phone call'),
+  SettingsEntry.audioAndroid('Pause in call', AudioSubPage.audioFocus,
       'audio focus phone ringing'),
-  SettingsEntry.android('Resume on focus gain', SettingsCategory.playback,
+  SettingsEntry.audioAndroid('Resume on focus gain', AudioSubPage.audioFocus,
       'audio focus carry on after interruption'),
-  SettingsEntry.android('Duck volume', SettingsCategory.playback,
+  SettingsEntry.audioAndroid('Duck volume', AudioSubPage.audioFocus,
       'audio focus lower quieter notification navigation'),
-  SettingsEntry.android('Permanent audio focus change',
-      SettingsCategory.playback, 'audio focus another app takes over pause'),
+  SettingsEntry.audioAndroid('Permanent audio focus change', AudioSubPage.audioFocus, 'audio focus another app takes over pause'),
   SettingsEntry('Resume on wired headset', SettingsCategory.headset,
       'plug headphones jack automatically play'),
   SettingsEntry('Resume on Bluetooth', SettingsCategory.headset,
@@ -233,33 +244,31 @@ const kSettingsIndex = <SettingsEntry>[
       'headset button feedback haptic'),
   SettingsEntry.android('Disable default long press', SettingsCategory.headset,
       'voice search assistant google'),
-  SettingsEntry('Bass', SettingsCategory.tone, 'low end boost'),
-  SettingsEntry('Treble', SettingsCategory.tone, 'high end'),
-  SettingsEntry('Audio enhancement', SettingsCategory.tone, 'effects reverb virtualizer'),
-  SettingsEntry('Balance', SettingsCategory.tone, 'left right pan stereo'),
-  SettingsEntry('Mono', SettingsCategory.tone, 'mix down single channel'),
-  SettingsEntry('Tempo', SettingsCategory.tone, 'speed faster slower playback rate'),
-  SettingsEntry('Limiter', SettingsCategory.tone, 'clipping distortion peaks output'),
-  SettingsEntry.android('Enable direct volume control', SettingsCategory.tone,
+  SettingsEntry.audio('Bass', AudioSubPage.effects, 'low end boost'),
+  SettingsEntry.audio('Treble', AudioSubPage.effects, 'high end'),
+  SettingsEntry.audio('Audio enhancement', AudioSubPage.effects, 'effects reverb virtualizer'),
+  SettingsEntry.audio('Balance', AudioSubPage.effects, 'left right pan stereo'),
+  SettingsEntry.audio('Mono', AudioSubPage.effects, 'mix down single channel'),
+  SettingsEntry.audio('Tempo', AudioSubPage.effects, 'speed faster slower playback rate'),
+  SettingsEntry.audio('Limiter', AudioSubPage.effects, 'clipping distortion peaks output'),
+  SettingsEntry.audioAndroid('Enable direct volume control', AudioSubPage.dvc,
       'dvc direct volume control maximum bypass'),
-  SettingsEntry.android('No DVC for Bluetooth absolute volume',
-      SettingsCategory.tone, 'dvc bluetooth absolute volume'),
-  SettingsEntry('No DVC – preamp reduction', SettingsCategory.tone,
+  SettingsEntry.audioAndroid('No DVC for Bluetooth absolute volume', AudioSubPage.dvc, 'dvc bluetooth absolute volume'),
+  SettingsEntry.audio('No DVC – preamp reduction', AudioSubPage.dvc,
       'headroom volume lower clipping attenuation'),
-  SettingsEntry.android('Volume', SettingsCategory.tone, 'dvc volume level'),
-  SettingsEntry.android('Volume levels', SettingsCategory.tone,
+  SettingsEntry.audioAndroid('Volume', AudioSubPage.dvc, 'dvc volume level'),
+  SettingsEntry.audioAndroid('Volume levels', AudioSubPage.advanced,
       'volume steps fine coarse buttons'),
-  SettingsEntry.android('Volume panel', SettingsCategory.tone,
+  SettingsEntry.audioAndroid('Volume panel', AudioSubPage.advanced,
       'volume overlay hud'),
-  SettingsEntry('Pause/resume on volume', SettingsCategory.tone,
+  SettingsEntry.audio('Pause/resume on volume', AudioSubPage.advanced,
       'pause zero volume resume'),
-  SettingsEntry.android('MusicFX', SettingsCategory.tone,
+  SettingsEntry.audioAndroid('MusicFX', AudioSubPage.advanced,
       'system audio effects panel'),
-  SettingsEntry.android('Force audio on audio focus change',
-      SettingsCategory.tone, 'audio stops notification restart'),
-  SettingsEntry('Restore reverb presets', SettingsCategory.tone,
+  SettingsEntry.audioAndroid('Force audio on audio focus change', AudioSubPage.advanced, 'audio stops notification restart'),
+  SettingsEntry.audio('Restore reverb presets', AudioSubPage.advanced,
       'reverb room presets reset'),
-  SettingsEntry('Outputs', SettingsCategory.tone,
+  SettingsEntry.audio('Outputs', AudioSubPage.outputs,
       'per output speaker headphones bluetooth usb profile preset'),
   SettingsEntry('Theme', SettingsCategory.appearance, 'dark light fancy colour'),
   SettingsEntry('Blur', SettingsCategory.appearance, 'background artwork'),
@@ -283,6 +292,59 @@ const kSettingsIndex = <SettingsEntry>[
       'walkthrough onboarding coach marks show again tour'),
   SettingsEntry('Report a bug', SettingsCategory.about, 'feedback send issue'),
 ];
+
+/// The categories worth showing, given the app's mode and platform.
+///
+/// EQ-only mode hides most of the app, so it hides most of the settings too —
+/// offering a Library page to someone running the equalizer alone is offering
+/// a page that will be empty when they arrive. Audio stays, and its own list
+/// narrows to the sub-pages that mode has ([AudioSubPage.inEqualizerOnlyMode]).
+List<SettingsCategory> visibleSettingsCategories({
+  required bool isEqMode,
+  required bool isAndroid,
+}) {
+  if (isEqMode) {
+    return const [
+      SettingsCategory.appMode,
+      SettingsCategory.audio,
+      SettingsCategory.about,
+    ];
+  }
+  return [
+    for (final category in SettingsCategory.values)
+      // Nothing to show on a device without a system-wide equalizer.
+      if (category != SettingsCategory.appMode || isAndroid) category,
+  ];
+}
+
+/// The index entries a search for [query] offers: only what this mode and
+/// platform can actually reach. Equalizer-only mode hides most categories (and
+/// the player's Audio sub-pages), and a result that opens a page the mode does
+/// not otherwise offer is a dead end dressed up as an answer.
+List<SettingsEntry> searchSettingsIndex(
+  String query, {
+  required bool isEqMode,
+  required bool isAndroid,
+}) {
+  final reachable =
+      visibleSettingsCategories(isEqMode: isEqMode, isAndroid: isAndroid)
+          .toSet();
+  return [
+    for (final entry in kSettingsIndex)
+      if (reachable.contains(entry.category) &&
+          (!isEqMode || (entry.subPage?.inEqualizerOnlyMode ?? true)) &&
+          entry.availableOn(isAndroid: isAndroid) &&
+          entry.matches(query))
+        entry,
+  ];
+}
+
+/// The page a category row, or a search hit on [subPage], opens. Audio is its
+/// own page with its own list; every other category is a [Settings] page.
+Widget settingsDestination(SettingsCategory category, [AudioSubPage? subPage]) =>
+    category == SettingsCategory.audio
+        ? AudioSettingsPage(open: subPage)
+        : Settings(category: category);
 
 class Settings extends StatefulWidget {
   /// Null shows the index; a category shows just that category's sections.
@@ -325,6 +387,9 @@ class _SettingsState extends State<Settings> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.category == SettingsCategory.audio) {
+      return const AudioSettingsPage();
+    }
     return Consumer<AppController>(
       builder: (context, controller, child) {
         return StreamBuilder(
@@ -364,43 +429,18 @@ class _SettingsState extends State<Settings> {
 
   String _query = '';
 
-  /// The categories worth showing, given the app's current mode.
-  ///
-  /// EQ-only mode hides most of the app, so it hides most of the settings too —
-  /// offering a Library page to someone running the equalizer alone is offering
-  /// a page that will be empty when they arrive.
-  List<SettingsCategory> _visibleCategories(AppController controller) {
-    if (controller.isEqMode) {
-      return const [
-        SettingsCategory.appMode,
-        SettingsCategory.equalizer,
-        SettingsCategory.tone,
-        SettingsCategory.about,
-      ];
-    }
-    return [
-      for (final category in SettingsCategory.values)
-        // Nothing to show on a device without a system-wide equalizer.
-        if (category != SettingsCategory.appMode || Platform.isAndroid)
-          category,
-    ];
-  }
-
   Widget _buildIndex(AppController controller) {
     final searching = _query.trim().isNotEmpty;
-    final visible = _visibleCategories(controller);
+    final visible = visibleSettingsCategories(
+      isEqMode: controller.isEqMode,
+      isAndroid: Platform.isAndroid,
+    );
     if (searching) {
-      // Only what this mode can actually reach. Equalizer-only mode hides most
-      // of the categories, and a search result that opens a page the mode does
-      // not otherwise offer is a dead end dressed up as an answer.
-      final reachable = visible.toSet();
-      final matches = [
-        for (final entry in kSettingsIndex)
-          if (reachable.contains(entry.category) &&
-              entry.availableOn(isAndroid: !Platform.isIOS) &&
-              entry.matches(_query))
-            entry,
-      ];
+      final matches = searchSettingsIndex(
+        _query,
+        isEqMode: controller.isEqMode,
+        isAndroid: !Platform.isIOS,
+      );
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: [
@@ -471,11 +511,14 @@ class _SettingsState extends State<Settings> {
               color: Ember.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w500)),
-      subtitle: Text(entry.category.title,
+      subtitle: Text(
+          entry.subPage == null
+              ? entry.category.title
+              : '${entry.category.title} › ${audioSubPageLabel(entry.subPage!)}',
           style: TextStyle(color: Ember.textTertiary, fontSize: 12)),
       trailing:
           Icon(Icons.chevron_right_rounded, color: Ember.textTertiary, size: 20),
-      onTap: () => _openCategory(entry.category),
+      onTap: () => _openCategory(entry.category, entry.subPage),
     );
   }
 
@@ -532,8 +575,8 @@ class _SettingsState extends State<Settings> {
     );
   }
 
-  void _openCategory(SettingsCategory category) {
-    Routes.scaleTo(Settings(category: category), context);
+  void _openCategory(SettingsCategory category, [AudioSubPage? subPage]) {
+    Routes.scaleTo(settingsDestination(category, subPage), context);
   }
 
   /// One category's page. The section builders are reached exactly as they were
@@ -543,43 +586,14 @@ class _SettingsState extends State<Settings> {
     final body = switch (category) {
       SettingsCategory.appMode => _buildAppModeSection(controller),
       SettingsCategory.playback => _buildPlaybackSection(controller),
-      SettingsCategory.crossfade => CrossfadeSettingsSection(
-          settings: controller.fadeSettings,
-          onChanged: (value) => controller.fadeSettings = value,
-        ),
+      // Audio is its own page (AudioSettingsPage), opened by settingsDestination.
+      SettingsCategory.audio => const SizedBox.shrink(),
       SettingsCategory.headset => HeadsetSettingsSection(
           settings: controller.headsetSettings,
           onChanged: (v) => controller.headsetSettings = v,
           isIos: Platform.isIOS,
         ),
       SettingsCategory.streaming => _buildStreamingSection(),
-      SettingsCategory.equalizer => Column(children: [
-          if (controller.globalEqAvailable) ...[
-            _buildGlobalEqSection(controller),
-            const SizedBox(height: 12),
-          ],
-          EqualizerSettingsSection(
-            settings: controller.eqSettings,
-            onChanged: (value) => controller.eqSettings = value,
-            onResetAutoEqSuggestions: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              await controller.resetAutoEqSuggestions();
-              messenger.showSnackBar(
-                const SnackBar(content: Text('AutoEq suggestions reset')),
-              );
-            },
-            onRestorePresets: controller.restoreEqPresets,
-          ),
-        ]),
-      SettingsCategory.tone => Column(children: [
-          if (!controller.isEqMode) ...[
-            _buildAudioEnhancementSection(controller),
-            const SizedBox(height: 12),
-          ],
-          _buildToneSection(controller),
-          const SizedBox(height: 12),
-          _buildVolumeSection(controller),
-        ]),
       SettingsCategory.appearance => _buildAppearanceSection(controller),
       SettingsCategory.visualizer => _buildVisualizerSection(controller),
       SettingsCategory.library => _buildLibrarySection(),
@@ -699,13 +713,7 @@ class _SettingsState extends State<Settings> {
       children: [
         _buildSectionHeader(Icons.headphones, "Playback"),
         _buildSectionCard([
-          // Gapless and crossfade moved to their own page, Crossfade & Gapless.
-          ReplayGainSettingsSection(
-            settings: controller.replayGainSettings,
-            onChanged: (v) => controller.replayGainSettings = v,
-            disabledReason: controller.systemWideDisabledReason,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
+          // Crossfade, Replay Gain and Audio Focus live under Settings > Audio.
           // Gates every radio request Discover would otherwise make — with this
           // off, no related-track fetching happens at all.
           SwitchListTile.adaptive(
@@ -718,308 +726,6 @@ class _SettingsState extends State<Settings> {
               await RadioQueue.instance.setEnabled(enabled);
               if (mounted) setState(() {});
             },
-          ),
-        ]),
-        const SizedBox(height: 12),
-        AudioFocusSettingsSection(
-          settings: controller.audioFocusSettings,
-          onChanged: (v) => controller.audioFocusSettings = v,
-          isIos: Platform.isIOS,
-        ),
-      ],
-    );
-  }
-
-  // -- Audio Enhancement Section --
-
-  Widget _buildAudioEnhancementSection(AppController controller) {
-    final isIos = Platform.isIOS;
-    final reason = controller.systemWideDisabledReason;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.tune, "Direct volume control"),
-        if (reason != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(reason,
-                style: Theme.of(context).textTheme.bodySmall),
-          ),
-        // Locked while the equalizer applies to all apps: DVC is suspended
-        // and the platform equalizer carries the headroom then.
-        IgnorePointer(
-          ignoring: controller.systemWideActive,
-          child: Opacity(
-            opacity: controller.systemWideActive ? 0.5 : 1.0,
-            child: DvcSettingsSection(
-              settings: controller.dvcSettings,
-              onChanged: (v) => controller.dvcSettings = v,
-              dvcEnabled: controller.dvcEnabled,
-              onDvcEnabled: (enabled) {
-                if (enabled && !controller.dvcEnabled) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("System volume will be set to maximum"),
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                }
-                controller.dvcEnabled = enabled;
-              },
-              dvcGainDb: controller.dvcGain,
-              onDvcGainDb: (v) => controller.dvcGain = v,
-              headroomDb: controller.dspCore.headroomDb,
-              onHeadroomDb: (v) => controller.dspCore =
-                  controller.dspCore.copyWith(headroomDb: v),
-              isIos: isIos,
-              dvcRunning: controller.dvcRunning,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _buildSectionHeader(Icons.settings_suggest_outlined, "Advanced tweaks"),
-        AdvancedSettingsSection(
-          settings: controller.advancedSettings,
-          onChanged: (v) => controller.advancedSettings = v,
-          isIos: isIos,
-          musicFxAvailable: controller.musicFxAvailable,
-          onOpenMusicFx: () => controller.openMusicFx(),
-          onRestoreEqPresets: controller.restoreEqPresets,
-          onRestoreReverbPresets: controller.restoreReverbPresets,
-        ),
-        const SizedBox(height: 12),
-        _buildSectionCard([
-          ListTile(
-            leading: const Icon(Icons.speaker_group_outlined),
-            title: const Text("Outputs"),
-            subtitle: const Text(
-                "EQ preset and options per speaker, headphones, Bluetooth and USB device"),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const OutputProfilesPage()),
-            ),
-          ),
-        ]),
-      ],
-    );
-  }
-
-  // -- Volume (balance, mono, tempo) --
-
-  Widget _buildVolumeSection(AppController controller) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.volume_up, "Volume"),
-        _buildSectionCard([
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: VolumeControls(
-              settings: controller.dspCore,
-              onChanged: (v) => controller.dspCore = v,
-              stereoExpand: controller.stereoExpand,
-              onStereoExpand: (v) => controller.stereoExpand = v,
-              disabledReason: controller.systemWideDisabledReason,
-            ),
-          ),
-        ]),
-      ],
-    );
-  }
-
-  // -- Global EQ Section --
-
-  Widget _buildGlobalEqSection(AppController controller) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.public, "Global Equalizer"),
-        _buildSectionCard([
-          SwitchListTile.adaptive(
-            value: controller.globalEqEnabled,
-            title: const Text("System-wide EQ"),
-            subtitle: Text(
-              controller.globalEqEnabled
-                  ? "Active — EQ applied to all apps"
-                  : "Off",
-            ),
-            onChanged: (enabled) {
-              if (enabled) {
-                showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text("Enable Global EQ?"),
-                    content: const Text(
-                      "Your EQ, tone, and limiter settings will be applied to audio from other apps (Spotify, YouTube Music, etc.).\n\n"
-                      "A persistent notification will appear while active.",
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text("Cancel"),
-                      ),
-                      FilledButton(
-                        onPressed: () async {
-                          Navigator.pop(ctx);
-                          controller.globalEqEnabled = true;
-                          // Prompt for battery optimization if not already disabled
-                          final isDisabled =
-                              await Channel.isBatteryOptimizationDisabled();
-                          if (!isDisabled && mounted) {
-                            _showBatteryOptimizationPrompt();
-                          }
-                        },
-                        child: const Text("Enable"),
-                      ),
-                    ],
-                  ),
-                );
-              } else {
-                controller.globalEqEnabled = false;
-              }
-            },
-          ),
-          if (controller.globalEqEnabled) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 16,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      "EQ, tone, and limiter changes sync to other apps in real-time. "
-                      "Parametric EQ, MBC, reverb, and stereo effects are not applied globally.",
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withValues(alpha: 0.5),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            _buildPlayingAppsRow(controller),
-          ],
-        ]),
-      ],
-    );
-  }
-
-  void _showBatteryOptimizationPrompt() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Disable Battery Optimization"),
-        content: const Text(
-          "To prevent Android from stopping Hype in the background, "
-          "please allow unrestricted battery usage.\n\n"
-          "This keeps your EQ and music playing without interruption.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Later"),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Channel.requestDisableBatteryOptimization();
-            },
-            child: const Text("Allow"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPlayingAppsRow(AppController controller) {
-    final apps = controller.playingApps;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
-          child: Row(
-            children: [
-              Icon(
-                Icons.apps,
-                size: 16,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  "Apps currently playing",
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 18),
-                tooltip: "Refresh",
-                visualDensity: VisualDensity.compact,
-                onPressed: () => controller.refreshPlayingApps(),
-              ),
-            ],
-          ),
-        ),
-        if (apps.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Text(
-              "None detected",
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: 0.5),
-              ),
-            ),
-          )
-        else
-          ...apps.map(
-            (app) => _AppIconTile(
-              packageName: app['package'] ?? '',
-              appName: app['name'] ?? app['package'] ?? '',
-            ),
-          ),
-        const SizedBox(height: 4),
-      ],
-    );
-  }
-
-  // -- Tone Settings Section --
-
-  Widget _buildToneSection(AppController controller) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.tune, "Tone Controls"),
-        _buildSectionCard([
-          SwitchListTile.adaptive(
-            value: controller.toneEnabled,
-            title: const Text("Tone controls"),
-            subtitle: Text(
-              controller.toneEnabled ? "Bass & treble active" : "Disabled",
-            ),
-            onChanged: (enabled) => controller.toneEnabled = enabled,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          // Output limiter
-          SwitchListTile.adaptive(
-            value: controller.limiterEnabled,
-            title: const Text("Limiter"),
-            subtitle: const Text("Prevents distortion from EQ boosts"),
-            onChanged: (enabled) => controller.limiterEnabled = enabled,
           ),
         ]),
       ],
@@ -1986,85 +1692,6 @@ class _SettingsState extends State<Settings> {
           ],
         );
       },
-    );
-  }
-}
-
-class _AppIconTile extends StatefulWidget {
-  final String packageName;
-  final String appName;
-
-  const _AppIconTile({required this.packageName, required this.appName});
-
-  @override
-  State<_AppIconTile> createState() => _AppIconTileState();
-}
-
-class _AppIconTileState extends State<_AppIconTile> {
-  Uint8List? _iconBytes;
-  bool _loaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadIcon();
-  }
-
-  Future<void> _loadIcon() async {
-    final bytes = await Channel.getAppIcon(widget.packageName);
-    if (mounted)
-      setState(() {
-        _iconBytes = bytes;
-        _loaded = true;
-      });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: _loaded
-                ? (_iconBytes != null
-                      ? Image.memory(_iconBytes!, fit: BoxFit.contain)
-                      : Icon(
-                          Icons.music_note,
-                          size: 24,
-                          color: Theme.of(context).colorScheme.primary,
-                        ))
-                : const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.appName,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                Text(
-                  widget.packageName,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.4),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

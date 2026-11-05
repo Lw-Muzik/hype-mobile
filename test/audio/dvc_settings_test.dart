@@ -69,4 +69,32 @@ void main() {
       expect(s.hashCode == DvcSettings.load(p).hashCode, isTrue);
     });
   });
+
+  group('first-enable level from the system volume', () {
+    test('maps index/max onto -30..0 dB', () {
+      expect(dvcGainFromSystemVolume(0, 15), -30);
+      expect(dvcGainFromSystemVolume(15, 15), 0);
+      expect(dvcGainFromSystemVolume(5, 15), closeTo(-20, 1e-9));
+      expect(dvcGainFromSystemVolume(30, 15), 0);
+      expect(dvcGainFromSystemVolume(5, 0), -30);
+    });
+    test('the real attenuation wins, clamped to the DVC range', () {
+      expect(dvcGainFromSystemVolume(3, 15, streamDb: -22.5), -22.5);
+      expect(dvcGainFromSystemVolume(1, 15, streamDb: -48), -30);
+      expect(dvcGainFromSystemVolume(1, 15, streamDb: double.negativeInfinity), -30);
+      expect(dvcGainFromSystemVolume(15, 15, streamDb: 2), 0);
+    });
+    test('unreadable attenuation falls back to the linear map', () {
+      expect(dvcGainFromSystemVolume(5, 15, streamDb: null), closeTo(-20, 1e-9));
+      expect(dvcGainFromSystemVolume(5, 15, streamDb: double.nan),
+          closeTo(-20, 1e-9));
+    });
+  });
+
+  group('route read', () {
+    test('a failed read is not a probe', () {
+      expect(dvcRouteReadValid(null), isFalse);
+      expect(dvcRouteReadValid('speaker'), isTrue);
+    });
+  });
 }

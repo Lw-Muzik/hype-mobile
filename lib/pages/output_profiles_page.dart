@@ -101,8 +101,8 @@ class OutputProfilesView extends StatelessWidget {
       if (p.eqPreset != null) presetLabel(p.eqPreset!),
       if (p.autoEq != null) 'AutoEq',
       if (p.noEqTone) 'No Equ/Tone',
-      if (p.noDuck) 'No Duck',
-      if (p.ignoreFocus) 'Ignore audio focus',
+      if (p.noDuck && isAndroid) 'No Duck',
+      if (p.ignoreFocus && isAndroid) 'Ignore audio focus',
       if (p.noDvc && isAndroid) 'No DVC',
       if (p.noHeadroomReduction) 'No headroom reduction',
     ];
@@ -300,18 +300,22 @@ class _OutputTile extends StatelessWidget {
             profile.noEqTone,
             (v) => onChanged(profile.copyWith(noEqTone: v)),
           ),
-          _flag(
-            'No Duck',
-            'Pause instead of lowering the volume for a short sound',
-            profile.noDuck,
-            (v) => onChanged(profile.copyWith(noDuck: v)),
-          ),
-          _flag(
-            'Ignore audio focus',
-            'Keep playing when another app takes audio focus',
-            profile.ignoreFocus,
-            (v) => onChanged(profile.copyWith(ignoreFocus: v)),
-          ),
+          // iOS sends interruptions, not focus events: these two do nothing
+          // there.
+          if (isAndroid) ...[
+            _flag(
+              'No Duck',
+              'Pause instead of lowering the volume for a short sound',
+              profile.noDuck,
+              (v) => onChanged(profile.copyWith(noDuck: v)),
+            ),
+            _flag(
+              'Ignore audio focus',
+              'Keep playing when another app takes audio focus',
+              profile.ignoreFocus,
+              (v) => onChanged(profile.copyWith(ignoreFocus: v)),
+            ),
+          ],
           if (isAndroid)
             _flag(
               'No DVC',

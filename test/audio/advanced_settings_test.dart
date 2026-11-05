@@ -156,14 +156,11 @@ void main() {
   });
 
   group('restore reverb presets', () {
-    test('a built-in active preset is brought back to its factory values', () {
-      final p = reverbPresetToRestore('Small Room');
-      expect(p, isNotNull);
-      expect(p!.name, 'Small Room');
-      expect(identical(p, RoomPreset.builtIn[1]) || p.roomSize == 0.2, isTrue);
-    });
-    test('Custom (the listener\'s own sound) is kept', () {
-      expect(reverbPresetToRestore('Custom'), isNull);
+    test('restores the factory default built-in preset', () {
+      final p = factoryRoomPreset();
+      expect(p.name, 'Off');
+      expect(p.wetDry, 0.0);
+      expect(identical(p, RoomPreset.builtIn.first), isTrue);
     });
   });
 }

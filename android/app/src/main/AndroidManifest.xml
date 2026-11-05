@@ -50,6 +50,9 @@
     <!-- Package visibility (API 30+): the proxy looks up the other apps that handle voice search. -->
     <queries>
         <intent>
+            <action android:name="android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL"/>
+        </intent>
+        <intent>
             <action android:name="android.speech.action.WEB_SEARCH" />
         </intent>
         <intent>

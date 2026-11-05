@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:eq_app/Themes/app_fonts.dart';
 import 'package:eq_app/pages/hype_connect_page.dart';
 import 'package:eq_app/themes/ember.dart';
+
 import 'connect_play_router.dart';
 
 class ConnectUiHost implements ConnectPlayUi {

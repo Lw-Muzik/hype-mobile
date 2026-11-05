@@ -226,36 +226,28 @@ class YtInnerTube {
     final query = continuation == null
         ? ''
         : '&ctoken=${Uri.encodeQueryComponent(continuation)}'
-            '&continuation=${Uri.encodeQueryComponent(continuation)}&type=next';
-    return _post(
-      '$_musicBase/browse?prettyPrint=false$query',
-      {
-        'context': _webRemixContext,
-        'browseId': ?browseId,
-        'params': ?params,
-      },
-      headers: _webRemixHeaders,
-    );
+              '&continuation=${Uri.encodeQueryComponent(continuation)}&type=next';
+    return _post('$_musicBase/browse?prettyPrint=false$query', {
+      'context': _webRemixContext,
+      'browseId': ?browseId,
+      'params': ?params,
+    }, headers: _webRemixHeaders);
   }
 
   /// A `search` call. [params] is YouTube's opaque filter token, or null for
   /// the unfiltered mix of shelves.
   Future<Map<String, dynamic>> search(String query, {String? params}) => _post(
-        '$_musicBase/search?prettyPrint=false',
-        {
-          'context': _webRemixContext,
-          'query': query,
-          'params': ?params,
-        },
-        headers: _webRemixHeaders,
-      );
+    '$_musicBase/search?prettyPrint=false',
+    {'context': _webRemixContext, 'query': query, 'params': ?params},
+    headers: _webRemixHeaders,
+  );
 
   /// Type-ahead completions.
   Future<Map<String, dynamic>> suggestions(String query) => _post(
-        '$_musicBase/music/get_search_suggestions?prettyPrint=false',
-        {'context': _webRemixContext, 'input': query},
-        headers: _webRemixHeaders,
-      );
+    '$_musicBase/music/get_search_suggestions?prettyPrint=false',
+    {'context': _webRemixContext, 'input': query},
+    headers: _webRemixHeaders,
+  );
 
   /// A `next` call — the endless "up next" YT Music derives from one song.
   ///
@@ -263,17 +255,13 @@ class YtInnerTube {
   /// prefix: `next` is the opposite of `browse` on this, and prefixing it here
   /// is an empty panel rather than an error.
   Future<Map<String, dynamic>> next(String videoId, {String? continuation}) =>
-      _post(
-        '$_musicBase/next?prettyPrint=false',
-        {
-          'context': _webRemixContext,
-          'videoId': videoId,
-          'playlistId': 'RDAMVM$videoId',
-          'isAudioOnly': true,
-          'continuation': ?continuation,
-        },
-        headers: _webRemixHeaders,
-      );
+      _post('$_musicBase/next?prettyPrint=false', {
+        'context': _webRemixContext,
+        'videoId': videoId,
+        'playlistId': 'RDAMVM$videoId',
+        'isAudioOnly': true,
+        'continuation': ?continuation,
+      }, headers: _webRemixHeaders);
 
   /// A later page of the station, addressed the way [browse] addresses one.
   ///
@@ -287,19 +275,18 @@ class YtInnerTube {
   Future<Map<String, dynamic>> nextContinuation(
     String videoId,
     String continuation,
-  ) =>
-      _post(
-        '$_musicBase/next?prettyPrint=false'
-        '&ctoken=${Uri.encodeQueryComponent(continuation)}'
-        '&continuation=${Uri.encodeQueryComponent(continuation)}&type=next',
-        {
-          'context': _webRemixContext,
-          'videoId': videoId,
-          'playlistId': 'RDAMVM$videoId',
-          'isAudioOnly': true,
-        },
-        headers: _webRemixHeaders,
-      );
+  ) => _post(
+    '$_musicBase/next?prettyPrint=false'
+    '&ctoken=${Uri.encodeQueryComponent(continuation)}'
+    '&continuation=${Uri.encodeQueryComponent(continuation)}&type=next',
+    {
+      'context': _webRemixContext,
+      'videoId': videoId,
+      'playlistId': 'RDAMVM$videoId',
+      'isAudioOnly': true,
+    },
+    headers: _webRemixHeaders,
+  );
 
   /// The `player` call that resolves a video id to streams.
   ///
@@ -384,10 +371,7 @@ class YtInnerTube {
       '$_playerBase/player?prettyPrint=false',
       {
         'context': {
-          'client': {
-            ...identity,
-            'visitorData': ?visitor,
-          }
+          'client': {...identity, 'visitorData': ?visitor},
         },
         'videoId': videoId,
         'contentCheckOk': true,
@@ -398,8 +382,8 @@ class YtInnerTube {
           YtPlayerClient.ios => const {'User-Agent': _iosUserAgent},
           YtPlayerClient.visionOs => const {'User-Agent': _visionOsUserAgent},
           YtPlayerClient.androidVr => {
-              'User-Agent': _androidVrUserAgent(vrVersion),
-            },
+            'User-Agent': _androidVrUserAgent(vrVersion),
+          },
         },
         'X-YouTube-Client-Name': switch (client) {
           YtPlayerClient.ios => '5',
@@ -454,8 +438,8 @@ class YtInnerTube {
         YtPlayerClient.ios => const {'User-Agent': _iosUserAgent},
         YtPlayerClient.visionOs => const {'User-Agent': _visionOsUserAgent},
         YtPlayerClient.androidVr => {
-            'User-Agent': _androidVrUserAgent(androidVrVersions.first),
-          },
+          'User-Agent': _androidVrUserAgent(androidVrVersions.first),
+        },
       };
 
   /// Playback headers for a URL whose resolving client isn't known.
@@ -483,7 +467,7 @@ class YtInnerTube {
       'clientVersion': _webRemixVersion,
       'hl': 'en',
       'gl': 'US',
-    }
+    },
   };
 
   static const _webRemixHeaders = {
@@ -527,13 +511,13 @@ class YtInnerTube {
   static Map<String, dynamic> clientIdentity(
     YtPlayerClient client, {
     String? version,
-  }) =>
-      switch (client) {
-        YtPlayerClient.ios => _iosClient,
-        YtPlayerClient.visionOs => _visionOsClient,
-        YtPlayerClient.androidVr =>
-          _androidVrClient(version ?? androidVrVersions.first),
-      };
+  }) => switch (client) {
+    YtPlayerClient.ios => _iosClient,
+    YtPlayerClient.visionOs => _visionOsClient,
+    YtPlayerClient.androidVr => _androidVrClient(
+      version ?? androidVrVersions.first,
+    ),
+  };
 
   static const _iosClient = {
     'clientName': 'IOS',
@@ -555,9 +539,12 @@ class YtInnerTube {
     try {
       final request = await _http
           .postUrl(Uri.parse(url))
-          .timeout(_timeout, onTimeout: () => throw const YtNetworkException(
-                'YouTube took too long to answer.',
-              ));
+          .timeout(
+            _timeout,
+            onTimeout: () => throw const YtNetworkException(
+              'YouTube took too long to answer.',
+            ),
+          );
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
       headers.forEach(request.headers.set);
@@ -568,13 +555,12 @@ class YtInnerTube {
         // Drain so the connection returns to the pool instead of being torn
         // down and re-handshaked on the next call.
         await response.drain<void>();
-        throw YtNetworkException(
-          'YouTube answered ${response.statusCode}.',
-        );
+        throw YtNetworkException('YouTube answered ${response.statusCode}.');
       }
-      final text = await response.transform(utf8.decoder).join().timeout(
-            _timeout,
-          );
+      final text = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_timeout);
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return <String, dynamic>{};
       final visitor = decoded['responseContext'];

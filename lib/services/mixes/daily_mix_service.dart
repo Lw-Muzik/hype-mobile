@@ -209,14 +209,16 @@ class DailyMixService {
       final ref = MixTrackRef.youtube(track, asVideo: false);
       historyKeys.add(key);
       refs[key] = ref;
-      local.add(MixCandidate(
-        key: key,
-        source: MixSource.youtube,
-        history: true,
-        artist: t.artist,
-        plays: stat.plays,
-        skips: stat.skips,
-      ));
+      local.add(
+        MixCandidate(
+          key: key,
+          source: MixSource.youtube,
+          history: true,
+          artist: t.artist,
+          plays: stat.plays,
+          skips: stat.skips,
+        ),
+      );
       seeds[key] = MixSeed(
         key: key,
         title: t.title,
@@ -288,21 +290,21 @@ class DailyMixService {
       // A mix whose tracks all vanished between the query and here is not worth
       // a card.
       if (tracks.isEmpty) continue;
-      resolved.add(ResolvedMix(
-        name: mix.name,
-        descriptor: mix.descriptor,
-        tracks: tracks,
-      ));
+      resolved.add(
+        ResolvedMix(name: mix.name, descriptor: mix.descriptor, tracks: tracks),
+      );
     }
 
     if (resolved.length < minMixes) {
-      resolved.addAll(await _radioMixes(
-        count: minMixes - resolved.length,
-        taken: resolved,
-        seeds: seeds,
-        owned: owned,
-        ownKeys: historyKeys,
-      ));
+      resolved.addAll(
+        await _radioMixes(
+          count: minMixes - resolved.length,
+          taken: resolved,
+          seeds: seeds,
+          owned: owned,
+          ownKeys: historyKeys,
+        ),
+      );
     }
 
     _cached = resolved;
@@ -477,11 +479,16 @@ class DailyMixService {
         }
       }
 
-      final batches = await Future.wait([for (final seed in picked) safely(seed)]);
+      final batches = await Future.wait([
+        for (final seed in picked) safely(seed),
+      ]);
       final before = out.length;
       // Interleaved so two seeds share the mix rather than the first one
       // crowding the second out.
-      final longest = batches.fold<int>(0, (n, b) => b.length > n ? b.length : n);
+      final longest = batches.fold<int>(
+        0,
+        (n, b) => b.length > n ? b.length : n,
+      );
       for (var i = 0; i < longest; i++) {
         for (final batch in batches) {
           // Radio items carry a video flag for most songs; a mix of songs

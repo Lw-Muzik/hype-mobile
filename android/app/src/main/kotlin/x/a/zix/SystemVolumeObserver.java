@@ -106,6 +106,43 @@ public final class SystemVolumeObserver {
         });
     }
 
+    private static EventChannel.EventSink keysSink;
+
+    /** Level changes made by Hype's own handling of the volume keys (eq_app/volume_keys). */
+    public static void setupKeysChannel(EventChannel channel) {
+        channel.setStreamHandler(new EventChannel.StreamHandler() {
+            @Override
+            public void onListen(Object arguments, EventChannel.EventSink events) {
+                synchronized (LOCK) {
+                    keysSink = events;
+                }
+            }
+
+            @Override
+            public void onCancel(Object arguments) {
+                synchronized (LOCK) {
+                    keysSink = null;
+                }
+            }
+        });
+    }
+
+    /** Tells Dart a volume key moved the level to [fraction] (0...1). */
+    public static void emitKeyVolume(float fraction) {
+        final EventChannel.EventSink sink;
+        synchronized (LOCK) {
+            sink = keysSink;
+        }
+        if (sink == null) return;
+        FEED_HANDLER.post(() -> {
+            try {
+                sink.success((double) fraction);
+            } catch (RuntimeException ignored) {
+                // The Dart side went away.
+            }
+        });
+    }
+
     /** The music stream's index over its maximum, 0...1. */
     public static float currentFraction(AudioManager am) {
         if (am == null) return 1f;

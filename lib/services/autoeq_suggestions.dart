@@ -51,8 +51,10 @@ class AutoEqSuggestions {
     try {
       // A headless engine (the background service) may never draw a frame, so
       // each wait is bounded rather than left hanging.
-      await WidgetsBinding.instance.endOfFrame
-          .timeout(const Duration(seconds: 1), onTimeout: () {});
+      await WidgetsBinding.instance.endOfFrame.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () {},
+      );
     } catch (_) {}
   }
 
@@ -91,7 +93,9 @@ class AutoEqSuggestions {
       (change) => change.devicesAdded
           .where((d) => d.isOutput)
           // ignore: experimental_member_use
-          .map((d) => OutputDeviceEvent(name: d.name, kind: outputKindOf(d.type)))
+          .map(
+            (d) => OutputDeviceEvent(name: d.name, kind: outputKindOf(d.type)),
+          )
           .where(_isHeadphoneKind),
     );
   }

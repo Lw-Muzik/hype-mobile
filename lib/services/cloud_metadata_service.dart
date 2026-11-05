@@ -41,8 +41,7 @@ class CloudMetadataService {
   /// Preload metadata for all [files] of a given [provider].
   /// Skips files that already have a `.done` marker (previously extracted).
   /// Processes [_maxConcurrent] files concurrently.
-  Future<void> preloadAll(
-      CloudProvider provider, List<CloudFile> files) async {
+  Future<void> preloadAll(CloudProvider provider, List<CloudFile> files) async {
     // Bump run ID to invalidate any previous run for this provider.
     final runId = provider == CloudProvider.googleDrive
         ? ++_gdriveRunId

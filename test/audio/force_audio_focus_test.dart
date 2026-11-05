@@ -49,6 +49,7 @@ void main() {
   late int focusRequests;
   late Duration position;
   late bool forceOn;
+  var buffering = false;
   late AudioFocusService service;
 
   void build() {
@@ -72,6 +73,7 @@ void main() {
           ..configureForceAudio(
             enabled: () => forceOn,
             position: () => position,
+            buffering: () => buffering,
           )
           ..start();
   }
@@ -137,6 +139,38 @@ void main() {
       target.set(false);
       async.elapse(const Duration(seconds: 3));
       async.flushMicrotasks();
+      expect(target.calls, isNot(contains('restart')));
+      service.dispose();
+    });
+  });
+
+  test('buffering player: no restart', () {
+    fakeAsync((async) {
+      forceOn = true;
+      buffering = true;
+      build();
+      loseAndRegain(async);
+      async.elapse(const Duration(seconds: 3));
+      async.flushMicrotasks();
+      expect(target.calls, isNot(contains('restart')));
+      buffering = false;
+      service.dispose();
+    });
+  });
+
+  test('a duck and its gain: no restart', () {
+    fakeAsync((async) {
+      forceOn = true;
+      build();
+      interruptions.add(
+        AudioInterruptionEvent(true, AudioInterruptionType.duck),
+      );
+      async.flushMicrotasks();
+      interruptions.add(
+        AudioInterruptionEvent(false, AudioInterruptionType.duck),
+      );
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 3));
       expect(target.calls, isNot(contains('restart')));
       service.dispose();
     });

@@ -13,7 +13,13 @@ class DropboxService {
   static const _apiUrl = 'https://api.dropboxapi.com/2';
   static const _contentUrl = 'https://content.dropboxapi.com/2';
   static const _audioExtensions = {
-    'mp3', 'm4a', 'flac', 'wav', 'ogg', 'aac', 'wma',
+    'mp3',
+    'm4a',
+    'flac',
+    'wav',
+    'ogg',
+    'aac',
+    'wma',
   };
 
   /// Lists all audio files by recursively listing all folders
@@ -28,10 +34,7 @@ class DropboxService {
     // Initial request — list root recursively
     var response = await http.post(
       Uri.parse('$_apiUrl/files/list_folder'),
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-      },
+      headers: {...headers, 'Content-Type': 'application/json'},
       body: json.encode({
         'path': '',
         'recursive': true,
@@ -59,8 +62,7 @@ class DropboxService {
 
         final pathLower = entry['path_lower'] as String? ?? '';
         final size = entry['size'] as int? ?? 0;
-        final parentPath =
-            pathLower.substring(0, pathLower.lastIndexOf('/'));
+        final parentPath = pathLower.substring(0, pathLower.lastIndexOf('/'));
 
         // Extract media metadata if available
         String? trackTitle;
@@ -82,21 +84,23 @@ class DropboxService {
           }
         }
 
-        allFiles.add(CloudFile(
-          provider: CloudProvider.dropbox,
-          fileId: pathLower,
-          name: name,
-          folderPath: parentPath.isEmpty ? '/' : parentPath,
-          size: size,
-          mimeType: _mimeFromExtension(name),
-          modifiedDate: entry['server_modified'] != null
-              ? DateTime.tryParse(entry['server_modified'] as String)
-              : null,
-          trackTitle: trackTitle,
-          trackArtist: trackArtist,
-          albumName: albumName,
-          durationMs: durationMs,
-        ));
+        allFiles.add(
+          CloudFile(
+            provider: CloudProvider.dropbox,
+            fileId: pathLower,
+            name: name,
+            folderPath: parentPath.isEmpty ? '/' : parentPath,
+            size: size,
+            mimeType: _mimeFromExtension(name),
+            modifiedDate: entry['server_modified'] != null
+                ? DateTime.tryParse(entry['server_modified'] as String)
+                : null,
+            trackTitle: trackTitle,
+            trackArtist: trackArtist,
+            albumName: albumName,
+            durationMs: durationMs,
+          ),
+        );
       }
 
       final hasMore = data['has_more'] as bool? ?? false;
@@ -108,10 +112,7 @@ class DropboxService {
       // Continue listing
       response = await http.post(
         Uri.parse('$_apiUrl/files/list_folder/continue'),
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
+        headers: {...headers, 'Content-Type': 'application/json'},
         body: json.encode({'cursor': cursor}),
       );
       if (response.statusCode != 200) break;
@@ -126,10 +127,7 @@ class DropboxService {
 
     final response = await http.post(
       Uri.parse('$_apiUrl/files/get_temporary_link'),
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-      },
+      headers: {...headers, 'Content-Type': 'application/json'},
       body: json.encode({'path': path}),
     );
 

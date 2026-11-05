@@ -18,7 +18,16 @@ double masterVolumeFor({required bool dvcEnabled, required double dvcGainDb}) {
 }
 
 /// One step of switching DVC on or off.
-enum DvcStep { pushMasterVolume, flushIfPaused, enableDvc, disableDvc }
+enum DvcStep {
+  pushMasterVolume,
+  flushIfPaused,
+  enableDvc,
+  disableDvc,
+
+  /// A route-driven release: the engine master stage lets go, the system
+  /// volume is not written (see `dvcRestoreFor`).
+  releaseDvc,
+}
 
 /// Order of the native calls when DVC is toggled.
 ///
@@ -37,6 +46,23 @@ List<DvcStep> dvcToggleSteps({required bool enable}) => enable
         DvcStep.enableDvc,
       ]
     : const [DvcStep.disableDvc, DvcStep.pushMasterVolume];
+
+/// The steps when the route gate (not the listener) turns DVC on or off.
+///
+/// Turning off because the OUTPUT changed releases: the system volume is not
+/// written (the saved original belongs to the old output). Turning off on the
+/// SAME output (No DVC for Bluetooth absolute volume, a per-output No DVC, the
+/// absolute-volume flag) is a real disable: that output's original is restored
+/// before the master returns to the DVC-off value, never "master 0 dB" on a
+/// device still at maximum.
+List<DvcStep> dvcRouteSteps({
+  required bool enable,
+  required bool outputChanged,
+}) => enable
+    ? dvcToggleSteps(enable: true)
+    : outputChanged
+    ? const [DvcStep.releaseDvc, DvcStep.pushMasterVolume]
+    : dvcToggleSteps(enable: false);
 
 /// Whether Direct Volume Control is actually running: Android only, the
 /// setting on, and the equalizer not applied system-wide. In system-wide mode

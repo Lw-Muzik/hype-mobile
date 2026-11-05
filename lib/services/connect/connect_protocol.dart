@@ -88,7 +88,9 @@ double _double(JsonMap json, String key) {
 List<T> _list<T>(JsonMap json, String key, T Function(Object? raw) read) {
   final value = json[key];
   if (value is! List) {
-    throw FormatException('"$key": expected an array, got ${value.runtimeType}');
+    throw FormatException(
+      '"$key": expected an array, got ${value.runtimeType}',
+    );
   }
   return [for (final entry in value) read(entry)];
 }
@@ -248,14 +250,14 @@ final class YtTrackRef extends TrackRef {
 
   @override
   JsonMap toJson() => {
-        'src': src,
-        'videoId': videoId,
-        'title': title,
-        'artist': artist,
-        'album': album,
-        'durationMs': durationMs,
-        'artUrl': artUrl,
-      };
+    'src': src,
+    'videoId': videoId,
+    'title': title,
+    'artist': artist,
+    'album': album,
+    'durationMs': durationMs,
+    'artUrl': artUrl,
+  };
 }
 
 /// A track in one device's own library. [id] is that device's library id —
@@ -290,15 +292,15 @@ final class LocalTrackRef extends TrackRef {
 
   @override
   JsonMap toJson() => {
-        'src': src,
-        'deviceId': deviceId,
-        'id': id,
-        'title': title,
-        'artist': artist,
-        'album': album,
-        'durationMs': durationMs,
-        'artUrl': null,
-      };
+    'src': src,
+    'deviceId': deviceId,
+    'id': id,
+    'title': title,
+    'artist': artist,
+    'album': album,
+    'durationMs': durationMs,
+    'artUrl': null,
+  };
 }
 
 final class OtherTrackRef extends TrackRef {
@@ -326,13 +328,13 @@ final class OtherTrackRef extends TrackRef {
 
   @override
   JsonMap toJson() => {
-        'src': src,
-        'title': title,
-        'artist': artist,
-        'album': album,
-        'durationMs': durationMs,
-        'artUrl': artUrl,
-      };
+    'src': src,
+    'title': title,
+    'artist': artist,
+    'album': album,
+    'durationMs': durationMs,
+    'artUrl': artUrl,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -413,30 +415,30 @@ class PlayerState {
   }
 
   JsonMap toJson() => {
-        'seq': seq,
-        'track': track?.toJson(),
-        'playing': playing,
-        'positionMs': positionMs,
-        'durationMs': durationMs,
-        'volume': volume,
-        'shuffle': shuffle,
-        'repeat': repeat.name,
-        'queue': [for (final entry in queue) entry.toJson()],
-        if (video) 'video': true,
-      };
+    'seq': seq,
+    'track': track?.toJson(),
+    'playing': playing,
+    'positionMs': positionMs,
+    'durationMs': durationMs,
+    'volume': volume,
+    'shuffle': shuffle,
+    'repeat': repeat.name,
+    'queue': [for (final entry in queue) entry.toJson()],
+    if (video) 'video': true,
+  };
 
   PlayerState withSeq(int seq) => PlayerState(
-        seq: seq,
-        track: track,
-        playing: playing,
-        positionMs: positionMs,
-        durationMs: durationMs,
-        volume: volume,
-        shuffle: shuffle,
-        repeat: repeat,
-        queue: queue,
-        video: video,
-      );
+    seq: seq,
+    track: track,
+    playing: playing,
+    positionMs: positionMs,
+    durationMs: durationMs,
+    volume: volume,
+    shuffle: shuffle,
+    repeat: repeat,
+    queue: queue,
+    video: video,
+  );
 }
 
 /// A [PlayerState] as the hub fans it out: stamped with the hub's own clock at
@@ -452,7 +454,10 @@ class StampedState {
 
   factory StampedState.fromJson(Object? raw) {
     final json = _asMap(raw, 'stamped state');
-    return StampedState(state: PlayerState.fromJson(json), at: _int(json, 'at'));
+    return StampedState(
+      state: PlayerState.fromJson(json),
+      at: _int(json, 'at'),
+    );
   }
 
   JsonMap toJson() => {...state.toJson(), 'at': at};
@@ -463,11 +468,11 @@ class StampedState {
 // ---------------------------------------------------------------------------
 
 List<ConnectCap> _caps(JsonMap json) => [
-      // A capability this version does not know is one it cannot use, not a
-      // reason to reject the device that has it.
-      for (final raw in _list(json, 'caps', (v) => v))
-        if (raw is String) ?_enumOrNull(ConnectCap.values, raw),
-    ];
+  // A capability this version does not know is one it cannot use, not a
+  // reason to reject the device that has it.
+  for (final raw in _list(json, 'caps', (v) => v))
+    if (raw is String) ?_enumOrNull(ConnectCap.values, raw),
+];
 
 /// How a device introduces itself in `hello`.
 class DeviceHello {
@@ -500,13 +505,13 @@ class DeviceHello {
   }
 
   JsonMap toJson() => {
-        'id': id,
-        'kind': kind.name,
-        'name': name,
-        'platform': platform,
-        'appVersion': appVersion,
-        'caps': [for (final cap in caps) cap.name],
-      };
+    'id': id,
+    'kind': kind.name,
+    'name': name,
+    'platform': platform,
+    'appVersion': appVersion,
+    'caps': [for (final cap in caps) cap.name],
+  };
 }
 
 /// A linked device as the hub lists it — online or not, so offline ones can be
@@ -551,15 +556,15 @@ class DeviceInfo {
   }
 
   JsonMap toJson() => {
-        'id': id,
-        'kind': kind.name,
-        'name': name,
-        'platform': platform,
-        'appVersion': appVersion,
-        'caps': [for (final cap in caps) cap.name],
-        'online': online,
-        'lastSeenAt': lastSeenAt,
-      };
+    'id': id,
+    'kind': kind.name,
+    'name': name,
+    'platform': platform,
+    'appVersion': appVersion,
+    'caps': [for (final cap in caps) cap.name],
+    'online': online,
+    'lastSeenAt': lastSeenAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -644,12 +649,12 @@ final class PlayCommand extends Command {
 
   @override
   JsonMap toJson() => {
-        'type': type,
-        'items': [for (final item in items) item.toJson()],
-        'index': index,
-        if (positionMs != null) 'positionMs': positionMs,
-        if (radio != null) 'radio': radio,
-      };
+    'type': type,
+    'items': [for (final item in items) item.toJson()],
+    'index': index,
+    if (positionMs != null) 'positionMs': positionMs,
+    if (radio != null) 'radio': radio,
+  };
 }
 
 final class EnqueueCommand extends Command {
@@ -663,10 +668,10 @@ final class EnqueueCommand extends Command {
 
   @override
   JsonMap toJson() => {
-        'type': type,
-        'items': [for (final item in items) item.toJson()],
-        'mode': mode.name,
-      };
+    'type': type,
+    'items': [for (final item in items) item.toJson()],
+    'mode': mode.name,
+  };
 }
 
 final class PauseCommand extends Command {
@@ -813,16 +818,16 @@ class Item {
   }
 
   JsonMap toJson() => {
-        'kind': kind.name,
-        'id': id,
-        'title': title,
-        'subtitle': subtitle,
-        'thumbnail': thumbnail,
-        'artist': artist,
-        'album': album,
-        'durationMs': durationMs,
-        'hasVideo': hasVideo,
-      };
+    'kind': kind.name,
+    'id': id,
+    'title': title,
+    'subtitle': subtitle,
+    'thumbnail': thumbnail,
+    'artist': artist,
+    'album': album,
+    'durationMs': durationMs,
+    'hasVideo': hasVideo,
+  };
 }
 
 class Shelf {
@@ -840,9 +845,9 @@ class Shelf {
   }
 
   JsonMap toJson() => {
-        'title': title,
-        'items': [for (final item in items) item.toJson()],
-      };
+    'title': title,
+    'items': [for (final item in items) item.toJson()],
+  };
 }
 
 // --- rpc params ---
@@ -913,10 +918,10 @@ class LibraryParams {
   }
 
   JsonMap toJson() => {
-        'offset': offset,
-        'limit': limit,
-        if (query != null) 'query': query,
-      };
+    'offset': offset,
+    'limit': limit,
+    if (query != null) 'query': query,
+  };
 }
 
 // --- rpc results ---
@@ -930,8 +935,8 @@ class ShelvesResult {
       ShelvesResult(_list(_asMap(raw, 'result'), 'shelves', Shelf.fromJson));
 
   JsonMap toJson() => {
-        'shelves': [for (final shelf in shelves) shelf.toJson()],
-      };
+    'shelves': [for (final shelf in shelves) shelf.toJson()],
+  };
 }
 
 class SuggestResult {
@@ -939,11 +944,11 @@ class SuggestResult {
   final List<String> suggestions;
 
   factory SuggestResult.fromJson(Object? raw) => SuggestResult(
-        _list(_asMap(raw, 'result'), 'suggestions', (v) {
-          if (v is String) return v;
-          throw const FormatException('suggestion: expected a string');
-        }),
-      );
+    _list(_asMap(raw, 'result'), 'suggestions', (v) {
+      if (v is String) return v;
+      throw const FormatException('suggestion: expected a string');
+    }),
+  );
 
   JsonMap toJson() => {'suggestions': suggestions};
 }
@@ -962,9 +967,9 @@ class OpenResult {
   }
 
   JsonMap toJson() => {
-        'title': title,
-        'tracks': [for (final track in tracks) track.toJson()],
-      };
+    'title': title,
+    'tracks': [for (final track in tracks) track.toJson()],
+  };
 }
 
 class LibraryResult {
@@ -981,9 +986,9 @@ class LibraryResult {
   }
 
   JsonMap toJson() => {
-        'total': total,
-        'tracks': [for (final track in tracks) track.toJson()],
-      };
+    'total': total,
+    'tracks': [for (final track in tracks) track.toJson()],
+  };
 }
 
 // --- lyrics (v1.1, §3.8) ---
@@ -1036,12 +1041,10 @@ class ConnectLyricLine {
   }
 
   JsonMap toJson() => {
-        'startMs': startMs,
-        'text': text,
-        'words': words == null
-            ? null
-            : [for (final word in words!) word.toJson()],
-      };
+    'startMs': startMs,
+    'text': text,
+    'words': words == null ? null : [for (final word in words!) word.toJson()],
+  };
 }
 
 /// The result of the `lyrics` rpc.
@@ -1056,10 +1059,10 @@ class LyricsResult {
 
   /// Nothing playing, or nothing found: no lines.
   const LyricsResult.none(this.track)
-      : found = false,
-        synced = false,
-        source = null,
-        lines = const [];
+    : found = false,
+      synced = false,
+      source = null,
+      lines = const [];
 
   final TrackRef? track;
   final bool found;
@@ -1080,12 +1083,12 @@ class LyricsResult {
   }
 
   JsonMap toJson() => {
-        'track': track?.toJson(),
-        'found': found,
-        'synced': synced,
-        'source': source,
-        'lines': [for (final line in lines) line.toJson()],
-      };
+    'track': track?.toJson(),
+    'found': found,
+    'synced': synced,
+    'source': source,
+    'lines': [for (final line in lines) line.toJson()],
+  };
 }
 
 // --- video (v1.3) ---
@@ -1106,12 +1109,12 @@ class VideoResult {
 
   /// No picture right now (audio track, nothing playing, stale or unresolved).
   const VideoResult.none(this.track)
-      : found = false,
-        url = null,
-        mimeType = null,
-        width = null,
-        height = null,
-        expiresAt = null;
+    : found = false,
+      url = null,
+      mimeType = null,
+      width = null,
+      height = null,
+      expiresAt = null;
 
   final TrackRef? track;
   final bool found;
@@ -1138,14 +1141,14 @@ class VideoResult {
   }
 
   JsonMap toJson() => {
-        'track': track?.toJson(),
-        'found': found,
-        'url': url,
-        'mimeType': mimeType,
-        'width': width,
-        'height': height,
-        'expiresAt': expiresAt,
-      };
+    'track': track?.toJson(),
+    'found': found,
+    'url': url,
+    'mimeType': mimeType,
+    'width': width,
+    'height': height,
+    'expiresAt': expiresAt,
+  };
 }
 
 // --- visualiser (v1.1, §3.11) ---
@@ -1184,12 +1187,12 @@ class VizData {
   }
 
   JsonMap toJson() => {
-        'heardAt': heardAt,
-        'positionMs': positionMs,
-        'bands': bands,
-        'level': level,
-        'beat': beat,
-      };
+    'heardAt': heardAt,
+    'positionMs': positionMs,
+    'bands': bands,
+    'level': level,
+    'beat': beat,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,7 +1276,10 @@ sealed class ConnectFrame {
       case 'ping':
         return PingFrame(_str(json, 'id'));
       case 'pong':
-        return PongFrame(id: _str(json, 'id'), serverTime: _int(json, 'serverTime'));
+        return PongFrame(
+          id: _str(json, 'id'),
+          serverTime: _int(json, 'serverTime'),
+        );
       case 'rpc':
         return RpcFrame(
           id: _str(json, 'id'),
@@ -1322,7 +1328,12 @@ final class HelloFrame extends ConnectFrame {
   String get t => 'hello';
 
   @override
-  JsonMap toJson() => {'t': t, 'v': v, 'token': token, 'device': device.toJson()};
+  JsonMap toJson() => {
+    't': t,
+    'v': v,
+    'token': token,
+    'device': device.toJson(),
+  };
 }
 
 final class WelcomeFrame extends ConnectFrame {
@@ -1349,16 +1360,16 @@ final class WelcomeFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'v': v,
-        'deviceId': deviceId,
-        'serverTime': serverTime,
-        'devices': [for (final device in devices) device.toJson()],
-        'activeDeviceId': activeDeviceId,
-        'states': {
-          for (final entry in states.entries) entry.key: entry.value.toJson(),
-        },
-      };
+    't': t,
+    'v': v,
+    'deviceId': deviceId,
+    'serverTime': serverTime,
+    'devices': [for (final device in devices) device.toJson()],
+    'activeDeviceId': activeDeviceId,
+    'states': {
+      for (final entry in states.entries) entry.key: entry.value.toJson(),
+    },
+  };
 }
 
 final class DevicesFrame extends ConnectFrame {
@@ -1372,10 +1383,10 @@ final class DevicesFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'devices': [for (final device in devices) device.toJson()],
-        'activeDeviceId': activeDeviceId,
-      };
+    't': t,
+    'devices': [for (final device in devices) device.toJson()],
+    'activeDeviceId': activeDeviceId,
+  };
 }
 
 /// player → hub.
@@ -1442,20 +1453,18 @@ final class CmdFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'id': id,
-        if (to != null) 'to': to,
-        if (from != null) 'from': from,
-        'cmd': cmd.toJson(),
-      };
+    't': t,
+    'id': id,
+    if (to != null) 'to': to,
+    if (from != null) 'from': from,
+    'cmd': cmd.toJson(),
+  };
 }
 
 final class AckFrame extends ConnectFrame {
   const AckFrame({required this.id, required this.ok, this.error});
 
-  const AckFrame.ok(this.id)
-      : ok = true,
-        error = null;
+  const AckFrame.ok(this.id) : ok = true, error = null;
 
   const AckFrame.failed(this.id, AckError this.error) : ok = false;
 
@@ -1468,11 +1477,11 @@ final class AckFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'id': id,
-        'ok': ok,
-        if (error != null) 'error': error!.wire,
-      };
+    't': t,
+    'id': id,
+    'ok': ok,
+    if (error != null) 'error': error!.wire,
+  };
 }
 
 final class PingFrame extends ConnectFrame {
@@ -1522,23 +1531,23 @@ final class RpcFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'id': id,
-        if (to != null) 'to': to,
-        if (from != null) 'from': from,
-        'method': method,
-        'params': params,
-      };
+    't': t,
+    'id': id,
+    if (to != null) 'to': to,
+    if (from != null) 'from': from,
+    'method': method,
+    'params': params,
+  };
 }
 
 final class RpcResultFrame extends ConnectFrame {
   const RpcResultFrame.ok({required this.id, required JsonMap this.result})
-      : ok = true,
-        error = null;
+    : ok = true,
+      error = null;
 
   const RpcResultFrame.error({required this.id, required RpcError this.error})
-      : ok = false,
-        result = null;
+    : ok = false,
+      result = null;
 
   final String id;
   final bool ok;
@@ -1550,11 +1559,11 @@ final class RpcResultFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        'id': id,
-        'ok': ok,
-        if (ok) 'result': result else 'error': error!.wire,
-      };
+    't': t,
+    'id': id,
+    'ok': ok,
+    if (ok) 'result': result else 'error': error!.wire,
+  };
 }
 
 /// Turns the visualiser stream on or off. A controller sends it with [to]; the
@@ -1586,10 +1595,10 @@ final class VizFrame extends ConnectFrame {
 
   @override
   JsonMap toJson() => {
-        't': t,
-        if (deviceId != null) 'deviceId': deviceId,
-        'frame': frame.toJson(),
-      };
+    't': t,
+    if (deviceId != null) 'deviceId': deviceId,
+    'frame': frame.toJson(),
+  };
 }
 
 /// A frame type this version does not know, kept verbatim.
@@ -1634,12 +1643,12 @@ class LinkTicket {
   }
 
   JsonMap toJson() => {
-        'linkId': linkId,
-        'code': code,
-        'qr': qr,
-        'secret': secret,
-        'expiresAt': expiresAt,
-      };
+    'linkId': linkId,
+    'code': code,
+    'qr': qr,
+    'secret': secret,
+    'expiresAt': expiresAt,
+  };
 }
 
 /// Who is asking to be linked — what the approver is shown before saying yes.
@@ -1667,11 +1676,11 @@ class LinkPreview {
   }
 
   JsonMap toJson() => {
-        'kind': kind.name,
-        'name': name,
-        'platform': platform,
-        'createdAt': createdAt,
-      };
+    'kind': kind.name,
+    'name': name,
+    'platform': platform,
+    'createdAt': createdAt,
+  };
 }
 
 enum LinkClaimStatus { pending, denied, expired, approved }
@@ -1696,13 +1705,13 @@ class LinkClaim {
     required String deviceId,
     required String userId,
   }) : this._(
-          LinkClaimStatus.approved,
-          accessToken: accessToken,
-          refreshToken: refreshToken,
-          expiresIn: expiresIn,
-          deviceId: deviceId,
-          userId: userId,
-        );
+         LinkClaimStatus.approved,
+         accessToken: accessToken,
+         refreshToken: refreshToken,
+         expiresIn: expiresIn,
+         deviceId: deviceId,
+         userId: userId,
+       );
 
   final LinkClaimStatus status;
   final String? accessToken;
@@ -1713,8 +1722,11 @@ class LinkClaim {
 
   factory LinkClaim.fromJson(Object? raw) {
     final json = _asMap(raw, 'link claim');
-    final status =
-        _enum(LinkClaimStatus.values, _str(json, 'status'), 'status');
+    final status = _enum(
+      LinkClaimStatus.values,
+      _str(json, 'status'),
+      'status',
+    );
     if (status != LinkClaimStatus.approved) return LinkClaim.waiting(status);
     return LinkClaim.approved(
       accessToken: _str(json, 'accessToken'),
@@ -1726,15 +1738,15 @@ class LinkClaim {
   }
 
   JsonMap toJson() => {
-        'status': status.name,
-        if (status == LinkClaimStatus.approved) ...{
-          'accessToken': accessToken,
-          'refreshToken': refreshToken,
-          'expiresIn': expiresIn,
-          'deviceId': deviceId,
-          'userId': userId,
-        },
-      };
+    'status': status.name,
+    if (status == LinkClaimStatus.approved) ...{
+      'accessToken': accessToken,
+      'refreshToken': refreshToken,
+      'expiresIn': expiresIn,
+      'deviceId': deviceId,
+      'userId': userId,
+    },
+  };
 }
 
 /// `GET /connect/devices`.
@@ -1753,9 +1765,9 @@ class DevicesResponse {
   }
 
   JsonMap toJson() => {
-        'devices': [for (final device in devices) device.toJson()],
-        'activeDeviceId': activeDeviceId,
-      };
+    'devices': [for (final device in devices) device.toJson()],
+    'activeDeviceId': activeDeviceId,
+  };
 }
 
 /// Reads a link code out of what a QR holds: `hypemuzik://link?c=<code>`.

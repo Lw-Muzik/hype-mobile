@@ -10,6 +10,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../ytmusic/yt_models.dart';
+
 import 'package:on_audio_query/on_audio_query.dart';
 
 import 'connect_executor.dart';
@@ -34,13 +35,13 @@ abstract interface class ConnectCatalog {
 
 /// The contract's filter names, as the app's search filters.
 SearchFilter searchFilterOf(ConnectSearchFilter filter) => switch (filter) {
-      ConnectSearchFilter.all => SearchFilter.top,
-      ConnectSearchFilter.songs => SearchFilter.songs,
-      ConnectSearchFilter.videos => SearchFilter.videos,
-      ConnectSearchFilter.albums => SearchFilter.albums,
-      ConnectSearchFilter.artists => SearchFilter.artists,
-      ConnectSearchFilter.playlists => SearchFilter.playlists,
-    };
+  ConnectSearchFilter.all => SearchFilter.top,
+  ConnectSearchFilter.songs => SearchFilter.songs,
+  ConnectSearchFilter.videos => SearchFilter.videos,
+  ConnectSearchFilter.albums => SearchFilter.albums,
+  ConnectSearchFilter.artists => SearchFilter.artists,
+  ConnectSearchFilter.playlists => SearchFilter.playlists,
+};
 
 class ConnectRpcHandler {
   ConnectRpcHandler({
@@ -96,7 +97,10 @@ class ConnectRpcHandler {
       case RpcMethod.search:
         final p = SearchParams.fromJson(params);
         _requireYt();
-        final shelves = await _catalog.search(p.query, searchFilterOf(p.filter));
+        final shelves = await _catalog.search(
+          p.query,
+          searchFilterOf(p.filter),
+        );
         return ShelvesResult([for (final s in shelves) shelfOf(s)]).toJson();
 
       case RpcMethod.suggest:
@@ -134,8 +138,7 @@ class ConnectRpcHandler {
           song: song,
           source: source,
           window: lyricsWindow,
-        ))
-            .toJson();
+        )).toJson();
 
       case RpcMethod.video:
         final source = _video;
@@ -147,8 +150,7 @@ class ConnectRpcHandler {
           song: song,
           source: source,
           window: videoWindow,
-        ))
-            .toJson();
+        )).toJson();
 
       case RpcMethod.library:
         final p = LibraryParams.fromJson(params);

@@ -198,15 +198,18 @@ List<DailyMix> buildDailyMixes({
   required DateTime now,
   int maxMixes = MixRules.maxMixes,
   int tracksPerMix = MixRules.tracksPerMix,
+
   /// Whether a drive or YouTube can fill a mix out. Lowers how much local music
   /// a taste needs before it is worth offering — see [MixRules.minSeedSize].
   bool canSupplement = false,
+
   /// Drive and YouTube tracks fetched for a taste, keyed by its descriptor.
   ///
   /// They join that one mix's pool and are never clustered themselves: the
   /// user's own music decides which tastes exist, and a radio of related
   /// artists must add to "chris brown" rather than found a mix of its own.
   Map<String, List<MixCandidate>> supplements = const {},
+
   /// Which "session" of mixes this is. A new value — the app opened again, a
   /// pull to refresh — gives different tracks, a different set of tastes when
   /// there are more than fit, and a different running order. The same value
@@ -216,8 +219,9 @@ List<DailyMix> buildDailyMixes({
   if (library.isEmpty) return const [];
 
   final daypart = Daypart.of(now);
-  final minSize =
-      canSupplement ? MixRules.minSeedSize : MixRules.minClusterSize;
+  final minSize = canSupplement
+      ? MixRules.minSeedSize
+      : MixRules.minClusterSize;
   final clusters = _shuffleByMass(
     _cluster(library, minSize: minSize),
     Random(Object.hash(_day(now), daypart.index, variation, 'order')),
@@ -227,7 +231,9 @@ List<DailyMix> buildDailyMixes({
   final mixes = <DailyMix>[];
   for (var i = 0; i < clusters.length && mixes.length < maxMixes; i++) {
     final cluster = clusters[i];
-    final random = Random(_seedFor(now, daypart, cluster.descriptor, variation));
+    final random = Random(
+      _seedFor(now, daypart, cluster.descriptor, variation),
+    );
     final own = {for (final t in cluster.tracks) t.key};
     final pool = [
       ...cluster.tracks,
@@ -243,12 +249,14 @@ List<DailyMix> buildDailyMixes({
     // A cluster that cannot fill even a short mix is one the library only
     // looked like it had — unless something else is expected to fill it.
     if (keys.length < minSize) continue;
-    mixes.add(DailyMix(
-      name: '${cluster.descriptor.toLowerCase()} ${daypart.label}',
-      descriptor: cluster.descriptor,
-      daypart: daypart,
-      trackKeys: keys,
-    ));
+    mixes.add(
+      DailyMix(
+        name: '${cluster.descriptor.toLowerCase()} ${daypart.label}',
+        descriptor: cluster.descriptor,
+        daypart: daypart,
+        trackKeys: keys,
+      ),
+    );
   }
   return mixes;
 }
@@ -282,7 +290,11 @@ List<_Cluster> _shuffleByMass(List<_Cluster> clusters, Random random) {
 
 @immutable
 class _Cluster {
-  const _Cluster({required this.descriptor, required this.tracks, required this.mass});
+  const _Cluster({
+    required this.descriptor,
+    required this.tracks,
+    required this.mass,
+  });
   final String descriptor;
   final List<MixCandidate> tracks;
   final double mass;
@@ -435,8 +447,14 @@ List<String> _fill(
       if (!t.isOwn) t,
   ];
 
-  final proven = [for (final t in local) if (t.isProven) t];
-  final novel = [for (final t in local) if (t.isNovel) t];
+  final proven = [
+    for (final t in local)
+      if (t.isProven) t,
+  ];
+  final novel = [
+    for (final t in local)
+      if (t.isNovel) t,
+  ];
   // Played a little, or played and skipped — neither earned nor unheard. Kept
   // as the pool that tops the other two up.
   final rest = [
@@ -492,9 +510,7 @@ List<String> _weightedDraw(
   if (limit <= 0 || pool.isEmpty) return const [];
 
   final candidates = [...pool];
-  final weights = [
-    for (final track in candidates) _weight(track, daypart),
-  ];
+  final weights = [for (final track in candidates) _weight(track, daypart)];
 
   final out = <String>[];
   var total = weights.fold<double>(0, (sum, w) => sum + w);

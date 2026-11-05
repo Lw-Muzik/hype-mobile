@@ -24,7 +24,11 @@ class AudioFocusSettingsSection extends StatelessWidget {
     required this.settings,
     required this.onChanged,
     required this.isIos,
+    this.showHeader = true,
   });
+
+  /// False when hosted in a sub-page whose AppBar already carries the title.
+  final bool showHeader;
 
   final AudioFocusSettings settings;
   final ValueChanged<AudioFocusSettings> onChanged;
@@ -58,6 +62,7 @@ class AudioFocusSettingsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (showHeader)
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Row(

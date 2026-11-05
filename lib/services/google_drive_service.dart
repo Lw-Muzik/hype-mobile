@@ -26,8 +26,7 @@ class GoogleDriveService {
     final headers = await _auth.getGoogleAuthHeaders();
     if (headers.isEmpty) return [];
 
-    final mimeQuery =
-        _audioMimeTypes.map((m) => "mimeType='$m'").join(' or ');
+    final mimeQuery = _audioMimeTypes.map((m) => "mimeType='$m'").join(' or ');
     final query = '($mimeQuery) and trashed=false';
     final fields =
         'nextPageToken,files(id,name,mimeType,size,parents,thumbnailLink,modifiedTime)';
@@ -36,12 +35,14 @@ class GoogleDriveService {
     String? pageToken;
 
     do {
-      final uri = Uri.parse('$_baseUrl/files').replace(queryParameters: {
-        'q': query,
-        'fields': fields,
-        'pageSize': '100',
-        if (pageToken case final pt?) 'pageToken': pt,
-      });
+      final uri = Uri.parse('$_baseUrl/files').replace(
+        queryParameters: {
+          'q': query,
+          'fields': fields,
+          'pageSize': '100',
+          if (pageToken case final pt?) 'pageToken': pt,
+        },
+      );
 
       final response = await http.get(uri, headers: headers);
       if (response.statusCode != 200) break;
@@ -49,17 +50,19 @@ class GoogleDriveService {
       final data = json.decode(response.body);
       final files = data['files'] as List? ?? [];
       for (final f in files) {
-        allFiles.add(_RawFile(
-          id: f['id'] as String,
-          name: f['name'] as String,
-          mimeType: f['mimeType'] as String,
-          size: int.tryParse('${f['size'] ?? 0}') ?? 0,
-          parentId: (f['parents'] as List?)?.firstOrNull as String?,
-          thumbnailLink: f['thumbnailLink'] as String?,
-          modifiedTime: f['modifiedTime'] != null
-              ? DateTime.tryParse(f['modifiedTime'] as String)
-              : null,
-        ));
+        allFiles.add(
+          _RawFile(
+            id: f['id'] as String,
+            name: f['name'] as String,
+            mimeType: f['mimeType'] as String,
+            size: int.tryParse('${f['size'] ?? 0}') ?? 0,
+            parentId: (f['parents'] as List?)?.firstOrNull as String?,
+            thumbnailLink: f['thumbnailLink'] as String?,
+            modifiedTime: f['modifiedTime'] != null
+                ? DateTime.tryParse(f['modifiedTime'] as String)
+                : null,
+          ),
+        );
       }
       pageToken = data['nextPageToken'] as String?;
     } while (pageToken != null);
@@ -89,7 +92,9 @@ class GoogleDriveService {
   }
 
   Future<Map<String, String>> _resolveFolderNames(
-      Set<String> parentIds, Map<String, String> headers) async {
+    Set<String> parentIds,
+    Map<String, String> headers,
+  ) async {
     final names = <String, String>{};
     for (final id in parentIds) {
       try {

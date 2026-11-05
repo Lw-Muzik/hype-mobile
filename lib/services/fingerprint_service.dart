@@ -46,7 +46,10 @@ class FingerprintService {
   /// Identifies a song via fingerprinting + AcoustID + MusicBrainz.
   /// For cloud files, pass [fingerprintPath] pointing to the locally cached
   /// audio file since fingerprinting requires a local file path.
-  Future<RecognitionResult?> identifySong(SongModel song, {String? fingerprintPath}) async {
+  Future<RecognitionResult?> identifySong(
+    SongModel song, {
+    String? fingerprintPath,
+  }) async {
     final path = song.data;
 
     // Check in-memory cache
@@ -85,7 +88,9 @@ class FingerprintService {
         }
       }
     } else {
-      debugPrint('FingerprintService: Chromaprint unavailable, skipping AcoustID');
+      debugPrint(
+        'FingerprintService: Chromaprint unavailable, skipping AcoustID',
+      );
     }
 
     // Step 4: ACRCloud fallback (works on all platforms — uses raw audio bytes)
@@ -118,11 +123,17 @@ class FingerprintService {
       artworkPath = await fetchCoverArt(result.musicBrainzReleaseId!);
     }
 
-    final ok = await Channel.writeTags(song.data, tagMap, artworkPath: artworkPath);
+    final ok = await Channel.writeTags(
+      song.data,
+      tagMap,
+      artworkPath: artworkPath,
+    );
 
     // Clean up temp artwork file
     if (artworkPath != null) {
-      try { File(artworkPath).deleteSync(); } catch (_) {}
+      try {
+        File(artworkPath).deleteSync();
+      } catch (_) {}
     }
 
     // Trigger MediaStore re-scan so UI reflects changes
@@ -215,11 +226,16 @@ class FingerprintService {
   // AcoustID API
   // ---------------------------------------------------------------------------
 
-  Future<RecognitionResult?> _lookupAcoustId(String fingerprint, int duration) async {
+  Future<RecognitionResult?> _lookupAcoustId(
+    String fingerprint,
+    int duration,
+  ) async {
     // Rate limit: max 3 req/sec
     final elapsed = DateTime.now().difference(_lastAcoustIdCall);
     if (elapsed.inMilliseconds < 334) {
-      await Future.delayed(Duration(milliseconds: 334 - elapsed.inMilliseconds));
+      await Future.delayed(
+        Duration(milliseconds: 334 - elapsed.inMilliseconds),
+      );
     }
     _lastAcoustIdCall = DateTime.now();
 
@@ -317,7 +333,9 @@ class FingerprintService {
     // Rate limit: max 1 req/sec
     final elapsed = DateTime.now().difference(_lastMusicBrainzCall);
     if (elapsed.inSeconds < 1) {
-      await Future.delayed(Duration(milliseconds: 1000 - elapsed.inMilliseconds));
+      await Future.delayed(
+        Duration(milliseconds: 1000 - elapsed.inMilliseconds),
+      );
     }
     _lastMusicBrainzCall = DateTime.now();
 
@@ -328,7 +346,10 @@ class FingerprintService {
       });
 
       final res = await _client
-          .get(uri, headers: {'User-Agent': '$_userAgent ( contact@hypemuzik.app )'})
+          .get(
+            uri,
+            headers: {'User-Agent': '$_userAgent ( contact@hypemuzik.app )'},
+          )
           .timeout(_timeout);
 
       if (res.statusCode != 200) return null;
@@ -418,13 +439,16 @@ class FingerprintService {
       raf.closeSync();
 
       // Build HMAC-SHA1 signature
-      final timestamp = (DateTime.now().millisecondsSinceEpoch ~/ 1000).toString();
+      final timestamp = (DateTime.now().millisecondsSinceEpoch ~/ 1000)
+          .toString();
       const dataType = 'audio';
       const signatureVersion = '1';
       final stringToSign =
           'POST\n/v1/identify\n${AppConfig.acrCloudAccessKey}\n$dataType\n$signatureVersion\n$timestamp';
       final hmac = Hmac(sha1, utf8.encode(AppConfig.acrCloudAccessSecret));
-      final signature = base64Encode(hmac.convert(utf8.encode(stringToSign)).bytes);
+      final signature = base64Encode(
+        hmac.convert(utf8.encode(stringToSign)).bytes,
+      );
 
       // Multipart POST
       final uri = Uri.https(AppConfig.acrCloudHost, '/v1/identify');
@@ -435,9 +459,17 @@ class FingerprintService {
         ..fields['signature'] = signature
         ..fields['timestamp'] = timestamp
         ..fields['sample_bytes'] = readLen.toString()
-        ..files.add(MultipartFile.fromBytes('sample', sampleBytes, filename: 'sample.mp3'));
+        ..files.add(
+          MultipartFile.fromBytes(
+            'sample',
+            sampleBytes,
+            filename: 'sample.mp3',
+          ),
+        );
 
-      final streamedRes = await request.send().timeout(const Duration(seconds: 20));
+      final streamedRes = await request.send().timeout(
+        const Duration(seconds: 20),
+      );
       final resBody = await streamedRes.stream.bytesToString();
 
       if (streamedRes.statusCode != 200) {

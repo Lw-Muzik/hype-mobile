@@ -151,6 +151,53 @@ void main() {
     });
   });
 
+  group('startup migration honours link all devices', () {
+    const names = ['Flat', '_device_bluetooth'];
+
+    Future<SharedPreferences> prefs(Map<String, Object> v) async {
+      SharedPreferences.setMockInitialValues(v);
+      return SharedPreferences.getInstance();
+    }
+
+    test('linking off: the kept curves migrate', () async {
+      final r = loadOutputProfiles(
+        await prefs({'linkAllDevices': false}),
+        names,
+      );
+      expect(r.migrated, isTrue);
+      expect(
+        r.profiles.kinds[AudioOutputKind.bluetooth]!.eqPreset,
+        '_device_bluetooth',
+      );
+    });
+
+    test('linking on: stale hidden curves are not applied', () async {
+      final r = loadOutputProfiles(
+        await prefs({'linkAllDevices': true}),
+        names,
+      );
+      expect(r.migrated, isTrue);
+      expect(r.profiles.kinds, isEmpty);
+    });
+
+    test('never set means on (the old default): no migration', () async {
+      final r = loadOutputProfiles(await prefs({}), names);
+      expect(r.profiles.kinds, isEmpty);
+    });
+
+    test('saved profiles are loaded as they are', () async {
+      final saved = const OutputProfiles().withKind(
+        AudioOutputKind.usb,
+        const OutputProfile(noDuck: true),
+      );
+      final p = await prefs({});
+      await saved.save(p);
+      final r = loadOutputProfiles(p, names);
+      expect(r.migrated, isFalse);
+      expect(r.profiles.kinds.keys, [AudioOutputKind.usb]);
+    });
+  });
+
   group('activeRoute', () {
     test(
       'legacy string gives the kind; the device name comes from the list',

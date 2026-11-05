@@ -29,10 +29,10 @@ class CloudStation implements StationSource {
     required CloudFile seed,
     required CloudStreamResolver resolve,
     Random? random,
-  })  : _files = files,
-        _seed = seed,
-        _resolve = resolve,
-        _random = random ?? Random();
+  }) : _files = files,
+       _seed = seed,
+       _resolve = resolve,
+       _random = random ?? Random();
 
   final List<CloudFile> _files;
   final CloudStreamResolver _resolve;
@@ -82,9 +82,7 @@ class CloudStation implements StationSource {
 
     // Concurrent because Dropbox needs a request per file and doing them in
     // turn would make a top-up take as long as the tracks it is adding.
-    final urls = await Future.wait([
-      for (final file in picked) _safely(file),
-    ]);
+    final urls = await Future.wait([for (final file in picked) _safely(file)]);
 
     final tracks = <SongModel>[];
     for (var i = 0; i < picked.length; i++) {
@@ -116,14 +114,14 @@ class CloudStation implements StationSource {
   /// that would otherwise make every file with artwork look like it shared an
   /// album with every other.
   static TrackTraits _traitsOf(CloudFile file) => TrackTraits(
-        key: file.fileId,
-        artist: file.trackArtist,
-        album: file.albumName,
-        // Drives have no genre column and no play count. A missing field never
-        // matches, so these terms simply drop out of the scoring.
-        genre: null,
-        addedAtSec: file.modifiedDate == null
-            ? null
-            : file.modifiedDate!.millisecondsSinceEpoch ~/ 1000,
-      );
+    key: file.fileId,
+    artist: file.trackArtist,
+    album: file.albumName,
+    // Drives have no genre column and no play count. A missing field never
+    // matches, so these terms simply drop out of the scoring.
+    genre: null,
+    addedAtSec: file.modifiedDate == null
+        ? null
+        : file.modifiedDate!.millisecondsSinceEpoch ~/ 1000,
+  );
 }

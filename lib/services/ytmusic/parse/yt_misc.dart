@@ -24,7 +24,10 @@ List<ExploreSection> parseCategories(Object? json) {
   _collect(json, 'gridRenderer', grids);
 
   for (final grid in grids) {
-    final title = ptrString(grid, 'header/gridHeaderRenderer/title/runs/0/text');
+    final title = ptrString(
+      grid,
+      'header/gridHeaderRenderer/title/runs/0/text',
+    );
     final buttons = <Object?>[];
     _collect(ptr(grid, 'items'), 'musicNavigationButtonRenderer', buttons);
 
@@ -87,7 +90,10 @@ void _collectRadioRows(Object? node, List<Object?> out) {
       // other rendition, so only the primary is a row. Reading both would
       // duplicate every wrapped track in the queue — 42 of 50 rows in a real
       // capture are wrapped.
-      final primary = ptr(wrapper, 'primaryRenderer/playlistPanelVideoRenderer');
+      final primary = ptr(
+        wrapper,
+        'primaryRenderer/playlistPanelVideoRenderer',
+      );
       if (primary != null) out.add(primary);
       return;
     }
@@ -121,7 +127,8 @@ YtTrack? _parseRadioRow(Object? row) {
   if (title == null) return null;
 
   final byline = ptr(row, 'longBylineText/runs');
-  final artist = (byline is List && byline.isNotEmpty
+  final artist =
+      (byline is List && byline.isNotEmpty
           ? ptr(byline.first, 'text') as String?
           : null) ??
       joinRuns(ptr(row, 'shortBylineText/runs'));

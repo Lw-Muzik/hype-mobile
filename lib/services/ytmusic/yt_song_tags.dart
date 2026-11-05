@@ -90,12 +90,11 @@ class YtSongTags {
 typedef YtInfoSource = Future<YtTrackInfo?> Function(String videoId);
 typedef YtAlbumSource = Future<YtTrackList?> Function(String id, String title);
 typedef YtLyricsSource = Future<YtLyrics?> Function(String browseId);
-typedef LrcSource =
-    Future<String?> Function({
-      required String title,
-      required String artist,
-      int? durationMs,
-    });
+typedef LrcSource = Future<String?> Function({
+  required String title,
+  required String artist,
+  int? durationMs,
+});
 typedef BytesSource = Future<List<int>?> Function(String url);
 typedef SongSearchSource = Future<List<ExploreItem>> Function(String query);
 
@@ -113,8 +112,7 @@ class YtSongTagger {
        _album =
            album ??
            ((id, title) => YtMusicRepository.instance.album(id, title: title)),
-       _ytLyrics =
-           ytLyrics ?? ((id) => YtMusicRepository.instance.lyrics(id)),
+       _ytLyrics = ytLyrics ?? ((id) => YtMusicRepository.instance.lyrics(id)),
        _lrclib = lrclib ?? LrclibResolver().resolve,
        _fetch = fetch ?? _get,
        _songSearch = songSearch ?? _searchSongs;
@@ -160,9 +158,7 @@ class YtSongTagger {
     // as a track of one, with the album, year and square cover: find it by
     // title and artist (and roughly the length — a video often runs longer).
     if (info?.album == null && track.album == null) {
-      final song = await _quietly(
-        () => _findSong(title, artist, durationSecs),
-      );
+      final song = await _quietly(() => _findSong(title, artist, durationSecs));
       final songInfo = song == null
           ? null
           : await _quietly(() => _trackInfo(song.id));
@@ -205,7 +201,8 @@ class YtSongTagger {
       title: title,
       artist: artist,
       album: album,
-      albumArtist: page?.artist ?? (album != null ? primaryArtist(artist) : null),
+      albumArtist:
+          page?.artist ?? (album != null ? primaryArtist(artist) : null),
       year: info?.year,
       trackNumber: number,
       trackTotal: number == null ? null : page!.tracks.length,
@@ -233,9 +230,11 @@ class YtSongTagger {
     var bestScore = 0.0;
     for (final item in items.take(5)) {
       final have = bareTitle(item.title);
-      final exact = _overlap(want, have) >= 0.999 && _overlap(have, want) >= 0.999;
+      final exact =
+          _overlap(want, have) >= 0.999 && _overlap(have, want) >= 0.999;
       if (!exact && _overlap(want, have) < 0.8) continue;
-      final artistOk = artist == null ||
+      final artistOk =
+          artist == null ||
           item.artist == null ||
           _overlap(primaryArtist(artist) ?? artist, item.artist!) >= 0.5;
       if (!artistOk) continue;
@@ -364,9 +363,7 @@ class YtSongTagger {
         return null;
       }
       final bytes = <int>[];
-      await response
-          .forEach(bytes.addAll)
-          .timeout(const Duration(seconds: 20));
+      await response.forEach(bytes.addAll).timeout(const Duration(seconds: 20));
       return bytes;
     } catch (_) {
       return null;
@@ -413,7 +410,10 @@ String cleanTitle(String title, {String? artist}) {
     RegExp(r'\s*[\(\[]\s*' + noise + r'\s*[\)\]]', caseSensitive: false),
     '',
   );
-  t = t.replaceAll(RegExp(r'\s*\|\s*' + noise + r'.*$', caseSensitive: false), '');
+  t = t.replaceAll(
+    RegExp(r'\s*\|\s*' + noise + r'.*$', caseSensitive: false),
+    '',
+  );
   if (artist != null && artist.isNotEmpty) {
     final lead = RegExp(
       '^${RegExp.escape(artist)}\\s*[-–—]\\s*',
@@ -451,8 +451,10 @@ String cleanTitle(String title, {String? artist}) {
 String bareTitle(String title) {
   var t = cleanTitle(title);
   t = t.replaceAll(
-    RegExp(r'\s*[\(\[]\s*(feat\.?|ft\.?|featuring|with)\s[^\)\]]*[\)\]]',
-        caseSensitive: false),
+    RegExp(
+      r'\s*[\(\[]\s*(feat\.?|ft\.?|featuring|with)\s[^\)\]]*[\)\]]',
+      caseSensitive: false,
+    ),
     '',
   );
   t = t.replaceAll(
@@ -477,7 +479,9 @@ String bareTitle(String title) {
 /// Boy"): the album artist when the album page doesn't name one.
 String? primaryArtist(String? artist) {
   if (artist == null) return null;
-  final first = artist.split(RegExp(r'\s*(,|&| x | feat\.? | ft\.? )\s*')).first;
+  final first = artist
+      .split(RegExp(r'\s*(,|&| x | feat\.? | ft\.? )\s*'))
+      .first;
   return first.trim().isEmpty ? artist : first.trim();
 }
 
@@ -539,7 +543,8 @@ double _matchScore(
 /// Whether [credits] (a result's artists) include [artist]'s first name —
 /// not just a title that mentions them, as a stranger's re-upload does.
 bool creditsInclude(String? credits, String artist) =>
-    credits != null && _overlap(primaryArtist(artist) ?? artist, credits) >= 0.5;
+    credits != null &&
+    _overlap(primaryArtist(artist) ?? artist, credits) >= 0.5;
 
 /// The share of [a]'s words found in [b] (case and punctuation ignored).
 double _overlap(String a, String b) {

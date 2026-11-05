@@ -20,6 +20,19 @@ class VolumeFeed {
       .handleError((Object _) {});
 }
 
+/// Volume changes made by Hype's own handling of the volume keys (Android,
+/// Volume panel on): the new level as a fraction 0…1.
+class VolumeKeysFeed {
+  VolumeKeysFeed._();
+
+  static const EventChannel _channel = EventChannel('eq_app/volume_keys');
+
+  static Stream<double> get stream => _channel
+      .receiveBroadcastStream()
+      .map((e) => (e as num).toDouble().clamp(0.0, 1.0))
+      .handleError((Object _) {});
+}
+
 /// Pause/resume on volume: pauses when the volume reaches 0, and resumes only
 /// what it paused, once the volume is raised and Hype's UI or notification is
 /// visible. A pause or play by anyone else clears the mark.

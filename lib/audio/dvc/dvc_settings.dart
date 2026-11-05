@@ -51,3 +51,23 @@ class DvcSettings {
   @override
   int get hashCode => noDvcForBluetoothAbsoluteVolume.hashCode;
 }
+
+/// The DVC level (dB, -30..0) matching the system music volume [index] of
+/// [max], so a first enable plays at the level the listener already had.
+///
+/// [streamDb] is the real attenuation Android applies at that step
+/// (`AudioManager.getStreamVolumeDb`, API 28+): its curve drops much faster at
+/// low steps than a straight line, so it is used when known (clamped to the DVC
+/// range; below -30 is -30). Without it (older Android, or unreadable) the
+/// linear map stands in.
+double dvcGainFromSystemVolume(int index, int max, {double? streamDb}) {
+  if (streamDb != null && !streamDb.isNaN) {
+    return streamDb.clamp(-30.0, 0.0).toDouble();
+  }
+  if (max <= 0) return -30.0;
+  return (-30.0 + 30.0 * (index / max)).clamp(-30.0, 0.0).toDouble();
+}
+
+/// Whether a route read counts as a probe. A failed read (no platform side,
+/// as in a headless start) is not "speaker": it leaves DVC off.
+bool dvcRouteReadValid(String? outputType) => outputType != null;

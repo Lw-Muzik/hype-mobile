@@ -42,6 +42,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:eq_app/visualizers/bass_beat.dart';
 import 'package:eq_app/visualizers/beat_frame.dart';
+
 import 'connect_protocol.dart';
 
 /// Bands in a frame, fixed by the contract.
@@ -77,7 +78,9 @@ List<double> nativeBandCentres(int count, double sampleRate) {
     if (edges[b] <= edges[b - 1]) edges[b] = edges[b - 1] + 1;
   }
   final binHz = sampleRate / (2 * half);
-  return [for (var b = 0; b < count; b++) (edges[b] + edges[b + 1]) / 2 * binHz];
+  return [
+    for (var b = 0; b < count; b++) (edges[b] + edges[b + 1]) / 2 * binHz,
+  ];
 }
 
 /// Re-bins the native bands (dBFS, low first, power-curve spaced) onto the
@@ -247,10 +250,9 @@ class ConnectVizStreamer {
     // signal, and a hit in a skipped frame is carried to the next one sent.
     var onset = false;
     if (frame.hops.isNotEmpty) {
-      final hits = _bass.add(
-        [for (final h in frame.hops) h.toDouble()],
-        frame.hopSeconds,
-      );
+      final hits = _bass.add([
+        for (final h in frame.hops) h.toDouble(),
+      ], frame.hopSeconds);
       for (final hit in hits) {
         if (hit.strength > _pendingBeat) _pendingBeat = hit.strength;
         if (hit.onset) onset = true;

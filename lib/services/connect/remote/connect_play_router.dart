@@ -69,10 +69,10 @@ final class OnlyHere extends RemotePlayPlan {
 }
 
 String _titleOf(TrackRef ref) => switch (ref) {
-      YtTrackRef(:final title) => title,
-      LocalTrackRef(:final title) => title,
-      OtherTrackRef(:final title) => title,
-    };
+  YtTrackRef(:final title) => title,
+  LocalTrackRef(:final title) => title,
+  OtherTrackRef(:final title) => title,
+};
 
 /// Decides what to send for a tap on [refs] at [index].
 ///
@@ -90,7 +90,10 @@ RemotePlayPlan planRemotePlay(
     return const OnlyHere('That');
   }
   final from = refs.sublist(index);
-  final sendable = [for (final ref in from) if (ref is YtTrackRef) ref];
+  final sendable = [
+    for (final ref in from)
+      if (ref is YtTrackRef) ref,
+  ];
   if (sendable.isEmpty) return OnlyHere(_titleOf(refs[index]));
   if (!startAtFirstPlayable && from.first is! YtTrackRef) {
     return OnlyHere(_titleOf(from.first));
@@ -174,15 +177,17 @@ class ConnectPlayRouter {
         for (final t in tracks)
           switch (t.source) {
             MixSource.youtube when t.track != null => ytRefOf(t.track!),
-            MixSource.local when t.song != null =>
-              trackRefOf(t.song!, deviceId: router.deviceId),
+            MixSource.local when t.song != null => trackRefOf(
+              t.song!,
+              deviceId: router.deviceId,
+            ),
             _ => OtherTrackRef(
-                title: t.title,
-                artist: t.artist,
-                album: null,
-                durationMs: null,
-                artUrl: null,
-              ),
+              title: t.title,
+              artist: t.artist,
+              album: null,
+              durationMs: null,
+              artUrl: null,
+            ),
           },
       ],
       0,
@@ -195,10 +200,9 @@ class ConnectPlayRouter {
   static Future<void>? enqueueSongs(List<SongModel> songs, EnqueueMode mode) {
     final router = instance;
     if (router == null || target == null) return null;
-    return router._enqueue(
-      [for (final s in songs) trackRefOf(s, deviceId: router.deviceId)],
-      mode,
-    );
+    return router._enqueue([
+      for (final s in songs) trackRefOf(s, deviceId: router.deviceId),
+    ], mode);
   }
 
   /// "Play next" / "add to queue" for YouTube tracks.
@@ -242,12 +246,17 @@ class ConnectPlayRouter {
   Future<void> _enqueue(List<TrackRef> refs, EnqueueMode mode) async {
     final device = session.remoteTarget;
     if (device == null) return;
-    final sendable = [for (final ref in refs) if (ref is YtTrackRef) ref];
+    final sendable = [
+      for (final ref in refs)
+        if (ref is YtTrackRef) ref,
+    ];
     if (sendable.isEmpty) {
-      ui.say(refs.length == 1
-          ? "'${_titleOf(refs.first)}' is only on this phone, so "
-              '${device.name} cannot queue it.'
-          : 'Those are only on this phone, so ${device.name} cannot queue them.');
+      ui.say(
+        refs.length == 1
+            ? "'${_titleOf(refs.first)}' is only on this phone, so "
+                  '${device.name} cannot queue it.'
+            : 'Those are only on this phone, so ${device.name} cannot queue them.',
+      );
       return;
     }
     final ack = await session.cmd(
@@ -275,11 +284,11 @@ class ConnectPlayRouter {
       _failure(error, deviceName);
 
   static String _failure(AckError? error, String name) => switch (error) {
-        AckError.offline => '$name is offline.',
-        AckError.timeout => '$name did not answer. Try again.',
-        AckError.nothingPlayable => '$name could not play that.',
-        AckError.unsupported => '$name cannot do that yet.',
-        AckError.notAPlayer => '$name is not a player.',
-        _ => 'Could not play on $name.',
-      };
+    AckError.offline => '$name is offline.',
+    AckError.timeout => '$name did not answer. Try again.',
+    AckError.nothingPlayable => '$name could not play that.',
+    AckError.unsupported => '$name cannot do that yet.',
+    AckError.notAPlayer => '$name is not a player.',
+    _ => 'Could not play on $name.',
+  };
 }

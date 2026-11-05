@@ -153,9 +153,9 @@ class ConnectRemoteSession extends ChangeNotifier {
 
   /// Every other online player: what the device picker lists.
   List<DeviceInfo> get otherPlayers => [
-        for (final device in _devices)
-          if (device.id != selfId && device.online && device.isPlayer) device,
-      ];
+    for (final device in _devices)
+      if (device.id != selfId && device.online && device.isPlayer) device,
+  ];
 
   /// The latest known state of [deviceId], uninterpolated.
   StampedState? stateOf(String deviceId) => _states[deviceId];
@@ -248,8 +248,12 @@ class ConnectRemoteSession extends ChangeNotifier {
   void _recomputeTarget() {
     final before = _targetId;
     final active = _activeId;
-    final device = active == null || active == selfId ? null : _deviceById(active);
-    final next = device != null && device.online && device.isPlayer ? device.id : null;
+    final device = active == null || active == selfId
+        ? null
+        : _deviceById(active);
+    final next = device != null && device.online && device.isPlayer
+        ? device.id
+        : null;
     _targetId = next;
     if (before != null && next == null) {
       final gone = _deviceById(before);
@@ -367,14 +371,15 @@ class ConnectRemoteSession extends ChangeNotifier {
       unawaited(cmdTarget(VolumeCommand(pending)));
     });
   }
+
   Future<AckFrame> shuffle(bool on) => cmdTarget(ShuffleCommand(on));
   Future<AckFrame> repeat(ConnectRepeat mode) => cmdTarget(RepeatCommand(mode));
 
   void _guess({bool? playing, int? positionMs}) {
     final id = _targetId;
     if (id == null) return;
-    final overlay = _overlays[id] ??
-        (_overlays[id] = _Overlay(atMs: _hubNowMs()));
+    final overlay =
+        _overlays[id] ?? (_overlays[id] = _Overlay(atMs: _hubNowMs()));
     if (playing != null) {
       // Rebase the position to now so flipping the flag does not make it jump.
       overlay.positionMs = _interpolated(id, overlay: overlay);
@@ -396,8 +401,8 @@ class ConnectRemoteSession extends ChangeNotifier {
   void _guessVolume(double value) {
     final id = _targetId;
     if (id == null) return;
-    final overlay = _overlays[id] ??
-        (_overlays[id] = _Overlay(atMs: _hubNowMs()));
+    final overlay =
+        _overlays[id] ?? (_overlays[id] = _Overlay(atMs: _hubNowMs()));
     overlay.volume = value;
     _volumeTimers[id]?.cancel();
     _volumeTimers[id] = Timer(overlayTtl, () {
@@ -478,8 +483,8 @@ class ConnectRemoteSession extends ChangeNotifier {
     int position;
     if (overlay?.positionMs != null) {
       final isPlaying = playing ?? overlay?.playing ?? state?.playing ?? false;
-      position = overlay!.positionMs! +
-          (isPlaying ? _hubNowMs() - overlay.atMs : 0);
+      position =
+          overlay!.positionMs! + (isPlaying ? _hubNowMs() - overlay.atMs : 0);
     } else if (state != null && stamped != null) {
       final isPlaying = playing ?? state.playing;
       position = state.positionMs + (isPlaying ? _hubNowMs() - stamped.at : 0);

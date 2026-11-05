@@ -41,7 +41,7 @@ class AdvancedSettings {
   static const _kMusicFx = 'advMusicFx';
   static const _kForceAudio = 'advForceAudioOnFocusChange';
 
-  /// The legacy "Fine volume steps" switch (still written by the old row).
+  /// The legacy "Fine volume steps" switch (read once by the 100/30 migration; the row is gone).
   static const _kLegacyFineSteps = 'dvcFineSteps';
 
   AdvancedSettings copyWith({
@@ -158,11 +158,7 @@ ForceAudioStep forceAudioDecision({
   return advanced ? ForceAudioStep.none : ForceAudioStep.restart;
 }
 
-/// The factory room preset to bring back for [activeName], or null when the
-/// active sound is the listener's own ("Custom") and must be kept.
-RoomPreset? reverbPresetToRestore(String activeName) {
-  for (final p in RoomPreset.builtIn) {
-    if (p.name == activeName) return p;
-  }
-  return null;
-}
+/// The factory default room preset ("Off"): what Restore reverb presets
+/// returns the room settings to. Editing a preset renames the active one to
+/// "Custom", so restoring "the active preset" would never bring anything back.
+RoomPreset factoryRoomPreset() => RoomPreset.builtIn.first;

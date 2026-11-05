@@ -178,6 +178,14 @@ public:
     // Current limiter gain, 1.0 when not limiting (for Audio Info).
     float limiterGain() const               { return limiter_.gain(); }
 
+    // Limiter gain reduction in dB (>= 0); 0 while the limiter is off. Lock-free,
+    // safe from control threads (the audio thread publishes it per block).
+    float limiterReductionDb() const        { return limiter_.isEnabled() ? limiter_.reductionDb() : 0.0f; }
+
+    // Configured format (for Audio Info). Relaxed atomics, safe from control threads.
+    int configuredSampleRate() const        { return sampleRate_.load(std::memory_order_relaxed); }
+    int configuredChannels() const          { return channels_.load(std::memory_order_relaxed); }
+
     // The limiter has a fixed ceiling (1.0) and fixed slopes; these remain
     // only so the platform bridges that still call them keep compiling.
     void setLimiterCeiling(float)           {}
@@ -357,7 +365,7 @@ private:
     std::atomic<bool> crossfeedEnabled_{false};
     std::atomic<bool> surround3dEnabled_{false};
 
-    int sampleRate_;
-    int channels_;
+    std::atomic<int> sampleRate_;
+    std::atomic<int> channels_;
 
 };

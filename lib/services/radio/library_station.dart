@@ -21,9 +21,9 @@ class LibraryStation implements StationSource {
     required LibraryRepository repo,
     required SongModel seed,
     Random? random,
-  })  : _repo = repo,
-        _seed = seed,
-        _random = random ?? Random();
+  }) : _repo = repo,
+       _seed = seed,
+       _random = random ?? Random();
 
   final LibraryRepository _repo;
   final Random _random;

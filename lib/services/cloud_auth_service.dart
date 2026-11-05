@@ -38,9 +38,9 @@ class CloudAuthService {
 
   Future<void> _ensureGoogleInit() async {
     if (_googleInitialized) return;
-    await GoogleSignInPlatform.instance.init(InitParameters(
-      serverClientId: AppConfig.googleWebClientId,
-    ));
+    await GoogleSignInPlatform.instance.init(
+      InitParameters(serverClientId: AppConfig.googleWebClientId),
+    );
     _googleInitialized = true;
   }
 
@@ -84,8 +84,7 @@ class CloudAuthService {
   Future<void> signOutGoogle() async {
     try {
       await _ensureGoogleInit();
-      await GoogleSignInPlatform.instance
-          .signOut(const SignOutParams());
+      await GoogleSignInPlatform.instance.signOut(const SignOutParams());
     } catch (_) {}
     _googleUser = null;
     await _secureStorage.delete(key: _googleConnectedKey);
@@ -105,7 +104,8 @@ class CloudAuthService {
       await _ensureGoogleInit();
       final result = await GoogleSignInPlatform.instance
           .attemptLightweightAuthentication(
-              const AttemptLightweightAuthenticationParameters());
+            const AttemptLightweightAuthenticationParameters(),
+          );
       _googleUser = result?.user;
       return _googleUser != null;
     } catch (_) {
@@ -120,13 +120,15 @@ class CloudAuthService {
       await _ensureGoogleInit();
       final tokens = await GoogleSignInPlatform.instance
           .clientAuthorizationTokensForScopes(
-              ClientAuthorizationTokensForScopesParameters(
-                  request: AuthorizationRequestDetails(
-        scopes: const [_driveScope],
-        userId: _googleUser!.id,
-        email: _googleUser!.email,
-        promptIfUnauthorized: false,
-      )));
+            ClientAuthorizationTokensForScopesParameters(
+              request: AuthorizationRequestDetails(
+                scopes: const [_driveScope],
+                userId: _googleUser!.id,
+                email: _googleUser!.email,
+                promptIfUnauthorized: false,
+              ),
+            ),
+          );
       if (tokens == null) return {};
       return {'Authorization': 'Bearer ${tokens.accessToken}'};
     } catch (_) {
@@ -134,19 +136,22 @@ class CloudAuthService {
       try {
         final result = await GoogleSignInPlatform.instance
             .attemptLightweightAuthentication(
-                const AttemptLightweightAuthenticationParameters());
+              const AttemptLightweightAuthenticationParameters(),
+            );
         _googleUser = result?.user;
         if (_googleUser == null) return {};
 
         final tokens = await GoogleSignInPlatform.instance
             .clientAuthorizationTokensForScopes(
-                ClientAuthorizationTokensForScopesParameters(
-                    request: AuthorizationRequestDetails(
-          scopes: const [_driveScope],
-          userId: _googleUser!.id,
-          email: _googleUser!.email,
-          promptIfUnauthorized: false,
-        )));
+              ClientAuthorizationTokensForScopesParameters(
+                request: AuthorizationRequestDetails(
+                  scopes: const [_driveScope],
+                  userId: _googleUser!.id,
+                  email: _googleUser!.email,
+                  promptIfUnauthorized: false,
+                ),
+              ),
+            );
         if (tokens == null) return {};
         return {'Authorization': 'Bearer ${tokens.accessToken}'};
       } catch (_) {
@@ -195,12 +200,13 @@ class CloudAuthService {
 
   Future<bool> restoreDropboxSession() async {
     try {
-      _dropboxAccessToken =
-          await _secureStorage.read(key: 'dropbox_access_token');
-      _dropboxRefreshToken =
-          await _secureStorage.read(key: 'dropbox_refresh_token');
-      final expiryStr =
-          await _secureStorage.read(key: 'dropbox_token_expiry');
+      _dropboxAccessToken = await _secureStorage.read(
+        key: 'dropbox_access_token',
+      );
+      _dropboxRefreshToken = await _secureStorage.read(
+        key: 'dropbox_refresh_token',
+      );
+      final expiryStr = await _secureStorage.read(key: 'dropbox_token_expiry');
       if (expiryStr != null) {
         _dropboxTokenExpiry = DateTime.tryParse(expiryStr);
       }
@@ -223,8 +229,9 @@ class CloudAuthService {
   Future<void> _refreshDropboxIfNeeded() async {
     if (_dropboxRefreshToken == null) return;
     if (_dropboxTokenExpiry != null &&
-        _dropboxTokenExpiry!
-            .isAfter(DateTime.now().add(const Duration(minutes: 5)))) {
+        _dropboxTokenExpiry!.isAfter(
+          DateTime.now().add(const Duration(minutes: 5)),
+        )) {
       return;
     }
     try {
@@ -240,8 +247,9 @@ class CloudAuthService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         _dropboxAccessToken = data['access_token'];
-        _dropboxTokenExpiry = DateTime.now()
-            .add(Duration(seconds: data['expires_in'] as int));
+        _dropboxTokenExpiry = DateTime.now().add(
+          Duration(seconds: data['expires_in'] as int),
+        );
         await _persistDropboxTokens();
       }
     } catch (_) {}
@@ -250,16 +258,21 @@ class CloudAuthService {
   Future<void> _persistDropboxTokens() async {
     if (_dropboxAccessToken != null) {
       await _secureStorage.write(
-          key: 'dropbox_access_token', value: _dropboxAccessToken!);
+        key: 'dropbox_access_token',
+        value: _dropboxAccessToken!,
+      );
     }
     if (_dropboxRefreshToken != null) {
       await _secureStorage.write(
-          key: 'dropbox_refresh_token', value: _dropboxRefreshToken!);
+        key: 'dropbox_refresh_token',
+        value: _dropboxRefreshToken!,
+      );
     }
     if (_dropboxTokenExpiry != null) {
       await _secureStorage.write(
-          key: 'dropbox_token_expiry',
-          value: _dropboxTokenExpiry!.toIso8601String());
+        key: 'dropbox_token_expiry',
+        value: _dropboxTokenExpiry!.toIso8601String(),
+      );
     }
   }
 }

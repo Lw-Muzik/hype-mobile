@@ -167,7 +167,10 @@ class MediaButtonService {
     if (isHook && !e.down && _swallowHookRelease) {
       // The release of a hold that already acted as a long press.
       _swallowHookRelease = false;
-      out = [for (final p in out) if (p.long) p];
+      out = [
+        for (final p in out)
+          if (p.long) p,
+      ];
     }
     _reschedule();
     unawaited(_emit(late, _LongPath.timer));

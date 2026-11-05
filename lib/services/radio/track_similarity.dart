@@ -113,8 +113,12 @@ double similarity(TrackTraits seed, TrackTraits candidate) {
   }
 
   if (candidate.playCount > 0) {
-    final capped = min(candidate.playCount, SimilarityWeights.familiarityCeiling);
-    score += SimilarityWeights.familiarity *
+    final capped = min(
+      candidate.playCount,
+      SimilarityWeights.familiarityCeiling,
+    );
+    score +=
+        SimilarityWeights.familiarity *
         (capped / SimilarityWeights.familiarityCeiling);
   }
 

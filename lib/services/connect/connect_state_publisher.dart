@@ -198,9 +198,11 @@ class ConnectStatePublisher {
     if (signature != _sentSignature) return true;
     final sentAt = _sentAt;
     if (sentAt == null) return true;
-    final expected = _sentPositionMs +
+    final expected =
+        _sentPositionMs +
         (_sentPlaying ? now.difference(sentAt).inMilliseconds : 0);
-    return (state.positionMs - expected).abs() > positionTolerance.inMilliseconds;
+    return (state.positionMs - expected).abs() >
+        positionTolerance.inMilliseconds;
   }
 
   double _volumeOf(ConnectSnapshot snapshot) {
@@ -214,7 +216,8 @@ class ConnectStatePublisher {
     double volume, {
     required int seq,
   }) {
-    final duration = snapshot.duration ??
+    final duration =
+        snapshot.duration ??
         (snapshot.track?.duration == null
             ? null
             : Duration(milliseconds: snapshot.track!.duration!));
@@ -245,10 +248,10 @@ class ConnectStatePublisher {
 
   /// Everything in a frame except the two fields that change as time passes.
   static String _signature(PlayerState state) => jsonEncode(
-        state.toJson()
-          ..remove('seq')
-          ..remove('positionMs'),
-      );
+    state.toJson()
+      ..remove('seq')
+      ..remove('positionMs'),
+  );
 
   // -------------------------------------------------------------------------
 

@@ -134,8 +134,7 @@ class YouTubeStation implements StationSource {
     List<YtTrack> page, {
     required Set<String> exclude,
     required int limit,
-  }) =>
-      _freshTracks(page, exclude: exclude, limit: limit);
+  }) => _freshTracks(page, exclude: exclude, limit: limit);
 
   /// Resolves [tracks] as audio and returns the entries that worked.
   ///

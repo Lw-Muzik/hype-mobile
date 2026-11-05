@@ -38,11 +38,11 @@ enum ConnectNotificationAction {
   /// The identifier native and Dart agree on. Play and pause share one
   /// button, so they share one id: the Dart side decides which it means.
   String get id => switch (this) {
-        previous => 'previous',
-        pause || play => 'toggle',
-        next => 'next',
-        turnOff => 'off',
-      };
+    previous => 'previous',
+    pause || play => 'toggle',
+    next => 'next',
+    turnOff => 'off',
+  };
 }
 
 /// The words and buttons of one notification.
@@ -65,11 +65,11 @@ class ConnectNotificationContent {
   final List<ConnectNotificationAction> actions;
 
   Map<String, Object?> toJson() => {
-        'title': title,
-        'text': text,
-        'subText': subText,
-        'actions': [for (final action in actions) action.name],
-      };
+    'title': title,
+    'text': text,
+    'subText': subText,
+    'actions': [for (final action in actions) action.name],
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -80,10 +80,12 @@ class ConnectNotificationContent {
       listEquals(other.actions, actions);
 
   @override
-  int get hashCode => Object.hash(title, text, subText, Object.hashAll(actions));
+  int get hashCode =>
+      Object.hash(title, text, subText, Object.hashAll(actions));
 
   @override
-  String toString() => 'ConnectNotificationContent($title | $text | $subText | '
+  String toString() =>
+      'ConnectNotificationContent($title | $text | $subText | '
       '${actions.map((a) => a.name).join(',')})';
 }
 
@@ -164,7 +166,7 @@ ConnectNotificationContent buildConnectNotification(
         title: 'Reconnecting…',
         text: input.status == ConnectStatus.retrying
             ? 'Cannot reach HypeMuzik'
-                '${wait == null ? '' : ', trying again in ${wait.inSeconds.clamp(1, 60)} s'}'
+                  '${wait == null ? '' : ', trying again in ${wait.inSeconds.clamp(1, 60)} s'}'
             : null,
       );
     case ConnectStatus.online:
@@ -172,15 +174,16 @@ ConnectNotificationContent buildConnectNotification(
   }
 
   final remote = input.remoteDevice;
-  final remoteSpeaks = remote != null &&
-      (input.remoteTrack != null || input.remotePlaying);
+  final remoteSpeaks =
+      remote != null && (input.remoteTrack != null || input.remotePlaying);
   if (remote != null && remoteSpeaks) {
     final track = input.remoteTrack;
     return ConnectNotificationContent(
       title: input.remotePlaying
           ? 'Playing on ${remote.name}'
           : 'Paused on ${remote.name}',
-      text: trackLine(track?.title, track?.artist) ??
+      text:
+          trackLine(track?.title, track?.artist) ??
           (track == null ? null : 'Unknown track'),
       subText: _onlineLine(input),
       actions: [
@@ -201,7 +204,9 @@ ConnectNotificationContent buildConnectNotification(
 
   if (input.hasLocalTrack) {
     return ConnectNotificationContent(
-      title: input.localPlaying ? 'Playing on this phone' : 'Paused on this phone',
+      title: input.localPlaying
+          ? 'Playing on this phone'
+          : 'Paused on this phone',
       text: trackLine(input.localTitle, input.localArtist) ?? 'Unknown track',
       subText: secondary.isEmpty ? null : secondary,
     );

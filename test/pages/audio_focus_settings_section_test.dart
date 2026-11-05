@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eq_app/audio/focus/audio_focus_settings.dart';
 import 'package:eq_app/pages/Settings.dart';
+import 'package:eq_app/pages/audio_sub_page.dart';
 import 'package:eq_app/pages/audio_focus_settings_section.dart';
 
 void main() {
@@ -108,11 +109,12 @@ void main() {
     expect(changes.single.resumeAfterCall, isTrue, reason: 'others kept');
   });
 
-  test('every label has a playback index entry; android-only flags agree', () {
+  test('every label has an Audio > Audio Focus index entry; android-only flags agree', () {
     for (final label in AudioFocusSettingsSection.labels) {
       final e = kSettingsIndex.where((e) => e.label == label).toList();
       expect(e.length, 1, reason: label);
-      expect(e.single.category, SettingsCategory.playback, reason: label);
+      expect(e.single.category, SettingsCategory.audio, reason: label);
+      expect(e.single.subPage, AudioSubPage.audioFocus, reason: label);
       final androidOnly =
           AudioFocusSettingsSection.androidOnlyLabels.contains(label);
       expect(e.single.androidOnly, androidOnly, reason: label);

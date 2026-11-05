@@ -13,8 +13,8 @@ RoomDSPEngine::RoomDSPEngine()
 }
 
 void RoomDSPEngine::init(int sampleRate, int channels) {
-    sampleRate_ = sampleRate;
-    channels_ = channels;
+    sampleRate_.store(sampleRate, std::memory_order_relaxed);
+    channels_.store(channels, std::memory_order_relaxed);
 
     // EQ init
     graphicEq_.init((float)sampleRate);

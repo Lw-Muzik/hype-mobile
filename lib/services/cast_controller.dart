@@ -60,8 +60,9 @@ class CastController extends ChangeNotifier {
   Future<void> startDiscovery() async {
     await _loadTokens();
     if (_discovery != null) return;
-    final discovery =
-        BonsoirDiscovery(type: StreamServerController.serviceType);
+    final discovery = BonsoirDiscovery(
+      type: StreamServerController.serviceType,
+    );
     await discovery.initialize();
     _sub = discovery.eventStream?.listen(_onEvent);
     await discovery.start();
@@ -115,7 +116,9 @@ class CastController extends ChangeNotifier {
       castPositionMs = (j['positionMs'] as num?)?.toInt() ?? 0;
       castDurationMs = (j['durationMs'] as num?)?.toInt();
       notifyListeners();
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   Future<void> _loadTokens() async {
@@ -209,7 +212,9 @@ class CastController extends ChangeNotifier {
         },
         body: jsonEncode({'action': action}),
       );
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   String _extOf(String path) {

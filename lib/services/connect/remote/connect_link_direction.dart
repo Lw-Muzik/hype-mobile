@@ -84,9 +84,9 @@ class ConnectLinkDirection {
   }
 
   LinkChoice preselect(DeviceInfo desktop) => preselectedChoice(
-        phonePlaying: phonePlaying(),
-        desktopPlaying: session.isPlaying(desktop.id),
-      );
+    phonePlaying: phonePlaying(),
+    desktopPlaying: session.isPlaying(desktop.id),
+  );
 
   /// The desktop named [name] once this phone and it are both online, or null
   /// after [timeout].
@@ -113,10 +113,12 @@ class ConnectLinkDirection {
   Future<TransferResult> apply(LinkChoice choice, DeviceInfo desktop) async {
     final chosen = choice == LinkChoice.desktop ? desktop.id : selfId;
     final other = choice == LinkChoice.desktop ? selfId : desktop.id;
-    final chosenPlaying =
-        chosen == selfId ? phonePlaying() : session.isPlaying(chosen);
-    final otherPlaying =
-        other == selfId ? phonePlaying() : session.isPlaying(other);
+    final chosenPlaying = chosen == selfId
+        ? phonePlaying()
+        : session.isPlaying(chosen);
+    final otherPlaying = other == selfId
+        ? phonePlaying()
+        : session.isPlaying(other);
     if (!chosenPlaying && otherPlaying) {
       return transfer.transfer(from: other, to: chosen);
     }

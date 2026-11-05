@@ -196,7 +196,9 @@ void _workerMain(SendPort outbound) {
       } on YtNetworkException catch (e) {
         outbound.send(_YtResponse(message.id, error: e.message));
       } catch (e) {
-        outbound.send(_YtResponse(message.id, error: 'Something went wrong: $e'));
+        outbound.send(
+          _YtResponse(message.id, error: 'Something went wrong: $e'),
+        );
       }
     }());
   });
@@ -270,7 +272,9 @@ Future<Object?> _handle(
       return parseTrackInfo(await api.next(videoId), videoId);
 
     case YtOp.lyrics:
-      return parseLyrics(await api.browse(browseId: args['browseId'] as String));
+      return parseLyrics(
+        await api.browse(browseId: args['browseId'] as String),
+      );
 
     case YtOp.resetSession:
       api.resetSession();
@@ -462,67 +466,63 @@ Future<StreamTarget> _resolveAudio(YtInnerTube api, String videoId) =>
 /// 2. **A DASH manifest built here** from the adaptive renditions, which is what
 ///    the other six need. See [buildDashManifest] for why, and for the iOS
 ///    limitation it carries.
-Future<StreamTarget> _resolveVideo(YtInnerTube api, String videoId) =>
-    _viaAnyClient(api, videoId, order: _videoClientOrder, (json, client) {
-      final headers = YtInnerTube.playbackHeaders(client);
+Future<StreamTarget> _resolveVideo(
+  YtInnerTube api,
+  String videoId,
+) => _viaAnyClient(api, videoId, order: _videoClientOrder, (json, client) {
+  final headers = YtInnerTube.playbackHeaders(client);
 
-      final hls = ptrString(json, 'streamingData/hlsManifestUrl');
-      if (hls != null) {
-        return StreamTarget(
-          url: hls,
-          headers: headers,
-          expiresAt: _expiryOf(hls),
-          format: YtStreamFormat.hls,
-          // The same response may still list adaptive renditions.
-          webVideo: pickWebVideo(ptr(json, 'streamingData/adaptiveFormats')),
-        );
-      }
+  final hls = ptrString(json, 'streamingData/hlsManifestUrl');
+  if (hls != null) {
+    return StreamTarget(
+      url: hls,
+      headers: headers,
+      expiresAt: _expiryOf(hls),
+      format: YtStreamFormat.hls,
+      // The same response may still list adaptive renditions.
+      webVideo: pickWebVideo(ptr(json, 'streamingData/adaptiveFormats')),
+    );
+  }
 
-      final formats = ptr(json, 'streamingData/adaptiveFormats');
-      if (formats is! List) {
-        throw const YtNetworkException(
-          'No video stream available for this track.',
-        );
-      }
+  final formats = ptr(json, 'streamingData/adaptiveFormats');
+  if (formats is! List) {
+    throw const YtNetworkException('No video stream available for this track.');
+  }
 
-      // AVC in MP4 only: an adaptation set holds one container and codec
-      // family, and AVC is the rendition every device decodes in hardware.
-      final video = <DashStream>[];
-      DashStream? audio;
-      for (final format in formats) {
-        final mime = ptrString(format, 'mimeType') ?? '';
-        final stream = readStream(format);
-        if (stream == null) continue;
-        if (mime.startsWith('video/mp4') && mime.contains('avc1')) {
-          video.add(stream);
-        } else if (ptr(format, 'itag') == 140) {
-          audio = stream;
-        }
-      }
-      if (video.isEmpty || audio == null) {
-        throw const YtNetworkException(
-          'No video stream available for this track.',
-        );
-      }
+  // AVC in MP4 only: an adaptation set holds one container and codec
+  // family, and AVC is the rendition every device decodes in hardware.
+  final video = <DashStream>[];
+  DashStream? audio;
+  for (final format in formats) {
+    final mime = ptrString(format, 'mimeType') ?? '';
+    final stream = readStream(format);
+    if (stream == null) continue;
+    if (mime.startsWith('video/mp4') && mime.contains('avc1')) {
+      video.add(stream);
+    } else if (ptr(format, 'itag') == 140) {
+      audio = stream;
+    }
+  }
+  if (video.isEmpty || audio == null) {
+    throw const YtNetworkException('No video stream available for this track.');
+  }
 
-      final durationMs = int.tryParse(
-            ptrString(json, 'videoDetails/lengthSeconds') ?? '',
-          ) ??
-          0;
-      final manifest = buildDashManifest(
-        video: video,
-        audio: audio,
-        duration: Duration(seconds: durationMs),
-      );
-      return StreamTarget(
-        url: manifest,
-        headers: headers,
-        // The manifest is only as fresh as the URLs inside it.
-        expiresAt: _expiryOf(video.first.url),
-        format: YtStreamFormat.dash,
-        webVideo: pickWebVideo(formats),
-      );
-    });
+  final durationMs =
+      int.tryParse(ptrString(json, 'videoDetails/lengthSeconds') ?? '') ?? 0;
+  final manifest = buildDashManifest(
+    video: video,
+    audio: audio,
+    duration: Duration(seconds: durationMs),
+  );
+  return StreamTarget(
+    url: manifest,
+    headers: headers,
+    // The manifest is only as fresh as the URLs inside it.
+    expiresAt: _expiryOf(video.first.url),
+    format: YtStreamFormat.dash,
+    webVideo: pickWebVideo(formats),
+  );
+});
 
 /// Turns YouTube's own refusal into the reason, rather than letting it surface
 /// later as an empty format list.

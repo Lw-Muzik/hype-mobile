@@ -100,65 +100,65 @@ List<String> queueUids(List<SongModel> queue) {
 
 /// The track a `yt` ref names, as the app's YouTube layer wants it.
 YtTrack ytTrackOf(YtTrackRef ref) => YtTrack(
-      videoId: ref.videoId,
-      title: ref.title,
-      artist: ref.artist,
-      album: ref.album,
-      durationSecs: ref.durationMs == null ? null : ref.durationMs! / 1000,
-      thumbnail: ref.artUrl,
-    );
+  videoId: ref.videoId,
+  title: ref.title,
+  artist: ref.artist,
+  album: ref.album,
+  durationSecs: ref.durationMs == null ? null : ref.durationMs! / 1000,
+  thumbnail: ref.artUrl,
+);
 
 /// [track] as a `yt` track ref — the shape `open` returns its tracks in.
 YtTrackRef ytRefOf(YtTrack track) => YtTrackRef(
-      videoId: track.videoId,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      durationMs: _ms(track.durationSecs),
-      artUrl: track.thumbnail,
-    );
+  videoId: track.videoId,
+  title: track.title,
+  artist: track.artist,
+  album: track.album,
+  durationMs: _ms(track.durationSecs),
+  artUrl: track.thumbnail,
+);
 
 int? _ms(double? secs) => secs == null ? null : (secs * 1000).round();
 
 /// An `ExploreItem` on the wire.
 Item itemOf(ExploreItem item) => Item(
-      kind: switch (item.kind) {
-        ExploreKind.song => ItemKind.song,
-        ExploreKind.video => ItemKind.video,
-        ExploreKind.album => ItemKind.album,
-        ExploreKind.playlist => ItemKind.playlist,
-        ExploreKind.artist => ItemKind.artist,
-      },
-      id: item.id,
-      title: item.title,
-      subtitle: item.subtitle,
-      thumbnail: item.thumbnail,
-      artist: item.artist,
-      album: item.album,
-      durationMs: _ms(item.durationSecs),
-      hasVideo: item.hasVideo,
-    );
+  kind: switch (item.kind) {
+    ExploreKind.song => ItemKind.song,
+    ExploreKind.video => ItemKind.video,
+    ExploreKind.album => ItemKind.album,
+    ExploreKind.playlist => ItemKind.playlist,
+    ExploreKind.artist => ItemKind.artist,
+  },
+  id: item.id,
+  title: item.title,
+  subtitle: item.subtitle,
+  thumbnail: item.thumbnail,
+  artist: item.artist,
+  album: item.album,
+  durationMs: _ms(item.durationSecs),
+  hasVideo: item.hasVideo,
+);
 
 /// An item off the wire, as the app's YouTube layer opens it.
 ExploreItem exploreItemOf(Item item) => ExploreItem(
-      id: item.id,
-      kind: switch (item.kind) {
-        ItemKind.song => ExploreKind.song,
-        ItemKind.video => ExploreKind.video,
-        ItemKind.album => ExploreKind.album,
-        ItemKind.playlist => ExploreKind.playlist,
-        ItemKind.artist => ExploreKind.artist,
-      },
-      title: item.title,
-      subtitle: item.subtitle,
-      thumbnail: item.thumbnail,
-      artist: item.artist,
-      album: item.album,
-      durationSecs: item.durationMs == null ? null : item.durationMs! / 1000,
-      hasVideo: item.hasVideo,
-    );
+  id: item.id,
+  kind: switch (item.kind) {
+    ItemKind.song => ExploreKind.song,
+    ItemKind.video => ExploreKind.video,
+    ItemKind.album => ExploreKind.album,
+    ItemKind.playlist => ExploreKind.playlist,
+    ItemKind.artist => ExploreKind.artist,
+  },
+  title: item.title,
+  subtitle: item.subtitle,
+  thumbnail: item.thumbnail,
+  artist: item.artist,
+  album: item.album,
+  durationSecs: item.durationMs == null ? null : item.durationMs! / 1000,
+  hasVideo: item.hasVideo,
+);
 
 Shelf shelfOf(ExploreShelf shelf) => Shelf(
-      title: shelf.title,
-      items: [for (final item in shelf.items) itemOf(item)],
-    );
+  title: shelf.title,
+  items: [for (final item in shelf.items) itemOf(item)],
+);

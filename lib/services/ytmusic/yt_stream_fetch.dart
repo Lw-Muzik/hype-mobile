@@ -236,10 +236,9 @@ class _Transfer {
       final workers = options.parallel < count - 1
           ? options.parallel
           : count - 1;
-      await Future.wait(
-        [for (var w = 0; w < workers; w++) worker()],
-        eagerError: true,
-      );
+      await Future.wait([
+        for (var w = 0; w < workers; w++) worker(),
+      ], eagerError: true);
       await writes;
       await raf.flush();
     } catch (_) {

@@ -350,15 +350,64 @@ public class MainActivity extends AudioServiceFragmentActivity {
         );
     }
 
-    /** The system audio effects panel for Hype's session, or null when nothing answers. */
+    /**
+     * An explicit intent to the first other app that shows an audio effects
+     * panel (MusicFX), or null when none does. Hype's own manifest answers the
+     * action too, so this app is left out; otherwise "available" is always true.
+     */
     private Intent musicFxIntent(int sessionId) {
-        Intent fx = new Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL);
-        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_PACKAGE_NAME, getPackageName());
-        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_AUDIO_SESSION, sessionId);
-        fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_CONTENT_TYPE,
-                android.media.audiofx.AudioEffect.CONTENT_TYPE_MUSIC);
-        if (fx.resolveActivity(getPackageManager()) == null) return null;
-        return fx;
+        final String action = android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL;
+        List<android.content.pm.ResolveInfo> handlers =
+                getPackageManager().queryIntentActivities(new Intent(action), 0);
+        for (android.content.pm.ResolveInfo ri : handlers) {
+            if (ri.activityInfo == null || getPackageName().equals(ri.activityInfo.packageName)) continue;
+            Intent fx = new Intent(action);
+            fx.setClassName(ri.activityInfo.packageName, ri.activityInfo.name);
+            fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_PACKAGE_NAME, getPackageName());
+            fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_AUDIO_SESSION, sessionId);
+            fx.putExtra(android.media.audiofx.AudioEffect.EXTRA_CONTENT_TYPE,
+                    android.media.audiofx.AudioEffect.CONTENT_TYPE_MUSIC);
+            return fx;
+        }
+        return null;
+    }
+
+    // Volume panel on and direct volume control off: Hype takes the volume keys
+    // while it is in the foreground and steps the music stream itself, without
+    // the system's volume UI. Set from Dart (setVolumeKeys).
+    private volatile boolean consumeVolumeKeys = false;
+    private volatile int volumeKeyLevels = 0; // 0 = the system's own steps
+    // The equalizer applies to all apps: the system keys keep their meaning.
+    private volatile boolean volumeKeysSystemWide = false;
+
+    private boolean hypeOwnsVolumeKeys(int keyCode) {
+        if (!consumeVolumeKeys || DvcController.isActive() || volumeKeysSystemWide) return false;
+        // In a call or while the phone rings the keys belong to the system.
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null || am.getMode() != AudioManager.MODE_NORMAL) return false;
+        return (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN);
+    }
+
+    /** One key press: the next level up or down, with no system UI (flags 0). */
+    private void stepMusicVolume(boolean up) {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        final int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        final int cur = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        final int levels = volumeKeyLevels;
+        int next;
+        if (levels <= 0) {
+            next = cur + (up ? 1 : -1);
+        } else {
+            int level = Math.round(cur * (float) levels / max) + (up ? 1 : -1);
+            next = Math.round(level * (float) max / levels);
+            // Fewer system steps than levels: still move by at least one.
+            if (up && next <= cur) next = cur + 1;
+            if (!up && next >= cur) next = cur - 1;
+        }
+        next = Math.max(0, Math.min(max, next));
+        if (next != cur) am.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0);
+        SystemVolumeObserver.emitKeyVolume(next / (float) max);
     }
 
     @Override
@@ -368,6 +417,10 @@ public class MainActivity extends AudioServiceFragmentActivity {
         if (ConnectVolume.isRemoteKey(keyCode)
                 && ConnectChannel.sendVolumeKey(
                         keyCode == KeyEvent.KEYCODE_VOLUME_UP ? "up" : "down")) {
+            return true;
+        }
+        if (hypeOwnsVolumeKeys(keyCode)) {
+            stepMusicVolume(keyCode == KeyEvent.KEYCODE_VOLUME_UP);
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
@@ -383,6 +436,7 @@ public class MainActivity extends AudioServiceFragmentActivity {
         // The matching key-up, or the system's own path still clicks and shows
         // its volume panel for the phone's stream.
         if (ConnectVolume.isRemoteKey(keyCode)) return true;
+        if (hypeOwnsVolumeKeys(keyCode)) return true;
         return super.onKeyUp(keyCode, event);
     }
 
@@ -401,6 +455,8 @@ public class MainActivity extends AudioServiceFragmentActivity {
         // The music volume as 0...1 for Dart (pause/resume on volume, panel).
         SystemVolumeObserver.setupEventChannel(new EventChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(), "eq_app/system_volume"));
+        SystemVolumeObserver.setupKeysChannel(new EventChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(), "eq_app/volume_keys"));
 
         // Hype Connect's background service channel. Also attached by
         // ConnectService itself when it creates this engine with no activity.
@@ -724,7 +780,12 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             result.success(null);
                             break;
                         case "disableDvc":
-                            DvcController.disable(getApplicationContext());
+                            Boolean releaseOnly = call.argument("release");
+                            DvcController.disable(getApplicationContext(), Boolean.TRUE.equals(releaseOnly));
+                            result.success(null);
+                            break;
+                        case "applyPendingDvcRestore":
+                            DvcController.applyPendingRestore(getApplicationContext());
                             result.success(null);
                             break;
                         case "isDvcActive":
@@ -733,9 +794,25 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         case "getSystemVolume":
                             result.success(DvcController.getCurrentSystemVolume());
                             break;
+                        case "getStreamVolumeDb": {
+                            Integer dbIndex = call.argument("index");
+                            result.success(dbIndex == null ? null
+                                    : DvcController.getStreamDb(getApplicationContext(), dbIndex));
+                            break;
+                        }
                         case "getSystemMaxVolume":
                             result.success(DvcController.getMaxVolume());
                             break;
+                        case "setVolumeKeys": {
+                            Boolean consume = call.argument("consume");
+                            Integer lv = call.argument("levels");
+                            consumeVolumeKeys = consume != null && consume;
+                            volumeKeyLevels = lv == null ? 0 : lv;
+                            Boolean sysWide = call.argument("systemWide");
+                            volumeKeysSystemWide = sysWide != null && sysWide;
+                            result.success(null);
+                            break;
+                        }
                         case "hasMusicFx":
                             result.success(musicFxIntent(0) != null);
                             break;
@@ -830,6 +907,12 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             boolean en = call.argument("enabled");
                             RoomEffectsProcessor.broadcastLimiterEnabled(en);
                             result.success(null);
+                            break;
+                        }
+
+                        case "getAudioInfo": {
+                            String infoPlayerId = call.argument("playerId");
+                            result.success(RoomEffectsProcessor.getAudioInfo(infoPlayerId));
                             break;
                         }
 
@@ -1376,6 +1459,9 @@ public class MainActivity extends AudioServiceFragmentActivity {
                         case "getAudioOutputType":
                             String outputType = AudioOutputDetector.getAudioOutputType(getApplicationContext());
                             result.success(outputType);
+                            break;
+                        case "getDvcDeviceKey":
+                            result.success(AudioOutputDetector.getActiveDeviceKey(getApplicationContext()));
                             break;
                         case "isBtAbsoluteVolumeDisabled":
                             // true/false, or null when the setting is unreadable

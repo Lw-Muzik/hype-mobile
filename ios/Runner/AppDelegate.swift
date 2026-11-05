@@ -338,6 +338,13 @@ import AVFoundation
             dsp.setLimiterEnabled(args?["enabled"] as? Bool ?? true)
             result(nil)
 
+        case "getAudioInfo":
+            if let id = args?["playerId"] as? String {
+                result(dsp.audioInfo(playerId: id))
+            } else {
+                result(nil)
+            }
+
         // ==================== Level stages ====================
         case "dspSetHeadroomDb":
             dsp.setHeadroomDb(floatArg(args, "value"))

@@ -316,3 +316,24 @@ ActiveRoute activeRouteOf(
   }
   return ActiveRoute(kind: kind, deviceName: name, legacyType: legacyType);
 }
+
+/// The profiles at startup. Without saved ones, the curves the old "link all
+/// devices" switch kept become the kinds' EQ presets, but only for a listener
+/// who has that switch off (it defaulted to on): hidden curves left from an
+/// earlier time with linking off would otherwise be applied on every route
+/// change. [migrated] says whether the result should be saved.
+({OutputProfiles profiles, bool migrated}) loadOutputProfiles(
+  SharedPreferences prefs,
+  Iterable<String> presetNames,
+) {
+  if (prefs.containsKey(OutputProfiles.prefKey)) {
+    return (profiles: OutputProfiles.load(prefs), migrated: false);
+  }
+  final linked = prefs.getBool('linkAllDevices') ?? true;
+  return (
+    profiles: linked
+        ? const OutputProfiles()
+        : migrateLegacyDevicePresets(const OutputProfiles(), presetNames),
+    migrated: true,
+  );
+}

@@ -51,7 +51,9 @@ abstract interface class ConnectSecretStore {
 
 /// The platform keystore — the same storage the cloud drives' tokens use.
 class SecureConnectSecretStore implements ConnectSecretStore {
-  const SecureConnectSecretStore([this._storage = const FlutterSecureStorage()]);
+  const SecureConnectSecretStore([
+    this._storage = const FlutterSecureStorage(),
+  ]);
 
   final FlutterSecureStorage _storage;
 
@@ -87,7 +89,8 @@ class ConnectHttpException implements Exception {
   bool get isUnauthorized => statusCode == 401;
 
   @override
-  String toString() => 'ConnectHttpException($statusCode${code == null ? '' : ' $code'}): $message';
+  String toString() =>
+      'ConnectHttpException($statusCode${code == null ? '' : ' $code'}): $message';
 }
 
 class ConnectTokens {
@@ -108,11 +111,11 @@ class ConnectTokens {
       clock.now().add(margin).isBefore(expiresAt);
 
   Map<String, Object?> toJson() => {
-        'accessToken': accessToken,
-        'refreshToken': refreshToken,
-        'expiresAt': expiresAt.millisecondsSinceEpoch,
-        'userId': userId,
-      };
+    'accessToken': accessToken,
+    'refreshToken': refreshToken,
+    'expiresAt': expiresAt.millisecondsSinceEpoch,
+    'userId': userId,
+  };
 
   static ConnectTokens? tryParse(String? raw) {
     if (raw == null || raw.isEmpty) return null;
@@ -250,15 +253,17 @@ class ConnectAccount {
     if (held != null && !force && held.isFresh()) return held;
     if (held != null) {
       try {
-        return await _keep(await _post('/auth/refresh', {
-          'refreshToken': held.refreshToken,
-        }));
+        return await _keep(
+          await _post('/auth/refresh', {'refreshToken': held.refreshToken}),
+        );
       } on ConnectHttpException catch (e) {
         // 400 as well as 401: a refresh token the validator rejects is just as
         // unusable as one the server has revoked.
         if (e.statusCode != 401 && e.statusCode != 400) rethrow;
-        debugPrint('Hype Connect: refresh refused (${e.statusCode}); '
-            'signing in again anonymously');
+        debugPrint(
+          'Hype Connect: refresh refused (${e.statusCode}); '
+          'signing in again anonymously',
+        );
         await _drop();
       }
     }

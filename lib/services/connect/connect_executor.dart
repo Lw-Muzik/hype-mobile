@@ -109,10 +109,7 @@ PlayPlan? planPlay(
   bool radio = false,
 }) {
   if (index < 0 || index >= resolved.length) return null;
-  final from = [
-    for (final item in resolved.skip(index))
-      ?item,
-  ];
+  final from = [for (final item in resolved.skip(index)) ?item];
   if (from.isEmpty) return null;
   final startAt = resolved[index] == null ? null : position;
 
@@ -120,27 +117,23 @@ PlayPlan? planPlay(
     return switch (from.first) {
       LocalPlayable(:final song) => LocalStationPlan(song),
       YtPlayable() => YtListPlan(
-          [
-            for (final item in from)
-              if (item is YtPlayable) item.track,
-          ],
-          radio: true,
-          startAt: startAt,
-        ),
+        [
+          for (final item in from)
+            if (item is YtPlayable) item.track,
+        ],
+        radio: true,
+        startAt: startAt,
+      ),
     };
   }
 
   if (from.every((item) => item is YtPlayable)) {
-    return YtListPlan(
-      [for (final item in from) (item as YtPlayable).track],
-      startAt: startAt,
-    );
+    return YtListPlan([
+      for (final item in from) (item as YtPlayable).track,
+    ], startAt: startAt);
   }
 
-  final playable = [
-    for (final item in resolved)
-      ?item,
-  ];
+  final playable = [for (final item in resolved) ?item];
   if (playable.every((item) => item is LocalPlayable)) {
     final songs = [for (final item in playable) (item as LocalPlayable).song];
     // Where the first playable item at or after [index] sits once the
@@ -267,10 +260,7 @@ class ConnectExecutor {
         return AckFrame.ok(id);
 
       case EnqueueCommand():
-        final playable = [
-          for (final item in await resolve(cmd.items))
-            ?item,
-        ];
+        final playable = [for (final item in await resolve(cmd.items)) ?item];
         if (playable.isEmpty) {
           return AckFrame.failed(id, AckError.nothingPlayable);
         }
@@ -337,13 +327,15 @@ class ConnectExecutor {
       for (final ref in refs)
         switch (ref) {
           YtTrackRef() => YtPlayable(ytTrackOf(ref)),
-          LocalTrackRef(:final deviceId, :final id) => deviceId == _deviceId
-              ? switch (int.tryParse(id)) {
-                  final songId? when songs[songId] != null =>
-                    LocalPlayable(songs[songId]!),
-                  _ => null,
-                }
-              : null,
+          LocalTrackRef(:final deviceId, :final id) =>
+            deviceId == _deviceId
+                ? switch (int.tryParse(id)) {
+                    final songId? when songs[songId] != null => LocalPlayable(
+                      songs[songId]!,
+                    ),
+                    _ => null,
+                  }
+                : null,
           OtherTrackRef() => null,
         },
     ];
@@ -370,11 +362,14 @@ class ConnectExecutor {
   /// Runs [action] once every earlier action has finished, failed or not.
   Future<void> _schedule(Future<void> Function() action) {
     final run = _running.then((_) => action());
-    _running = run.then<void>((_) {}, onError: (Object e, StackTrace st) {
-      if (e is! _UnknownUid) {
-        debugPrint('Hype Connect: action failed: $e\n$st');
-      }
-    });
+    _running = run.then<void>(
+      (_) {},
+      onError: (Object e, StackTrace st) {
+        if (e is! _UnknownUid) {
+          debugPrint('Hype Connect: action failed: $e\n$st');
+        }
+      },
+    );
     return run;
   }
 }

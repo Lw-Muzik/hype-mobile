@@ -5,6 +5,7 @@ import '/widgets/Body.dart';
 import '../controllers/drawer_controller.dart';
 import '../onboarding/coach_marks.dart';
 import 'Settings.dart';
+import 'audio_info_page.dart';
 import 'graphic_eq_view.dart';
 import 'tone_view.dart';
 import 'parametric_eq_view.dart';
@@ -126,7 +127,13 @@ class _EqualizerState extends State<Equalizer> with TickerProviderStateMixin {
                   },
                 )
               : null,
-          title: Text(_isEqMode ? "Hype EQ" : "Sound Effects"),
+          title: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPress: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AudioInfoPage()),
+            ),
+            child: Text(_isEqMode ? "Hype EQ" : "Sound Effects"),
+          ),
           actions: [
             if (appController.musicFxVisible)
               IconButton(

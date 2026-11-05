@@ -272,7 +272,6 @@ void main() {
     for (final e in <FocusEvent>[
       _transient,
       _canDuck,
-      _permanent,
       const CallDetected(),
       const FocusGained(),
     ]) {
@@ -280,6 +279,43 @@ void main() {
       expect(r.actions, isEmpty);
       expect(r.state, const FocusState(lossActive: true));
     }
+  });
+
+  group('ignore focus and a permanent loss', () {
+    test('keeps playing and asks for focus back once (Android 12+)', () {
+      final a = step(
+        _none,
+        _permanent,
+        ignoreFocus: true,
+        systemMutesLosers: true,
+      );
+      expect(a.actions, [FocusAction.reacquireFocus]);
+      expect(a.state.reclaimed, isTrue);
+      expect(a.state.hold, FocusHold.none);
+      final b = step(
+        a.state,
+        _permanent,
+        ignoreFocus: true,
+        systemMutesLosers: true,
+      );
+      expect(b.actions, isEmpty);
+      expect(b.state.givenUp, isTrue);
+    });
+
+    test('never pauses, even where the system does not mute losers', () {
+      final a = step(_none, _permanent, ignoreFocus: true);
+      expect(a.actions, isEmpty);
+    });
+
+    test('releases a duck that was in place', () {
+      final a = step(
+        const FocusState(hold: FocusHold.ducked, lossActive: true),
+        _permanent,
+        ignoreFocus: true,
+        systemMutesLosers: true,
+      );
+      expect(a.actions, [FocusAction.unduck, FocusAction.reacquireFocus]);
+    });
   });
 
   group('ios', () {

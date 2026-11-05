@@ -84,7 +84,9 @@ class _ShareTaskHandler extends TaskHandler {
             _server.reloadPairings();
             break;
         }
-      } catch (_) {/* ignore malformed command */}
+      } catch (_) {
+        /* ignore malformed command */
+      }
     }
   }
 
@@ -237,7 +239,9 @@ class ShareService extends ChangeNotifier {
     if (c == null || c.isCompleted) return;
     try {
       await c.future.timeout(const Duration(seconds: 8));
-    } catch (_) {/* proceed without the port */}
+    } catch (_) {
+      /* proceed without the port */
+    }
   }
 
   /// Stop sharing and tear down the service/notification (and the iroh link).
@@ -349,11 +353,13 @@ class ShareService extends ChangeNotifier {
       _ip = s['ip'] as String?;
       _port = (s['port'] as num?)?.toInt();
       _paired = ((s['paired'] as List?) ?? const [])
-          .map((j) => PairedDesktop(
-                id: (j as Map)['id'] as String,
-                name: j['name'] as String,
-                token: '', // tokens stay in the service isolate.
-              ))
+          .map(
+            (j) => PairedDesktop(
+              id: (j as Map)['id'] as String,
+              name: j['name'] as String,
+              token: '', // tokens stay in the service isolate.
+            ),
+          )
           .toList();
       if (_running &&
           _port != null &&
@@ -370,7 +376,9 @@ class ShareService extends ChangeNotifier {
         unawaited(_startRemoteLink());
       }
       notifyListeners();
-    } catch (_) {/* ignore malformed relay */}
+    } catch (_) {
+      /* ignore malformed relay */
+    }
   }
 
   // -- iOS: mirror the in-process controller ---------------------------------

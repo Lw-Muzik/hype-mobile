@@ -64,12 +64,10 @@ class HeadsetService {
       waitingForFocus: waitingForFocus,
       onCancelHold: onCancelHold,
       isIos: defaultTargetPlatform == TargetPlatform.iOS,
-      devicesChanged: Stream.fromFuture(
-        session,
-      ).asyncExpand((s) => s.devicesChangedEventStream),
-      becomingNoisy: Stream.fromFuture(
-        session,
-      ).asyncExpand((s) => s.becomingNoisyEventStream),
+      devicesChanged: Stream.fromFuture(session)
+          .asyncExpand((s) => s.devicesChangedEventStream),
+      becomingNoisy: Stream.fromFuture(session)
+          .asyncExpand((s) => s.becomingNoisyEventStream),
       currentDevices: () async =>
           (await session).getDevices(includeInputs: false),
     );
@@ -186,7 +184,9 @@ class HeadsetService {
     // Paused for a call or another app, and the output is about to get loud:
     // what was going to resume would start on the speaker. With Pause on
     // disconnect off the listener asked for the opposite, so the hold stays.
-    if (!_target.playing && _waitingForFocus() && _settings().pauseOnDisconnect) {
+    if (!_target.playing &&
+        _waitingForFocus() &&
+        _settings().pauseOnDisconnect) {
       _onCancelHold?.call();
       return;
     }

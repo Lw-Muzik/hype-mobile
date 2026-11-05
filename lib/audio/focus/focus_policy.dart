@@ -172,7 +172,14 @@ FocusStep focusStep(
       ]);
 
     case FocusLost() || CallDetected() || FocusGained():
-      if (ignoreFocus) return FocusStep(s);
+      // Ignore audio focus ignores short losses, calls and gains. A permanent
+      // loss still goes through the "permanent change off" path below (keep
+      // playing, ask for focus back once), or Android 12+ fades Hype out while
+      // it still shows playing.
+      if (ignoreFocus &&
+          !(e is FocusLost && e.kind == FocusLossKind.permanent)) {
+        return FocusStep(s);
+      }
   }
 
   switch (e) {
@@ -198,7 +205,7 @@ FocusStep focusStep(
 
     case FocusLost(kind: FocusLossKind.permanent):
       final next = s.copyWith(hold: FocusHold.none, lossActive: false);
-      if (settings.permanentFocusChange) {
+      if (settings.permanentFocusChange && !ignoreFocus) {
         return playing
             ? pauseFrom(next)
             : FocusStep(next, [if (ducked) FocusAction.unduck]);

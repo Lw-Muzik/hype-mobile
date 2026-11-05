@@ -44,8 +44,9 @@ class LrclibResolver {
     if (attempts.isEmpty) return null;
     final knownArtist = primaryArtist(normalizeArtist(artist));
 
-    final durationSecs =
-        durationMs != null && durationMs > 0 ? durationMs / 1000.0 : null;
+    final durationSecs = durationMs != null && durationMs > 0
+        ? durationMs / 1000.0
+        : null;
     // One resolve often asks the same search query in strict and relaxed mode;
     // the hits are the same, only the scoring differs.
     final searchCache = <String, List<Map<String, dynamic>>?>{};
@@ -323,20 +324,20 @@ String? lyricsOf(Map<String, dynamic> hit) {
 }
 
 /// Letters and digits only: spacing and punctuation differ between sources.
-String _squash(String s) => s.replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
+String _squash(String s) =>
+    s.replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
 
-String? _nonBlank(Object? v) =>
-    v is String && v.trim().isNotEmpty ? v : null;
+String? _nonBlank(Object? v) => v is String && v.trim().isNotEmpty ? v : null;
 
 /// Lowercase, unify curly quotes and dashes, collapse spaces —
 /// so "Don’t Start Now" matches LRCLIB's "Don't Start Now".
 String _fold(String s) => collapseWs(
-      s
-          .toLowerCase()
-          .replaceAll(RegExp('[‘’ʼ`´]'), "'")
-          .replaceAll(RegExp('[“”]'), '"')
-          .replaceAll(RegExp('[–—]'), '-'),
-    );
+  s
+      .toLowerCase()
+      .replaceAll(RegExp('[‘’ʼ`´]'), "'")
+      .replaceAll(RegExp('[“”]'), '"')
+      .replaceAll(RegExp('[–—]'), '-'),
+);
 
 /// Artists the app fills in when it doesn't know one. They match nothing on
 /// LRCLIB, so they are treated as "no artist".
@@ -395,27 +396,22 @@ String stripBrackets(String s) {
 }
 
 /// Truncate at the first "feat./ft./featuring" marker.
-String stripFeat(String s) => _cutAt(s, const [
-      ' feat.',
-      ' feat ',
-      ' ft.',
-      ' ft ',
-      ' featuring ',
-    ]);
+String stripFeat(String s) =>
+    _cutAt(s, const [' feat.', ' feat ', ' ft.', ' ft ', ' featuring ']);
 
 /// The primary (first) artist: the part before a "feat./&/,/x" separator,
 /// which is how LRCLIB usually stores the credit.
 String primaryArtist(String artist) => _cutAt(artist, const [
-      ',',
-      ' & ',
-      ' feat.',
-      ' feat ',
-      ' ft.',
-      ' ft ',
-      ' featuring ',
-      ';',
-      ' x ',
-    ]).trim();
+  ',',
+  ' & ',
+  ' feat.',
+  ' feat ',
+  ' ft.',
+  ' ft ',
+  ' featuring ',
+  ';',
+  ' x ',
+]).trim();
 
 String _cutAt(String s, List<String> markers) {
   final low = s.toLowerCase();

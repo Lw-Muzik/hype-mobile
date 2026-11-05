@@ -62,7 +62,8 @@ VideoResult videoResultOf(
     return VideoResult.none(track);
   }
   final expiresMs = expires * 1000;
-  final deadline = (now ?? clock.now()).millisecondsSinceEpoch +
+  final deadline =
+      (now ?? clock.now()).millisecondsSinceEpoch +
       videoExpiryHeadroom.inMilliseconds;
   if (expiresMs <= deadline) return VideoResult.none(track);
   return VideoResult(

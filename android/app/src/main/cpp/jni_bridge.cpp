@@ -486,6 +486,12 @@ Java_x_a_zix_RoomEffectsProcessor_nativeSetLimiterKnee(JNIEnv*, jobject, jlong h
     if (engine) engine->setLimiterKnee(dB);
 }
 
+JNIEXPORT jfloat JNICALL
+Java_x_a_zix_RoomEffectsProcessor_nativeGetLimiterReductionDb(JNIEnv*, jobject, jlong handle) {
+    auto* engine = reinterpret_cast<RoomDSPEngine*>(handle);
+    return engine ? engine->limiterReductionDb() : 0.0f;
+}
+
 // --- Live stems: this player's tap (see stems/stem_tap.h) ---
 // Called on the ExoPlayer playback thread, in pipeline order, by
 // RoomEffectsProcessor and the audio-sink wrapper in the patched just_audio.

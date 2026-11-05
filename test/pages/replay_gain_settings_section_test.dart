@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eq_app/audio/replay_gain/replay_gain.dart';
 import 'package:eq_app/pages/Settings.dart';
+import 'package:eq_app/pages/audio_sub_page.dart';
 import 'package:eq_app/pages/replay_gain_settings_section.dart';
 
 void main() {
@@ -121,6 +122,12 @@ void main() {
         if (ReplayGainSettingsSection.labels.contains(e.label)) e.label,
     ];
     expect(entries.toSet(), ReplayGainSettingsSection.labels.toSet());
+    for (final e in kSettingsIndex) {
+      if (ReplayGainSettingsSection.labels.contains(e.label)) {
+        expect(e.category, SettingsCategory.audio, reason: e.label);
+        expect(e.subPage, AudioSubPage.replayGain, reason: e.label);
+      }
+    }
     expect(
       kSettingsIndex.where((e) => e.label == 'Replay gain'),
       isEmpty,

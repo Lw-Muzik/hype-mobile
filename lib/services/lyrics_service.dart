@@ -83,7 +83,6 @@ class LyricsService {
     SongModel song,
     bool Function()? isCancelled,
   ) async {
-
     LyricsData? result;
 
     final filePath = song.data;
@@ -133,7 +132,13 @@ class LyricsService {
     }
 
     // 5. LRCLIB (best source of synced lyrics), then the backend.
-    var data = await _fetchByName(song, title, artist, isLocalFile, isCancelled);
+    var data = await _fetchByName(
+      song,
+      title,
+      artist,
+      isLocalFile,
+      isCancelled,
+    );
     if (data != null || cancelled()) return data;
 
     // 6. Seemingly-fine tags that still missed may be mistagged — identify

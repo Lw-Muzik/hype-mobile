@@ -49,8 +49,8 @@ RoomDSPEngine::RoomDSPEngine()
 }
 
 void RoomDSPEngine::init(int sampleRate, int channels) {
-    sampleRate_ = sampleRate;
-    channels_ = channels;
+    sampleRate_.store(sampleRate, std::memory_order_relaxed);
+    channels_.store(channels, std::memory_order_relaxed);
     stemTap_.setSampleRate(channels == 2 ? sampleRate : 0);
 
     // EQ init

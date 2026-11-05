@@ -26,13 +26,9 @@ import '../connect_tracks.dart';
 import 'connect_remote_session.dart';
 
 class TransferResult {
-  const TransferResult.ok({this.dropped = 0})
-      : ok = true,
-        message = null;
+  const TransferResult.ok({this.dropped = 0}) : ok = true, message = null;
 
-  const TransferResult.failed(this.message)
-      : ok = false,
-        dropped = 0;
+  const TransferResult.failed(this.message) : ok = false, dropped = 0;
 
   final bool ok;
 
@@ -111,14 +107,14 @@ class ConnectTransfer {
     final toPhone = to == selfId;
     final sendable = [
       for (final ref in refs)
-        if (ref is YtTrackRef ||
-            (ref is LocalTrackRef && ref.deviceId == to))
+        if (ref is YtTrackRef || (ref is LocalTrackRef && ref.deviceId == to))
           ref,
     ];
     final dropped = refs.length - sendable.length;
     // Track zero decides: a song the target cannot play at the head of the
     // queue would otherwise hand the listener a different song.
-    final headSendable = payload.track is YtTrackRef ||
+    final headSendable =
+        payload.track is YtTrackRef ||
         (payload.track is LocalTrackRef &&
             (payload.track as LocalTrackRef).deviceId == to);
     if (!headSendable) {
@@ -186,19 +182,17 @@ class ConnectTransfer {
     final state = stamped.state;
     return _Payload(
       track: state.track,
-      queue: [
-        for (final entry in state.queue.take(maxItems)) entry.track,
-      ],
+      queue: [for (final entry in state.queue.take(maxItems)) entry.track],
       positionMs: session.positionOf(from) ?? state.positionMs,
       playing: state.playing,
     );
   }
 
   static String _titleOf(TrackRef ref) => switch (ref) {
-        YtTrackRef(:final title) => title,
-        LocalTrackRef(:final title) => title,
-        OtherTrackRef(:final title) => title,
-      };
+    YtTrackRef(:final title) => title,
+    LocalTrackRef(:final title) => title,
+    OtherTrackRef(:final title) => title,
+  };
 }
 
 class _Payload {

@@ -69,12 +69,8 @@ class MixPlayback {
     // Another device is the player: it plays the mix (Hype Connect).
     final routed = ConnectPlayRouter.mix(
       mix.tracks,
-      here: () => play(
-        controller,
-        mix,
-        resolveCloud: resolveCloud,
-        startAt: startAt,
-      ),
+      here: () =>
+          play(controller, mix, resolveCloud: resolveCloud, startAt: startAt),
     );
     if (routed != null) return routed;
 
@@ -89,12 +85,14 @@ class MixPlayback {
         0,
         initialPosition: i == 0 ? startAt : null,
       );
-      unawaited(_fillBehind(
-        controller,
-        mix.tracks.sublist(i + 1),
-        resolveCloud,
-        generation: controller.queueGeneration,
-      ));
+      unawaited(
+        _fillBehind(
+          controller,
+          mix.tracks.sublist(i + 1),
+          resolveCloud,
+          generation: controller.queueGeneration,
+        ),
+      );
       await load;
       return;
     }
@@ -112,9 +110,9 @@ class MixPlayback {
       // have left would graft this mix onto it.
       if (controller.queueGeneration != generation) return;
       final slice = rest.skip(i).take(_batch).toList();
-      final resolved = await Future.wait(
-        [for (final ref in slice) _resolve(ref, resolveCloud)],
-      );
+      final resolved = await Future.wait([
+        for (final ref in slice) _resolve(ref, resolveCloud),
+      ]);
       final songs = [
         for (final song in resolved)
           if (song != null) song,
@@ -152,8 +150,9 @@ class MixPlayback {
             return models.isEmpty ? null : models.first;
           }
 
-          final targets = await YtMusicRepository.instance
-              .audioTargets([track.videoId]);
+          final targets = await YtMusicRepository.instance.audioTargets([
+            track.videoId,
+          ]);
           final target = targets[track.videoId];
           if (target == null) return null;
           // The cover has to be on disk before the track reaches the player,

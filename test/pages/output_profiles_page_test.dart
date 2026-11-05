@@ -116,7 +116,11 @@ void main() {
     await tester.tap(find.text('Speaker'));
     await tester.pumpAndSettle();
     expect(find.text('No DVC'), findsNothing);
-    expect(find.text('No Duck'), findsOneWidget);
+    // iOS has interruptions, not focus events: no Duck / focus rows either.
+    expect(find.text('No Duck'), findsNothing);
+    expect(find.text('Ignore audio focus'), findsNothing);
+    expect(find.text('No Equ/Tone'), findsOneWidget);
+    expect(find.text('No headroom gain reduction'), findsOneWidget);
   });
 
   testWidgets('all five flags are offered on Android', (tester) async {

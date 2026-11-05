@@ -76,12 +76,12 @@ class NewsPush {
     String? platform,
     String? apiBase,
     this.bannerDuration = const Duration(seconds: 6),
-  })  : _open = openUrl ?? _launch,
-        _post = post ?? _httpPost,
-        _installId = installId ?? hypeInstallId,
-        _navKey = navigatorKey ?? ConnectUiHost.navigatorKey,
-        platform = platform ?? (Platform.isIOS ? 'ios' : 'android'),
-        _api = apiBase ?? AppConfig.hypeMuzikApiBase;
+  }) : _open = openUrl ?? _launch,
+       _post = post ?? _httpPost,
+       _installId = installId ?? hypeInstallId,
+       _navKey = navigatorKey ?? ConnectUiHost.navigatorKey,
+       platform = platform ?? (Platform.isIOS ? 'ios' : 'android'),
+       _api = apiBase ?? AppConfig.hypeMuzikApiBase;
 
   static final NewsPush instance = NewsPush();
 
@@ -116,7 +116,8 @@ class NewsPush {
       if (installId == null || installId.isEmpty) return;
       await _post(
         Uri.parse(
-            '$_api/notifications/${Uri.encodeComponent(notificationId)}/events'),
+          '$_api/notifications/${Uri.encodeComponent(notificationId)}/events',
+        ),
         {'installId': installId, 'platform': platform, 'kind': kind},
       );
     } catch (e) {
@@ -143,9 +144,11 @@ class NewsPush {
 
   static Future<int> _httpPost(Uri url, Map<String, dynamic> body) async {
     final res = await http
-        .post(url,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(body))
+        .post(
+          url,
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
         .timeout(const Duration(seconds: 8));
     return res.statusCode;
   }

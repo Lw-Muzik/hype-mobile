@@ -143,6 +143,19 @@ class DSPManager {
         if let record = byHandle[handle] { replayState(onto: record) }
     }
 
+    /// Audio Info: what this player's engine reports now, nil for an unknown
+    /// player. Holds the manager lock across the reads so the engine cannot be freed under them; the render thread takes no lock.
+    /// Codec/bitrate are not reachable from the tap, so they are omitted.
+    func audioInfo(playerId: String) -> [String: Any]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let h = registry[playerId]?.handle else { return nil }
+        return [
+            "sampleRate": Int(dsp_get_sample_rate(h)),
+            "channels": Int(dsp_get_channels(h)),
+            "limiterReductionDb": Double(dsp_get_limiter_reduction_db(h)),
+        ]
+    }
+
     /// Caller holds `lock`.
     private func replayState(onto record: EngineRecord) {
         log.replay(onto: record.handle)

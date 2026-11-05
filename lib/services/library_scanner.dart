@@ -31,7 +31,7 @@ class ScanStatus {
 /// emit — that is what makes songs stream in progressively on a cold first run.
 class LibraryScanner {
   LibraryScanner(this._repo, {Future<List<SongModel>> Function()? querySongs})
-      : _queryOverride = querySongs;
+    : _queryOverride = querySongs;
 
   final LibraryRepository _repo;
   final OnAudioQuery _audioQuery = OnAudioQuery();
@@ -97,8 +97,13 @@ class LibraryScanner {
         if (batch.length >= _batchSize) {
           await _repo.upsertSongs(List.of(batch));
           batch.clear();
-          _emit(ScanStatus(ScanPhase.scanning,
-              found: processed, total: songs.length));
+          _emit(
+            ScanStatus(
+              ScanPhase.scanning,
+              found: processed,
+              total: songs.length,
+            ),
+          );
           // Yield so a huge first-run import can't monopolise a frame.
           await Future<void>.delayed(Duration.zero);
         }
@@ -106,13 +111,14 @@ class LibraryScanner {
       if (batch.isNotEmpty) await _repo.upsertSongs(batch);
 
       // Delete rows for files MediaStore no longer reports.
-      final removed =
-          existing.keys.where((id) => !seen.contains(id)).toList();
+      final removed = existing.keys.where((id) => !seen.contains(id)).toList();
       await _repo.deleteSongs(removed);
 
       await _repo.metaSet(_sigKey, signature);
       await _repo.metaSet(
-          _lastScanKey, '${DateTime.now().millisecondsSinceEpoch ~/ 1000}');
+        _lastScanKey,
+        '${DateTime.now().millisecondsSinceEpoch ~/ 1000}',
+      );
 
       _emit(ScanStatus(ScanPhase.done, total: songs.length));
     } catch (e, st) {

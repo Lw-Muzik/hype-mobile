@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eq_app/pages/Settings.dart';
+import 'package:eq_app/pages/audio_sub_page.dart';
 import 'package:eq_app/pages/crossfade_settings_section.dart';
 import 'package:eq_app/player/fade_settings.dart';
 
@@ -42,7 +43,9 @@ void main() {
   test('every search entry for this page names a control on it', () {
     final entries = [
       for (final e in kSettingsIndex)
-        if (e.category == SettingsCategory.crossfade) e.label,
+        if (e.category == SettingsCategory.audio &&
+            e.subPage == AudioSubPage.crossfade)
+          e.label,
     ];
     expect(entries, isNotEmpty);
     for (final label in entries) {

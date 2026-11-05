@@ -72,11 +72,11 @@ typedef ConnectSocketFactory = ConnectSocket Function(Uri uri);
 /// connection "open" for minutes, and an unanswered ping is how it finds out.
 class IoConnectSocket implements ConnectSocket {
   IoConnectSocket(Uri uri)
-      : _channel = IOWebSocketChannel.connect(
-          uri,
-          pingInterval: const Duration(seconds: 25),
-          connectTimeout: const Duration(seconds: 15),
-        );
+    : _channel = IOWebSocketChannel.connect(
+        uri,
+        pingInterval: const Duration(seconds: 25),
+        connectTimeout: const Duration(seconds: 15),
+      );
 
   final IOWebSocketChannel _channel;
 
@@ -84,7 +84,8 @@ class IoConnectSocket implements ConnectSocket {
   Future<void> get ready => _channel.ready;
 
   @override
-  Stream<String> get messages => _channel.stream.where((m) => m is String).cast<String>();
+  Stream<String> get messages =>
+      _channel.stream.where((m) => m is String).cast<String>();
 
   @override
   int? get closeCode => _channel.closeCode;
@@ -122,7 +123,12 @@ enum ConnectStatus {
 
 @immutable
 class ConnectClientState {
-  const ConnectClientState(this.status, {this.welcome, this.retryIn, this.lastError});
+  const ConnectClientState(
+    this.status, {
+    this.welcome,
+    this.retryIn,
+    this.lastError,
+  });
 
   final ConnectStatus status;
 
@@ -168,8 +174,8 @@ class ConnectClient {
     this.welcomeTimeout = const Duration(seconds: 15),
     this.clockInterval = const Duration(seconds: 10),
     HubClock? hubClock,
-  })  : _random = random ?? Random(),
-        hubClock = hubClock ?? HubClock();
+  }) : _random = random ?? Random(),
+       hubClock = hubClock ?? HubClock();
 
   final Uri _wsUri;
   final ConnectSocketFactory _connect;
@@ -189,8 +195,9 @@ class ConnectClient {
   /// This phone's offset to the hub's clock, kept fresh by ping/pong.
   final HubClock hubClock;
 
-  final ValueNotifier<ConnectClientState> state =
-      ValueNotifier(const ConnectClientState(ConnectStatus.off));
+  final ValueNotifier<ConnectClientState> state = ValueNotifier(
+    const ConnectClientState(ConnectStatus.off),
+  );
 
   final StreamController<ConnectFrame> _frames =
       StreamController<ConnectFrame>.broadcast(sync: true);
@@ -266,7 +273,12 @@ class ConnectClient {
   Future<void> _open() async {
     if (!_wanted) return;
     final generation = ++_generation;
-    _set(ConnectClientState(ConnectStatus.connecting, lastError: state.value.lastError));
+    _set(
+      ConnectClientState(
+        ConnectStatus.connecting,
+        lastError: state.value.lastError,
+      ),
+    );
 
     final String token;
     final DeviceHello device;
@@ -379,22 +391,28 @@ class ConnectClient {
     switch (code) {
       case ConnectCloseCodes.replaced:
         _wanted = false;
-        _set(const ConnectClientState(
-          ConnectStatus.replaced,
-          lastError: 'Another connection for this phone took over',
-        ));
+        _set(
+          const ConnectClientState(
+            ConnectStatus.replaced,
+            lastError: 'Another connection for this phone took over',
+          ),
+        );
         return;
       case ConnectCloseCodes.revoked:
         _wanted = false;
-        _set(const ConnectClientState(
-          ConnectStatus.unlinked,
-          lastError: 'This phone was unlinked',
-        ));
+        _set(
+          const ConnectClientState(
+            ConnectStatus.unlinked,
+            lastError: 'This phone was unlinked',
+          ),
+        );
         // The tokens say this phone is something the hub no longer agrees
         // with. A fresh anonymous session is what the next link starts from.
-        unawaited(_resetSession().catchError((Object e) {
-          debugPrint('Hype Connect: could not reset the session: $e');
-        }));
+        unawaited(
+          _resetSession().catchError((Object e) {
+            debugPrint('Hype Connect: could not reset the session: $e');
+          }),
+        );
         return;
       case ConnectCloseCodes.unauthorized:
       case ConnectCloseCodes.merged:
@@ -414,16 +432,24 @@ class ConnectClient {
       debugPrint('Hype Connect: refresh after $code failed: $e');
     }
     if (generation != _generation || !_wanted) return;
-    _retry(code == ConnectCloseCodes.merged
-        ? 'Account merged — reconnecting'
-        : 'Session expired — reconnecting');
+    _retry(
+      code == ConnectCloseCodes.merged
+          ? 'Account merged — reconnecting'
+          : 'Session expired — reconnecting',
+    );
   }
 
   void _retry(String why) {
     if (!_wanted) return;
     final delay = connectBackoff(_attempt, _random.nextDouble());
     _attempt++;
-    _set(ConnectClientState(ConnectStatus.retrying, retryIn: delay, lastError: why));
+    _set(
+      ConnectClientState(
+        ConnectStatus.retrying,
+        retryIn: delay,
+        lastError: why,
+      ),
+    );
     _retryTimer?.cancel();
     _retryTimer = Timer(delay, () => unawaited(_open()));
   }
@@ -484,8 +510,8 @@ class ConnectClient {
   }
 
   static String _describe(Object e) => switch (e) {
-        SocketException(:final message) => message,
-        TimeoutException() => 'Timed out',
-        _ => e.toString(),
-      };
+    SocketException(:final message) => message,
+    TimeoutException() => 'Timed out',
+    _ => e.toString(),
+  };
 }

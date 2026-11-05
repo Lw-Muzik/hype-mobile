@@ -65,14 +65,18 @@ class YtRepairReport {
   });
 }
 
-typedef YtSearchSource =
-    Future<List<ExploreItem>> Function(String query, SearchFilter filter);
-typedef YtFinish =
-    Future<bool> Function(String src, String dst, Map<String, Object?> tags);
-typedef YtReplace =
-    Future<Map<String, bool>> Function(
-      List<({String path, String replacement})> files,
-    );
+typedef YtSearchSource = Future<List<ExploreItem>> Function(
+  String query,
+  SearchFilter filter,
+);
+typedef YtFinish = Future<bool> Function(
+  String src,
+  String dst,
+  Map<String, Object?> tags,
+);
+typedef YtReplace = Future<Map<String, bool>> Function(
+  List<({String path, String replacement})> files,
+);
 
 class YtDownloadRepair {
   YtDownloadRepair({

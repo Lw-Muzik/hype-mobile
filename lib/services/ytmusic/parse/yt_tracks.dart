@@ -72,8 +72,7 @@ YtTrackList parseTrackList(
   final title = ptrString(header, 'title/runs/0/text') ?? fallbackTitle;
   final artist = joinRuns(ptr(header, 'straplineTextOne/runs'));
   final cover = bestThumbnail(
-    ptr(header,
-        'thumbnail/musicThumbnailRenderer/thumbnail/thumbnails'),
+    ptr(header, 'thumbnail/musicThumbnailRenderer/thumbnail/thumbnails'),
   );
 
   final rows = _trackRows(json);
@@ -95,8 +94,10 @@ YtTrackList parseTrackList(
     artist: artist,
     artists: artistRefs(ptr(header, 'straplineTextOne/runs')),
     artistThumbnail: bestThumbnail(
-      ptr(header,
-          'straplineThumbnail/musicThumbnailRenderer/thumbnail/thumbnails'),
+      ptr(
+        header,
+        'straplineThumbnail/musicThumbnailRenderer/thumbnail/thumbnails',
+      ),
     ),
     thumbnail: cover,
     subtitle: joinRuns(ptr(header, 'subtitle/runs')),
@@ -114,7 +115,10 @@ YtTrackList parseTrackList(
 /// else's rows to the queue. Falls back to walking when no shelf is recognised,
 /// so an unfamiliar envelope still yields its tracks.
 List<Object?> _trackRows(Object? json) {
-  for (final key in const ['musicPlaylistShelfRenderer', 'musicShelfRenderer']) {
+  for (final key in const [
+    'musicPlaylistShelfRenderer',
+    'musicShelfRenderer',
+  ]) {
     final shelf = _findFirst(json, key);
     final contents = ptr(shelf, 'contents');
     if (contents is List && contents.isNotEmpty) {
@@ -153,8 +157,8 @@ YtTrack? _parseTrackRow(
   // YT Music greys out region-blocked and removed rows. They stay listed so the
   // list matches what the user would see on YouTube, but can't be played.
   final displayPolicy = ptr(row, 'musicItemRendererDisplayPolicy');
-  final isAvailable = displayPolicy !=
-      'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT';
+  final isAvailable =
+      displayPolicy != 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT';
 
   final album = switch (kind) {
     // An album's own title is the album, and its flex 2 is a play count.
@@ -170,7 +174,8 @@ YtTrack? _parseTrackRow(
     durationSecs: _rowDuration(row),
     // Album rows carry no art of their own — the cover is the art, which is
     // what an album *is* and what the queue wants anyway.
-    thumbnail: bestThumbnail(
+    thumbnail:
+        bestThumbnail(
           ptr(row, 'thumbnail/musicThumbnailRenderer/thumbnail/thumbnails'),
         ) ??
         listCover,
@@ -183,8 +188,10 @@ YtTrack? _parseTrackRow(
 
 /// A row's running time, from the fixed column playlists and albums both use.
 double? _rowDuration(Object? row) {
-  final text =
-      ptr(row, 'fixedColumns/0/musicResponsiveListItemFixedColumnRenderer/text');
+  final text = ptr(
+    row,
+    'fixedColumns/0/musicResponsiveListItemFixedColumnRenderer/text',
+  );
   final raw = joinRuns(ptr(text, 'runs')) ?? ptr(text, 'simpleText');
   return parseDuration(raw is String ? raw : null);
 }

@@ -30,6 +30,7 @@ public:
     void reset() {
         target_ = 1.0f;
         gain_ = 1.0f;
+        reductionDb_.store(0.0f, std::memory_order_relaxed);
     }
 
     // Turning the limiter on after it was off starts it from unity gain: the
@@ -49,10 +50,15 @@ public:
     // Current applied gain, 1.0 when not limiting.
     float gain() const { return gain_; }
 
+    // Gain reduction in dB (>= 0), published once per block by the audio
+    // thread and read lock-free from control threads.
+    float reductionDb() const { return reductionDb_.load(std::memory_order_relaxed); }
+
     void process(float* left, float* right, int numFrames) {
         if (resetPending_.exchange(false, std::memory_order_relaxed)) {
             target_ = 1.0f;
             gain_ = 1.0f;
+            reductionDb_.store(0.0f, std::memory_order_relaxed);
         }
         for (int i = 0; i < numFrames; i++) {
             const float peak = std::max(std::fabs(left[i]), std::fabs(right[i]));
@@ -71,6 +77,8 @@ public:
                 right[i] *= gain_;
             }
         }
+        reductionDb_.store(gain_ < 1.0f ? -20.0f * std::log10(gain_) : 0.0f,
+                           std::memory_order_relaxed);
     }
 
 private:
@@ -80,6 +88,7 @@ private:
 
     std::atomic<bool> enabled_{false};
     std::atomic<bool> resetPending_{false};
+    std::atomic<float> reductionDb_{0.0f};
     float att_ = kAttack;
     float rel_ = kRelease;
     float target_ = 1.0f;

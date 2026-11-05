@@ -72,11 +72,7 @@ class StationBatch {
     required this.hasMore,
   });
 
-  static const empty = StationBatch(
-    tracks: [],
-    consumed: {},
-    hasMore: false,
-  );
+  static const empty = StationBatch(tracks: [], consumed: {}, hasMore: false);
 }
 
 /// One station's supply of related music.

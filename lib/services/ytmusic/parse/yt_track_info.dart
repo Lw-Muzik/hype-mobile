@@ -192,7 +192,8 @@ _Facts? _rowFacts(Object? row) {
     year: year,
     thumbnail: bestThumbnail(thumbs),
     durationSecs: parseDuration(ptrString(row, 'lengthText/runs/0/text')),
-    isSong: videoType == 'MUSIC_VIDEO_TYPE_ATV' ||
+    isSong:
+        videoType == 'MUSIC_VIDEO_TYPE_ATV' ||
         (videoType == null && album != null && _square(thumbs)),
   );
 }

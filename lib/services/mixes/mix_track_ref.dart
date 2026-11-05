@@ -31,18 +31,18 @@ class MixTrackRef {
   });
 
   factory MixTrackRef.local(SongModel song) => MixTrackRef._(
-        source: MixSource.local,
-        title: song.title,
-        artist: song.artist,
-        song: song,
-      );
+    source: MixSource.local,
+    title: song.title,
+    artist: song.artist,
+    song: song,
+  );
 
   factory MixTrackRef.cloud(CloudFile file) => MixTrackRef._(
-        source: MixSource.cloud,
-        title: file.trackTitle ?? file.name,
-        artist: file.trackArtist,
-        file: file,
-      );
+    source: MixSource.cloud,
+    title: file.trackTitle ?? file.name,
+    artist: file.trackArtist,
+    file: file,
+  );
 
   factory MixTrackRef.youtube(YtTrack track, {bool asVideo = false}) =>
       MixTrackRef._(

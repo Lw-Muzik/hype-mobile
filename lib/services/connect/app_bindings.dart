@@ -136,7 +136,9 @@ class AppConnectPlayer implements ConnectPlayer {
         : await YtMusicRepository.instance.audioTargets([
             for (final track in tracks) track.videoId,
           ]);
-    await Future.wait([for (final track in tracks) YtPlayback.cacheArtwork(track)]);
+    await Future.wait([
+      for (final track in tracks) YtPlayback.cacheArtwork(track),
+    ]);
     final songs = <SongModel>[];
     for (final item in items) {
       switch (item) {
@@ -194,10 +196,10 @@ class AppConnectPlayer implements ConnectPlayer {
 
   @override
   Future<void> setRepeat(ConnectRepeat mode) => _app.setLoopMode(switch (mode) {
-        ConnectRepeat.off => LoopMode.off,
-        ConnectRepeat.all => LoopMode.all,
-        ConnectRepeat.one => LoopMode.one,
-      });
+    ConnectRepeat.off => LoopMode.off,
+    ConnectRepeat.all => LoopMode.all,
+    ConnectRepeat.one => LoopMode.one,
+  });
 }
 
 class _Refs implements ResolvedMixSource {
@@ -324,9 +326,11 @@ class AppConnectStateSource implements ConnectStateSource {
         LoopMode.one => ConnectRepeat.one,
       },
       upcoming: [
-        for (var i = firstUpcoming;
-            i < queue.length && i < firstUpcoming + PlayerState.maxQueue;
-            i++)
+        for (
+          var i = firstUpcoming;
+          i < queue.length && i < firstUpcoming + PlayerState.maxQueue;
+          i++
+        )
           UpcomingSong(uids[i], queue[i]),
       ],
     );

@@ -215,6 +215,12 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     // the id from the static cache.
     private volatile Float trackGainDb = null;
 
+    // Last configured input format, for Audio Info (written on the playback
+    // thread, read from the main thread).
+    private volatile int infoSampleRate = 0;
+    private volatile int infoChannels = 0;
+    private volatile int infoEncoding = C.ENCODING_INVALID;
+
     private RoomEffectsProcessor() { this(""); }
 
     private RoomEffectsProcessor(String playerId) { this.playerId = playerId; }
@@ -234,6 +240,9 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
             return AudioFormat.NOT_SET;
         }
 
+        infoSampleRate = inputAudioFormat.sampleRate;
+        infoChannels = channels;
+        infoEncoding = encoding;
         Log.i(TAG, "Configured: " + inputAudioFormat.sampleRate + "Hz, " +
             channels + "ch, encoding=" + encoding);
         // Mono is widened to stereo (L = R) so the engine, which only works on
@@ -837,6 +846,31 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
         for (RoomEffectsProcessor p : playerInstances) p.setBalance(balance);
     }
 
+    /**
+     * What this player's engine reports, for the Audio Info page; null for an
+     * unknown player. Never blocks: reads volatile fields and one atomic float.
+     * Codec falls back to the PCM encoding; bitrate is not reachable here.
+     */
+    public static java.util.Map<String, Object> getAudioInfo(String playerId) {
+        if (playerId == null) return null;
+        RoomEffectsProcessor p = instancesByPlayerId.get(playerId);
+        if (p == null) return null;
+        java.util.HashMap<String, Object> m = new java.util.HashMap<>();
+        m.put("sampleRate", p.infoSampleRate);
+        m.put("channels", p.infoChannels);
+        // Decoded PCM format, not the codec; "codec"/"bitrate" are omitted
+        // (the source MIME is not reachable from the audio processor).
+        if (p.infoEncoding == C.ENCODING_PCM_FLOAT) m.put("pcm", "PCM float");
+        else if (p.infoEncoding == C.ENCODING_PCM_16BIT) m.put("pcm", "PCM 16-bit");
+        double red = 0.0;
+        synchronized (p.handleLock) {  // the handle is freed under this lock
+            long h = p.nativeHandle;
+            if (h != 0) red = (double) p.nativeGetLimiterReductionDb(h);
+        }
+        m.put("limiterReductionDb", red);
+        return m;
+    }
+
     /** Track gain of one player; cached by id so a later engine for it starts right. */
     public static void setTrackGainDb(String playerId, float dB) {
         if (playerId == null || playerId.isEmpty()) return;
@@ -1144,6 +1178,7 @@ public class RoomEffectsProcessor extends BaseAudioProcessor implements StemSink
     // ---- Native methods ----
 
     private native long nativeCreate(int sampleRate, int channels);
+    private native float nativeGetLimiterReductionDb(long handle);
     private native void nativeDestroy(long handle);
     private native void nativeReset(long handle);
     private native void nativeReinit(long handle, int sampleRate, int channels);

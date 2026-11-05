@@ -24,7 +24,11 @@ class AdvancedSettingsSection extends StatelessWidget {
     required this.onOpenMusicFx,
     required this.onRestoreEqPresets,
     required this.onRestoreReverbPresets,
+    this.showHeader = true,
   });
+
+  /// False when hosted in a sub-page whose AppBar already carries the title.
+  final bool showHeader;
 
   final AdvancedSettings settings;
   final ValueChanged<AdvancedSettings> onChanged;
@@ -138,8 +142,8 @@ class AdvancedSettingsSection extends StatelessWidget {
           context,
           title: 'Restore room presets?',
           body:
-              "The current room preset goes back to Hype's original "
-              'settings. A sound you shaped yourself is kept.',
+              "The room and reverb settings go back to Hype's original "
+              'preset (Off).',
           onConfirm: onRestoreReverbPresets,
         ),
       ),
@@ -147,6 +151,7 @@ class AdvancedSettingsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (showHeader)
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Row(

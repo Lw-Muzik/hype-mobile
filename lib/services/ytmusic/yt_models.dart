@@ -68,22 +68,21 @@ class ExploreItem {
   });
 
   /// Whether this names something to play rather than a page to open.
-  bool get isPlayable =>
-      kind == ExploreKind.song || kind == ExploreKind.video;
+  bool get isPlayable => kind == ExploreKind.song || kind == ExploreKind.video;
 
   /// This item as a track, for the rows that already said everything a track
   /// needs. Costs no request at all — the id it carries is the video id.
   YtTrack asTrack({String? playlistId, String? playlistTitle}) => YtTrack(
-        videoId: id,
-        title: title,
-        artist: artist ?? subtitle,
-        album: album,
-        durationSecs: durationSecs,
-        thumbnail: thumbnail,
-        playlistId: playlistId ?? '',
-        playlistTitle: playlistTitle ?? '',
-        hasVideo: hasVideo,
-      );
+    videoId: id,
+    title: title,
+    artist: artist ?? subtitle,
+    album: album,
+    durationSecs: durationSecs,
+    thumbnail: thumbnail,
+    playlistId: playlistId ?? '',
+    playlistTitle: playlistTitle ?? '',
+    hasVideo: hasVideo,
+  );
 }
 
 /// One shelf on a catalog page ("Featured playlists", "Albums", "Songs", …).
@@ -197,9 +196,9 @@ class ExploreSection {
   const ExploreSection({required this.title, required this.categories});
 
   Map<String, dynamic> toJson() => {
-        'title': title,
-        'categories': [for (final c in categories) c.toJson()],
-      };
+    'title': title,
+    'categories': [for (final c in categories) c.toJson()],
+  };
 
   static ExploreSection? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -262,19 +261,18 @@ class YtTrack {
     String? playlistTitle,
     String? thumbnail,
     String? album,
-  }) =>
-      YtTrack(
-        videoId: videoId,
-        title: title,
-        artist: artist ?? this.artist,
-        album: album ?? this.album,
-        durationSecs: durationSecs,
-        thumbnail: thumbnail ?? this.thumbnail,
-        playlistId: playlistId ?? this.playlistId,
-        playlistTitle: playlistTitle ?? this.playlistTitle,
-        isAvailable: isAvailable,
-        hasVideo: hasVideo,
-      );
+  }) => YtTrack(
+    videoId: videoId,
+    title: title,
+    artist: artist ?? this.artist,
+    album: album ?? this.album,
+    durationSecs: durationSecs,
+    thumbnail: thumbnail ?? this.thumbnail,
+    playlistId: playlistId ?? this.playlistId,
+    playlistTitle: playlistTitle ?? this.playlistTitle,
+    isAvailable: isAvailable,
+    hasVideo: hasVideo,
+  );
 }
 
 /// One page of a radio: the playable rows and the token for the next page.

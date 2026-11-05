@@ -164,6 +164,18 @@ void dsp_set_limiter_release(void* handle, float ms) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setLimiterRelease(ms);
 }
 
+float dsp_get_limiter_reduction_db(void* handle) {
+    return handle ? static_cast<RoomDSPEngine*>(handle)->limiterReductionDb() : 0.0f;
+}
+
+int dsp_get_sample_rate(void* handle) {
+    return handle ? static_cast<RoomDSPEngine*>(handle)->configuredSampleRate() : 0;
+}
+
+int dsp_get_channels(void* handle) {
+    return handle ? static_cast<RoomDSPEngine*>(handle)->configuredChannels() : 0;
+}
+
 void dsp_set_limiter_knee(void* handle, float dB) {
     if (handle) static_cast<RoomDSPEngine*>(handle)->setLimiterKnee(dB);
 }

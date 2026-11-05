@@ -9,6 +9,7 @@ import '/exports/exports.dart';
 
 import '../audio/advanced/advanced_settings.dart';
 import '../audio/dsp_core.dart';
+import '../audio/dvc/dvc_saved_volumes.dart' show dvcOutputChanged;
 import '../audio/dvc/dvc_settings.dart';
 import '../audio/eq/eq_layout.dart';
 import '../audio/eq/eq_presets.dart';
@@ -180,6 +181,7 @@ class AppController with ChangeNotifier implements StationSink {
     _advanced = value;
     unawaited(value.save(_prefs));
     if (value.musicFx) unawaited(refreshMusicFxAvailable());
+    _pushVolumeKeys();
     notifyListeners();
   }
 
@@ -204,14 +206,26 @@ class AppController with ChangeNotifier implements StationSink {
     notifyListeners();
   }
 
+  /// Tells Android whether Hype takes the volume keys itself (Volume panel
+  /// on; the native side also checks that DVC is off) and in how many steps.
+  void _pushVolumeKeys() {
+    if (!Platform.isAndroid) return;
+    unawaited(
+      Channel.setVolumeKeys(
+        consume: _advanced.volumePanel,
+        levels: _advanced.volumeLevels.levels ?? 0,
+        // The system keys keep their meaning while the equalizer applies to
+        // all apps (the native side also checks DVC and calls).
+        systemWide: systemWideActive,
+      ),
+    );
+  }
+
   Future<bool> openMusicFx() => Channel.openMusicFx(_audioSessionId ?? 0);
 
-  /// Brings the current room preset back to Hype's factory values; a sound the
-  /// listener shaped themselves ("Custom") is kept.
-  void restoreReverbPresets() {
-    final p = reverbPresetToRestore(_activeRoomPresetName);
-    if (p != null) applyRoomPreset(p);
-  }
+  /// Resets the room/reverb settings to the factory default built-in preset
+  /// (tweaks rename the active preset to "Custom", so the name cannot be used).
+  void restoreReverbPresets() => applyRoomPreset(factoryRoomPreset());
 
   /// The system volume feed: pause/resume on volume (both platforms) and
   /// Hype's volume panel (Android). Absent in tests and on desktop hosts.
@@ -231,24 +245,28 @@ class AppController with ChangeNotifier implements StationSink {
       pause: () => _handler.pause(),
       play: () => _handler.play(),
     )..start();
+    // Hype's panel shows only for changes its own key handling made (not for
+    // DVC raise/restore or a route switch).
     _volumePanelSub?.cancel();
-    var first = true;
-    _volumePanelSub = feed.listen((v) {
-      // The first value is the starting level, not a change.
-      if (first) {
-        first = false;
-        return;
-      }
-      if (Platform.isAndroid &&
-          _advanced.volumePanel &&
-          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
-        volumePanel.show(v);
-      }
-    });
+    _volumePanelSub = Platform.isAndroid
+        ? VolumeKeysFeed.stream.listen((v) {
+            if (_advanced.volumePanel &&
+                WidgetsBinding.instance.lifecycleState ==
+                    AppLifecycleState.resumed) {
+              volumePanel.show(v);
+            }
+          })
+        : null;
+    _pushVolumeKeys();
+    unawaited(refreshMusicFxAvailable());
     _audioFocus?.configureForceAudio(
       enabled: () => Platform.isAndroid && _advanced.forceAudioOnFocusChange,
       position: () => _handler.player.position,
       seekInPlace: () => _handler.player.seek(_handler.player.position),
+      buffering: () {
+        final st = _handler.player.processingState;
+        return st == ProcessingState.loading || st == ProcessingState.buffering;
+      },
     );
   }
 
@@ -315,9 +333,10 @@ class AppController with ChangeNotifier implements StationSink {
   // a change of it runs the same safe steps as a route change.
   bool _perOutputNoDvcApplied = false;
   StreamSubscription<dynamic>? _dvcRouteSub;
+  Timer? _dvcSettleTimer;
+  final Completer<void> _firstOutputResolved = Completer<void>();
   Future<void> _dvcRouteQueue = Future<void>.value();
   double _dvcGain = -30.0; // dB, range -30 to 0 (0% to 100%)
-  bool _dvcFineSteps = false; // false=1.5dB (5%), true=0.3dB (1%)
 
   // App mode
   AppMode _appMode = AppMode.musicPlayer;
@@ -637,6 +656,7 @@ class AppController with ChangeNotifier implements StationSink {
     _mediaButtons?.dispose();
     _globalEqStoppedSub?.cancel();
     _dvcRouteSub?.cancel();
+    _dvcSettleTimer?.cancel();
     unawaited(_autoEq.dispose());
     super.dispose();
   }
@@ -929,8 +949,10 @@ class AppController with ChangeNotifier implements StationSink {
   List<String> get outputPresetNames => _eq.visibleNames;
 
   /// The active output's flags; read at each audio focus event.
-  bool get outputNoDuck => _outputEffective.noDuck;
-  bool get outputIgnoreFocus => _outputEffective.ignoreFocus;
+  /// Android only: iOS reports interruptions, not focus changes.
+  bool get outputNoDuck => Platform.isAndroid && _outputEffective.noDuck;
+  bool get outputIgnoreFocus =>
+      Platform.isAndroid && _outputEffective.ignoreFocus;
 
   /// True on Android while the active output has No DVC; the DVC gate reads
   /// it (DVC stays off on that route, the stored setting is untouched).
@@ -977,17 +999,9 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _loadOutputProfiles() {
-    final had = _prefs.containsKey(OutputProfiles.prefKey);
-    _outputProfiles = OutputProfiles.load(_prefs);
-    if (!had) {
-      // First run with profiles: the curves the old per-device switch kept are
-      // the matching kinds' EQ presets.
-      _outputProfiles = migrateLegacyDevicePresets(
-        _outputProfiles,
-        [for (final p in _eq.presets) p.name],
-      );
-      unawaited(_outputProfiles.save(_prefs));
-    }
+    final r = loadOutputProfiles(_prefs, [for (final p in _eq.presets) p.name]);
+    _outputProfiles = r.profiles;
+    if (r.migrated) unawaited(_outputProfiles.save(_prefs));
   }
 
   void _startOutputProfiles() {
@@ -1129,6 +1143,7 @@ class AppController with ChangeNotifier implements StationSink {
   void _onOutputEffective(OutputProfile profile, ActiveRoute route) {
     final old = _outputEffective;
     _outputEffective = profile;
+    if (!_firstOutputResolved.isCompleted) _firstOutputResolved.complete();
     if (old.noEqTone != profile.noEqTone) {
       // The engine's own enable paths ramp the change.
       Channel.enableEq(_graphicEqEnabled && !profile.noEqTone);
@@ -1198,16 +1213,42 @@ class AppController with ChangeNotifier implements StationSink {
   /// Reads the output route and the Bluetooth absolute-volume flag, and, if
   /// that changes whether DVC may run, runs the usual safe steps (disabling
   /// restores the system volume first) without touching [dvcEnabled].
-  Future<void> refreshDvcRoute() {
+  ///
+  /// [routeEvent] is true only for a device/route event: only those can change
+  /// the output, which decides release (output changed) or a real disable (same
+  /// output, the gate changed) when DVC turns off.
+  Future<void> refreshDvcRoute({bool routeEvent = false}) {
     if (!Platform.isAndroid) return Future<void>.value();
-    return _dvcRouteQueue = _dvcRouteQueue.then((_) => _refreshDvcRoute());
+    return _dvcRouteQueue = _dvcRouteQueue.then(
+      (_) => _refreshDvcRoute(routeEvent),
+    );
   }
 
-  Future<void> _refreshDvcRoute() async {
+  /// The device key (type + stable id) at the last route read.
+  String? _dvcRouteKey;
+
+  Future<void> _refreshDvcRoute(bool routeEvent) async {
     try {
-      final type = await Channel.getAudioOutputType();
+      // Hold the first probe until the output profile's No DVC is known (a
+      // short bound), so DVC is not enabled and released again at launch.
+      if (!_firstOutputResolved.isCompleted) {
+        await _firstOutputResolved.future
+            .timeout(const Duration(milliseconds: 1500), onTimeout: () {});
+      }
+      final type = await Channel.probeAudioOutputType();
+      // A failed read (no platform side, as in a headless start) is not
+      // "speaker": leave the route unprobed so DVC stays off.
+      if (!dvcRouteReadValid(type)) return;
       final off = await Channel.isBtAbsoluteVolumeDisabled();
+      final key = await Channel.probeDvcDeviceKey() ?? type!;
+      final outputChanged = dvcOutputChanged(
+        previous: _dvcRouteKey,
+        next: key,
+        routeEvent: routeEvent,
+      );
+      _dvcRouteKey = key;
       final before = dvcRunning;
+      unawaited(Channel.applyPendingDvcRestore());
       _routeBluetooth = type == 'bluetooth';
       _btAbsoluteVolumeOff = off;
       _routeProbed = true;
@@ -1216,7 +1257,7 @@ class AppController with ChangeNotifier implements StationSink {
       if (before == after) return;
       final gen = ++_dvcToggleGen;
       unawaited(_runDvcSteps(
-        dvcToggleSteps(enable: after),
+        dvcRouteSteps(enable: after, outputChanged: outputChanged),
         gen,
         stillWanted: () => dvcRunning == after,
       ));
@@ -1235,7 +1276,14 @@ class AppController with ChangeNotifier implements StationSink {
       try {
         final session = await AudioSession.instance;
         _dvcRouteSub = session.devicesChangedEventStream.listen(
-          (_) => unawaited(refreshDvcRoute()),
+          (_) {
+            // Let the route settle (as the output profiles do) before reading.
+            _dvcSettleTimer?.cancel();
+            _dvcSettleTimer = Timer(
+              const Duration(milliseconds: 400),
+              () => unawaited(refreshDvcRoute(routeEvent: true)),
+            );
+          },
           onError: (Object e) => debugPrint('DVC route events: $e'),
         );
       } catch (e) {
@@ -1249,7 +1297,6 @@ class AppController with ChangeNotifier implements StationSink {
   String? get systemWideDisabledReason =>
       systemWideActive ? kSystemWideReason : null;
   double get dvcGain => _dvcGain;
-  bool get dvcFineSteps => _dvcFineSteps;
   bool get globalEqEnabled => _globalEqEnabled;
   bool get globalEqAvailable => _globalEqAvailable;
   List<Map<String, String>> get playingApps => List.unmodifiable(_playingApps);
@@ -1538,11 +1585,10 @@ class AppController with ChangeNotifier implements StationSink {
     _dvcEnabled = value;
     _dvcResumePending = false;
     if (value) {
-      // Start at 0% (silence) so enabling DVC never blasts at full volume
-      if (!_prefs.containsKey("dvcGain")) {
-        _dvcGain = -30.0;
-        _prefs.setDouble("dvcGain", _dvcGain);
-      }
+      // Never blasts at full volume: until the level is first stored it is
+      // silent, and the first enable seeds it from the system volume
+      // ([_seedDvcGainIfNew]) before DVC raises that.
+      if (!_prefs.containsKey("dvcGain")) _dvcGain = -30.0;
     }
     final gen = ++_dvcToggleGen;
     // Suspended while the equalizer applies to all apps: only the setting
@@ -1574,6 +1620,9 @@ class AppController with ChangeNotifier implements StationSink {
     int gen, {
     required bool Function() stillWanted,
   }) async {
+    // A first enable plays at the level the listener already had: read before
+    // DVC raises the system volume, so there is no silent start and no jump.
+    if (steps.contains(DvcStep.enableDvc)) await _seedDvcGainIfNew();
     for (final step in steps) {
       if (gen != _dvcToggleGen || !stillWanted()) return;
       switch (step) {
@@ -1585,7 +1634,24 @@ class AppController with ChangeNotifier implements StationSink {
           Channel.enableDvc();
         case DvcStep.disableDvc:
           Channel.disableDvc();
+        case DvcStep.releaseDvc:
+          Channel.disableDvc(release: true);
       }
+    }
+  }
+
+  Future<void> _seedDvcGainIfNew() async {
+    if (_prefs.containsKey("dvcGain") || !Platform.isAndroid) return;
+    try {
+      final max = await Channel.getSystemMaxVolume();
+      final index = await Channel.getSystemVolume();
+      final db = await Channel.getMusicStreamDb(index);
+      if (_prefs.containsKey("dvcGain")) return;
+      _dvcGain = dvcGainFromSystemVolume(index, max, streamDb: db);
+      await _prefs.setDouble("dvcGain", _dvcGain);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Seeding the DVC level failed: $e');
     }
   }
 
@@ -1614,16 +1680,6 @@ class AppController with ChangeNotifier implements StationSink {
     );
   }
 
-  set dvcFineSteps(bool value) {
-    _prefs.setBool("dvcFineSteps", value);
-    _dvcFineSteps = value;
-    // The old switch is now the Volume levels setting: fine 100, coarse 30.
-    _advanced = _advanced.copyWith(
-      volumeLevels: value ? VolumeLevels.l100 : VolumeLevels.l30,
-    );
-    unawaited(_advanced.save(_prefs));
-    notifyListeners();
-  }
 
   set globalEqEnabled(bool value) {
     _prefs.setBool("globalEqEnabled", value);
@@ -1664,6 +1720,7 @@ class AppController with ChangeNotifier implements StationSink {
     }
     // Headroom is the user's again (or DVC's, 0) with the mode change.
     _pushHeadroom();
+    _pushVolumeKeys();
     if (value) {
       // Give the service a moment to start and detect sessions
       Future.delayed(const Duration(milliseconds: 800), refreshPlayingApps);
@@ -1710,7 +1767,12 @@ class AppController with ChangeNotifier implements StationSink {
   /// activity attaches (first resume), or Hype plays, bring it up if DVC should
   /// be running and is not.
   Future<void> _ensureDvcNative() async {
-    if (!Platform.isAndroid || !dvcRunning) return;
+    if (!Platform.isAndroid) return;
+    // The route must be known before DVC may raise the system volume: after a
+    // headless start it was never read (a Bluetooth headset with absolute
+    // volume must not be raised to maximum on attach).
+    await refreshDvcRoute();
+    if (!dvcRunning) return;
     final gen = _dvcToggleGen;
     try {
       if (await Channel.isDvcActive()) return;
@@ -2856,6 +2918,7 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _loadSettings() {
+    final freshInstall = !isExistingInstall(_prefs);
     // First: it inspects which prefs earlier versions wrote, and reads the
     // legacy curve for the boost-seeded headroom.
     _dspCore = DspCoreSettings.load(_prefs, isIos: Platform.isIOS);
@@ -2913,10 +2976,14 @@ class AppController with ChangeNotifier implements StationSink {
     _fades = FadeSettings.load(_prefs);
     _handler.fades = _fades;
     _replayGain = ReplayGainSettings.load(_prefs);
-    _dvcEnabled = _prefs.getBool("dvcEnabled") ?? false;
+    // New installs start with DVC on (spec section 6); pinned so it survives
+    // the install reading as existing from the second launch.
+    _dvcEnabled = _prefs.getBool("dvcEnabled") ?? freshInstall;
+    if (freshInstall && !_prefs.containsKey("dvcEnabled")) {
+      unawaited(_prefs.setBool("dvcEnabled", _dvcEnabled));
+    }
     _dvcSettings = DvcSettings.load(_prefs);
     _dvcGain = _prefs.getDouble("dvcGain") ?? -30.0;
-    _dvcFineSteps = _prefs.getBool("dvcFineSteps") ?? false;
     _globalEqEnabled = _prefs.getBool("globalEqEnabled") ?? false;
     // Song grid extent (migrate from old int scale if needed)
     if (_prefs.containsKey("songGridExtent")) {
@@ -3534,6 +3601,7 @@ class AppController with ChangeNotifier implements StationSink {
       Channel.enableDvc();
       _pushHeadroom();
     }
+    _pushVolumeKeys();
     notifyListeners();
     // The notification's Stop ends the service without Dart's involvement.
     if (Platform.isAndroid && _globalEqAvailable) {

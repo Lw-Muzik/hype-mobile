@@ -105,15 +105,15 @@ class PlaybackSession {
   }
 
   Map<String, Object?> toJson() => {
-        'version': 1,
-        'index': index,
-        'positionMs': position.inMilliseconds,
-        'shuffled': shuffled,
-        'loopMode': loopMode,
-        'videoMode': videoMode,
-        'songs': [for (final song in songs) song.getMap],
-        if (shuffledOrder != null) 'shuffledOrder': shuffledOrder,
-      };
+    'version': 1,
+    'index': index,
+    'positionMs': position.inMilliseconds,
+    'shuffled': shuffled,
+    'loopMode': loopMode,
+    'videoMode': videoMode,
+    'songs': [for (final song in songs) song.getMap],
+    if (shuffledOrder != null) 'shuffledOrder': shuffledOrder,
+  };
 
   /// Reads a session, or null when there is nothing usable in [json].
   ///
@@ -133,7 +133,10 @@ class PlaybackSession {
     final shuffled = json['shuffled'] == true;
     final rawOrder = json['shuffledOrder'];
     final shuffledOrder = rawOrder is List
-        ? [for (final id in rawOrder) if (id is num) id.toInt()]
+        ? [
+            for (final id in rawOrder)
+              if (id is num) id.toInt(),
+          ]
         : null;
 
     final rawIndex = (json['index'] as num?)?.toInt() ?? 0;
@@ -142,7 +145,9 @@ class PlaybackSession {
       shuffledOrder: shuffledOrder,
       shuffled: shuffled,
       index: 0,
-      position: Duration(milliseconds: (json['positionMs'] as num?)?.toInt() ?? 0),
+      position: Duration(
+        milliseconds: (json['positionMs'] as num?)?.toInt() ?? 0,
+      ),
       loopMode: (json['loopMode'] as num?)?.toInt() ?? 0,
       videoMode: json['videoMode'] == true,
     );
@@ -178,7 +183,10 @@ class PlaybackSession {
     final keep = {for (final song in window) song.id};
 
     return PlaybackSession(
-      songs: [for (final song in songs) if (keep.contains(song.id)) song],
+      songs: [
+        for (final song in songs)
+          if (keep.contains(song.id)) song,
+      ],
       shuffledOrder: shuffled ? [for (final song in window) song.id] : null,
       shuffled: shuffled,
       index: index - start,

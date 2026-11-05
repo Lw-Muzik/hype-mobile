@@ -22,9 +22,19 @@ typedef _StartD = Pointer<Void> Function(Pointer<Utf8>, int);
 typedef _EndpointIdC = Pointer<Utf8> Function(Pointer<Void>);
 typedef _EndpointIdD = Pointer<Utf8> Function(Pointer<Void>);
 typedef _PairC = Pointer<Utf8> Function(
-    Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+  Pointer<Void>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+);
 typedef _PairD = Pointer<Utf8> Function(
-    Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+  Pointer<Void>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+);
 typedef _StopC = Void Function(Pointer<Void>);
 typedef _StopD = void Function(Pointer<Void>);
 typedef _FreeC = Void Function(Pointer<Utf8>);
@@ -41,7 +51,8 @@ DynamicLibrary _openLib() {
 }
 
 /// Whether the platform can load the native library at all.
-bool get remoteLinkSupported => Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+bool get remoteLinkSupported =>
+    Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
 class RemoteLink {
   RemoteLink._();
@@ -51,8 +62,9 @@ class RemoteLink {
   Pointer<Void>? _node;
 
   late final _start = _lib!.lookupFunction<_StartC, _StartD>('hm_phone_start');
-  late final _endpointId =
-      _lib!.lookupFunction<_EndpointIdC, _EndpointIdD>('hm_phone_endpoint_id');
+  late final _endpointId = _lib!.lookupFunction<_EndpointIdC, _EndpointIdD>(
+    'hm_phone_endpoint_id',
+  );
   late final _stop = _lib!.lookupFunction<_StopC, _StopD>('hm_phone_stop');
   late final _free = _lib!.lookupFunction<_FreeC, _FreeD>('hm_string_free');
 

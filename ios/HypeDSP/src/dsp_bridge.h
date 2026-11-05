@@ -65,6 +65,11 @@ void  dsp_set_limiter_enabled(void* handle, bool enabled);
 void  dsp_set_limiter_ceiling(void* handle, float v);
 void  dsp_set_limiter_release(void* handle, float ms);
 void  dsp_set_limiter_knee(void* handle, float dB);
+// Current limiter gain reduction in dB (>= 0); lock-free read.
+float dsp_get_limiter_reduction_db(void* handle);
+// Engine format as last configured (dsp_create / dsp_reinit).
+int   dsp_get_sample_rate(void* handle);
+int   dsp_get_channels(void* handle);
 
 // MBC
 void  dsp_set_mbc_enabled(void* handle, bool enabled);

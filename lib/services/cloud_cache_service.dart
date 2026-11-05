@@ -152,7 +152,9 @@ class CloudCacheService {
       int totalDownloaded = existingBytes;
       await for (final chunk in response.stream) {
         if (_downloadCancelled) {
-          debugPrint('CloudCache: Download cancelled for $fileId at ${_formatBytes(totalDownloaded)}');
+          debugPrint(
+            'CloudCache: Download cancelled for $fileId at ${_formatBytes(totalDownloaded)}',
+          );
           break;
         }
 
@@ -166,7 +168,9 @@ class CloudCacheService {
 
         // Stop if we've reached the byte limit (partial prefetch on cellular)
         if (maxBytes > 0 && totalDownloaded >= maxBytes) {
-          debugPrint('CloudCache: Partial prefetch limit reached for $fileId (${_formatBytes(totalDownloaded)})');
+          debugPrint(
+            'CloudCache: Partial prefetch limit reached for $fileId (${_formatBytes(totalDownloaded)})',
+          );
           break;
         }
       }
@@ -194,9 +198,7 @@ class CloudCacheService {
         _saveMetadata();
         await _evictIfNeeded();
 
-        debugPrint(
-          'CloudCache: Cached $fileId (${_formatBytes(stat.size)})',
-        );
+        debugPrint('CloudCache: Cached $fileId (${_formatBytes(stat.size)})');
       }
 
       _prefetchingFileId = null;

@@ -84,10 +84,13 @@ class VideoSource {
   /// along: the `BaseURL`s inside the manifest point at googlevideo, which
   /// checks every segment request against the client that resolved it.
   AudioSource toAudioSource({Object? tag}) => switch (format) {
-        YtStreamFormat.dash =>
-          AudioSource.uri(Uri.file(location), headers: headers, tag: tag),
-        _ => AudioSource.uri(Uri.parse(location), headers: headers, tag: tag),
-      };
+    YtStreamFormat.dash => AudioSource.uri(
+      Uri.file(location),
+      headers: headers,
+      tag: tag,
+    ),
+    _ => AudioSource.uri(Uri.parse(location), headers: headers, tag: tag),
+  };
 }
 
 /// The videos currently in, or recently in, the queue.

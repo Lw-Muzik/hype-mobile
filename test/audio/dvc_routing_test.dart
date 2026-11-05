@@ -24,6 +24,16 @@ void main() {
 }
 
 void orderingTests() {
+  test('route release leaves the system volume alone on an output change', () {
+    expect(dvcRouteSteps(enable: false, outputChanged: true),
+        [DvcStep.releaseDvc, DvcStep.pushMasterVolume]);
+    expect(dvcRouteSteps(enable: true, outputChanged: true),
+        dvcToggleSteps(enable: true));
+  });
+  test('the gate on the same output is a real disable', () {
+    expect(dvcRouteSteps(enable: false, outputChanged: false),
+        dvcToggleSteps(enable: false));
+  });
   group('dvcToggleSteps', () {
     test('enable pushes master volume, flushes a paused buffer, then raises', () {
       expect(dvcToggleSteps(enable: true),

@@ -223,6 +223,9 @@ class AudioFocusService {
   bool Function()? _forceEnabled;
   Duration Function()? _forcePosition;
   Future<void> Function()? _forceSeek;
+  bool Function()? _forceBuffering;
+  // The restart's own pause is still expected (set with [_ownPause]).
+  bool _forcePausePending = false;
   Timer? _forceTimer;
   Timer? _forceOwnTimer;
   int _forceAttempts = 0;
@@ -273,7 +276,12 @@ class AudioFocusService {
     required bool Function() enabled,
     required Duration Function() position,
     Future<void> Function()? seekInPlace,
+
+    /// True while the player is loading or buffering: no progress is then no
+    /// sign of a dead output.
+    bool Function()? buffering,
   }) {
+    _forceBuffering = buffering;
     _forceEnabled = enabled;
     _forcePosition = position;
     _forceSeek = seekInPlace;
@@ -294,6 +302,7 @@ class AudioFocusService {
     final enabled = _forceEnabled;
     final position = _forcePosition;
     if (enabled == null || position == null) return;
+    if (_forceBuffering?.call() ?? false) return;
     final step = forceAudioDecision(
       enabled: enabled(),
       meantToPlay: _target.playing && !_state.waitingForFocus,
@@ -314,9 +323,15 @@ class AudioFocusService {
       // The restart's own pause and play are not the listener's.
       _ownPause = true;
       _ownPlay = true;
+      _forcePausePending = true;
       _forceOwnTimer?.cancel();
       _forceOwnTimer = Timer(_kForceOwnWindow, () {
-        _ownPause = false;
+        // Only what the restart set and nothing has consumed: a real focus
+        // pause in the window owns [_ownPause] by then.
+        if (_forcePausePending) {
+          _forcePausePending = false;
+          _ownPause = false;
+        }
         _ownPlay = false;
       });
       unawaited(
@@ -411,7 +426,11 @@ class AudioFocusService {
     // hold stays, so the gain still finds it and does not resume.
     if (e is PlaybackPaused && wasDucked) actions.add(FocusAction.unduck);
     _enqueue(actions);
-    if (e is FocusGained && hadLoss) _watchOutput();
+    // Only after a transient loss and its gain; a permanent loss or a duck is
+    // no reason to restart the output.
+    if (e is FocusGained && hadLoss && _lossKind == FocusLossKind.transient) {
+      _watchOutput();
+    }
     // The listener's own pause or a new loss ends the watch.
     if (e is FocusLost || e is PlaybackPaused) _forceTimer?.cancel();
     if (e is FocusLost && e.kind == FocusLossKind.transient) _pollForCall();
@@ -429,9 +448,11 @@ class AudioFocusService {
       _handle(const ListenerPlayed());
       return;
     }
-    _ownPlay = false;
+    // The forced restart's pause comes before its play: keep the play mark.
+    if (!_forcePausePending) _ownPlay = false;
     if (_ownPause) {
       _ownPause = false;
+      _forcePausePending = false;
       return;
     }
     // Already paused for focus: nothing the listener does to a paused player
@@ -537,6 +558,7 @@ class AudioFocusService {
         switch (a) {
           case FocusAction.pause:
             _ownPause = true;
+            _forcePausePending = false; // a real pause owns the mark now
             _ownPlay = false;
             // iOS has already silenced the audio, so there is nothing to fade.
             await _target.pause(fade: !_isIos);

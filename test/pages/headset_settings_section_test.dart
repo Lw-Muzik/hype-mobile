@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eq_app/audio/headset/headset_settings.dart';
 import 'package:eq_app/pages/Settings.dart';
+import 'package:eq_app/pages/audio_sub_page.dart';
 import 'package:eq_app/pages/headset_settings_section.dart';
 import 'package:eq_app/pages/audio_focus_settings_section.dart';
 import 'package:eq_app/pages/dvc_settings_section.dart';
@@ -216,6 +217,8 @@ void main() {
       ...HeadsetSettingsSection.androidOnlyLabels,
       ...DvcSettingsSection.androidOnlyLabels,
       ...AdvancedSettingsSection.androidOnlyLabels,
+      // The system-wide EQ lives in the Equalizer sub-page (Android only).
+      'Global equalizer',
     };
     for (final e in kSettingsIndex) {
       expect(e.androidOnly, allAndroidOnly.contains(e.label), reason: e.label);
@@ -227,6 +230,13 @@ void main() {
           .toSet(),
       HeadsetSettingsSection.labels.toSet(),
     );
+    // The Android-only DVC / Advanced rows now live on their Audio sub-pages.
+    for (final e in kSettingsIndex) {
+      if (DvcSettingsSection.androidOnlyLabels.contains(e.label)) {
+        expect(e.category, SettingsCategory.audio, reason: e.label);
+        expect(e.subPage, AudioSubPage.dvc, reason: e.label);
+      }
+    }
     int iosRows(List<String> labels) => kSettingsIndex
         .where((e) => labels.contains(e.label) && e.availableOn(isAndroid: false))
         .length;

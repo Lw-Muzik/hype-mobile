@@ -32,7 +32,8 @@ import '../yt_models.dart';
 import 'yt_json.dart';
 
 /// YouTube's own word for what a browse id opens, hung off a `browseEndpoint`.
-const _pageType = 'browseEndpointContextSupportedConfigs'
+const _pageType =
+    'browseEndpointContextSupportedConfigs'
     '/browseEndpointContextMusicConfig/pageType';
 
 const _albumPage = 'MUSIC_PAGE_TYPE_ALBUM';
@@ -41,7 +42,8 @@ const _artistPage = 'MUSIC_PAGE_TYPE_ARTIST';
 
 /// A card's `musicVideoType`, stated on the watch endpoint it opens. The
 /// list-row equivalent is [videoTypePath], which hangs off the play button.
-const _cardVideoType = 'watchEndpointMusicSupportedConfigs'
+const _cardVideoType =
+    'watchEndpointMusicSupportedConfigs'
     '/watchEndpointMusicConfig/musicVideoType';
 
 /// The label for the single-item shelf a search leads with. The card states no
@@ -62,10 +64,7 @@ YtArtistHeader? parseArtistHeader(Object? json) {
       ptr(json, 'header/musicVisualHeaderRenderer');
   final name = joinRuns(ptr(header, 'title/runs'));
   if (name == null) return null;
-  final subscribe = ptr(
-    header,
-    'subscriptionButton/subscribeButtonRenderer',
-  );
+  final subscribe = ptr(header, 'subscriptionButton/subscribeButtonRenderer');
   return YtArtistHeader(
     name: name,
     banner: bestThumbnail(
@@ -159,9 +158,9 @@ void _pushShelf(String? title, Object? contents, List<ExploreShelf> out) {
 }
 
 String? _carouselTitle(Object? shelf) => ptrString(
-      shelf,
-      'header/musicCarouselShelfBasicHeaderRenderer/title/runs/0/text',
-    );
+  shelf,
+  'header/musicCarouselShelfBasicHeaderRenderer/title/runs/0/text',
+);
 
 String? _shelfTitle(Object? shelf) => ptrString(shelf, 'title/runs/0/text');
 
@@ -226,7 +225,8 @@ ExploreItem? _parseItem(Object? card) {
   // run — and the two agree wherever both exist. The item is the reliable one: a
   // music-video card carries a watch endpoint there and nothing at all on the
   // title run.
-  final endpoint = ptr(card, 'navigationEndpoint') ??
+  final endpoint =
+      ptr(card, 'navigationEndpoint') ??
       ptr(card, 'title/runs/0/navigationEndpoint');
   if (endpoint == null) return null;
   final title = ptrString(card, 'title/runs/0/text');
@@ -237,7 +237,10 @@ ExploreItem? _parseItem(Object? card) {
     title: title,
     subtitle: joinRuns(subtitleRuns),
     thumbnail: bestThumbnail(
-      ptr(card, 'thumbnailRenderer/musicThumbnailRenderer/thumbnail/thumbnails'),
+      ptr(
+        card,
+        'thumbnailRenderer/musicThumbnailRenderer/thumbnail/thumbnails',
+      ),
     ),
     byline: [?subtitleRuns],
   );
@@ -358,7 +361,7 @@ ExploreItem? parseRow(Object? row) {
 /// text is arbitrary: a song called "9:41" would otherwise state a duration.
 List<Object?> bylineRuns(Object? row) {
   final runs = <Object?>[];
-  for (var column = 1;; column++) {
+  for (var column = 1; ; column++) {
     final found = ptr(
       row,
       'flexColumns/$column/musicResponsiveListItemFlexColumnRenderer/text/runs',
@@ -411,8 +414,10 @@ double? _durationOf(List<Object?> byline) {
 /// Duration as a playlist or album row states it: in the first fixed column, as
 /// runs or a bare string. Search and genre rows have no fixed columns at all.
 double? _fixedDuration(Object? row) {
-  final text =
-      ptr(row, 'fixedColumns/0/musicResponsiveListItemFixedColumnRenderer/text');
+  final text = ptr(
+    row,
+    'fixedColumns/0/musicResponsiveListItemFixedColumnRenderer/text',
+  );
   if (text == null) return null;
   final raw = joinRuns(ptr(text, 'runs')) ?? ptr(text, 'simpleText');
   return parseDuration(raw is String ? raw : null);

@@ -74,8 +74,9 @@ class YtMusicRepository {
 
   /// The categories, fresh from YouTube, written through to the disk cache.
   Future<List<ExploreSection>> categories() async {
-    final sections =
-        await YtWorker.instance.run<List<ExploreSection>>(YtOp.categories);
+    final sections = await YtWorker.instance.run<List<ExploreSection>>(
+      YtOp.categories,
+    );
     if (sections.isNotEmpty) unawaited(_writeCategories(sections));
     return sections;
   }
@@ -119,11 +120,8 @@ class YtMusicRepository {
 
   /// One artist's page: who they are, then their shelves — top songs,
   /// albums, singles, videos.
-  Future<YtArtistPageData> artistPage(String browseId) =>
-      YtWorker.instance.run<YtArtistPageData>(
-        YtOp.artistPage,
-        {'browseId': browseId},
-      );
+  Future<YtArtistPageData> artistPage(String browseId) => YtWorker.instance
+      .run<YtArtistPageData>(YtOp.artistPage, {'browseId': browseId});
 
   /// Search results for one filter.
   ///
@@ -131,20 +129,20 @@ class YtMusicRepository {
   /// and the unfiltered query answers with a different, shallower set (a top
   /// result and a handful of each kind) rather than with everything.
   Future<List<ExploreShelf>> search(String query, SearchFilter filter) =>
-      YtWorker.instance.run<List<ExploreShelf>>(
-        YtOp.search,
-        {'query': query, 'params': filter.params},
-      );
+      YtWorker.instance.run<List<ExploreShelf>>(YtOp.search, {
+        'query': query,
+        'params': filter.params,
+      });
 
   /// YouTube Music's own curated playlists for [query] ("Presenting Burna
   /// Boy", "Afrobeats Now") — the *featured* filter, as opposed to the
   /// community playlists [SearchFilter.playlists] returns, which are anyone's
   /// uploads. Kept out of [SearchFilter] so it doesn't become a search tab.
   Future<List<ExploreShelf>> featuredPlaylists(String query) =>
-      YtWorker.instance.run<List<ExploreShelf>>(
-        YtOp.search,
-        {'query': query, 'params': _featuredPlaylistsParams},
-      );
+      YtWorker.instance.run<List<ExploreShelf>>(YtOp.search, {
+        'query': query,
+        'params': _featuredPlaylistsParams,
+      });
 
   static const _featuredPlaylistsParams = 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D';
 
@@ -152,8 +150,9 @@ class YtMusicRepository {
   /// leave the field alone, not replace what the user is typing with an error.
   Future<List<String>> suggestions(String query) async {
     try {
-      return await YtWorker.instance
-          .run<List<String>>(YtOp.suggestions, {'query': query});
+      return await YtWorker.instance.run<List<String>>(YtOp.suggestions, {
+        'query': query,
+      });
     } catch (_) {
       return const [];
     }
@@ -189,11 +188,11 @@ class YtMusicRepository {
 
   /// One playlist or album, with its header — what the opened screen shows.
   Future<YtTrackList> openList(ExploreItem item) => _trackList(
-        item,
-        item.kind == ExploreKind.album
-            ? TrackListKind.album
-            : TrackListKind.playlist,
-      );
+    item,
+    item.kind == ExploreKind.album
+        ? TrackListKind.album
+        : TrackListKind.playlist,
+  );
 
   Future<YtTrackList> _trackList(ExploreItem item, TrackListKind kind) =>
       YtWorker.instance.run<YtTrackList>(YtOp.trackList, {
@@ -228,16 +227,16 @@ class YtMusicRepository {
   // -------------------------------------------------------------------------
 
   /// The endless "up next" YouTube derives from one song.
-  Future<RadioBatch> radio(String videoId) => YtWorker.instance
-      .run<RadioBatch>(YtOp.radio, {'videoId': videoId});
+  Future<RadioBatch> radio(String videoId) =>
+      YtWorker.instance.run<RadioBatch>(YtOp.radio, {'videoId': videoId});
 
   /// The next page of a radio. Needs the seed as well as the token: the wire
   /// format re-posts the full body, so the token alone is not a request.
   Future<RadioBatch> radioContinue(String videoId, String token) =>
-      YtWorker.instance.run<RadioBatch>(
-        YtOp.radioContinue,
-        {'videoId': videoId, 'token': token},
-      );
+      YtWorker.instance.run<RadioBatch>(YtOp.radioContinue, {
+        'videoId': videoId,
+        'token': token,
+      });
 
   // -------------------------------------------------------------------------
   // Details, for tagging a download
@@ -246,19 +245,18 @@ class YtMusicRepository {
   /// What YouTube Music knows about one track — every credited artist, the
   /// album and its link, year, art and lyrics link — or null when it can't
   /// say. Never cached: it is asked once per download.
-  Future<YtTrackInfo?> trackInfo(String videoId) => YtWorker.instance
-      .run<YtTrackInfo?>(YtOp.trackInfo, {'videoId': videoId});
+  Future<YtTrackInfo?> trackInfo(String videoId) =>
+      YtWorker.instance.run<YtTrackInfo?>(YtOp.trackInfo, {'videoId': videoId});
 
   /// The lyrics behind a [YtTrackInfo.lyricsId], or null.
-  Future<YtLyrics?> lyrics(String browseId) => YtWorker.instance
-      .run<YtLyrics?>(YtOp.lyrics, {'browseId': browseId});
+  Future<YtLyrics?> lyrics(String browseId) =>
+      YtWorker.instance.run<YtLyrics?>(YtOp.lyrics, {'browseId': browseId});
 
   /// An album's page by its `MPREb…` id: its artist, cover and track order.
-  Future<YtTrackList> album(String browseId, {String title = ''}) =>
-      _trackList(
-        ExploreItem(id: browseId, kind: ExploreKind.album, title: title),
-        TrackListKind.album,
-      );
+  Future<YtTrackList> album(String browseId, {String title = ''}) => _trackList(
+    ExploreItem(id: browseId, kind: ExploreKind.album, title: title),
+    TrackListKind.album,
+  );
 
   // -------------------------------------------------------------------------
   // Streams
@@ -286,18 +284,20 @@ class YtMusicRepository {
     if (inFlight != null) return inFlight;
 
     final future = YtWorker.instance
-        .run<StreamTarget>(op, {'videoId': videoId}).then((target) {
-      cache[videoId] = target;
-      return target;
-    }).whenComplete(() {
-      // A BLOCK body, deliberately. `whenComplete(() => _resolving.remove(key))`
-      // reads as identical but is a deadlock: `Map.remove` returns the value it
-      // removed — which here is this very future — and `whenComplete` waits on
-      // any Future its callback returns. The future ends up awaiting itself and
-      // never completes, while the `then` above still runs. The symptom is a
-      // spinner that never goes away over a request that already succeeded.
-      _resolving.remove(key);
-    });
+        .run<StreamTarget>(op, {'videoId': videoId})
+        .then((target) {
+          cache[videoId] = target;
+          return target;
+        })
+        .whenComplete(() {
+          // A BLOCK body, deliberately. `whenComplete(() => _resolving.remove(key))`
+          // reads as identical but is a deadlock: `Map.remove` returns the value it
+          // removed — which here is this very future — and `whenComplete` waits on
+          // any Future its callback returns. The future ends up awaiting itself and
+          // never completes, while the `then` above still runs. The symptom is a
+          // spinner that never goes away over a request that already succeeded.
+          _resolving.remove(key);
+        });
 
     _resolving[key] = future;
     return future;
@@ -377,9 +377,9 @@ class YtMusicRepository {
     final wanted = <String>[];
     for (final id in videoIds) {
       if (wanted.length >= limit) break;
-      if (id.isEmpty || isResolved(id) || _resolving.containsKey(
-        '${YtOp.resolveAudio.name}:$id',
-      )) {
+      if (id.isEmpty ||
+          isResolved(id) ||
+          _resolving.containsKey('${YtOp.resolveAudio.name}:$id')) {
         continue;
       }
       wanted.add(id);

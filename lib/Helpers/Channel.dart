@@ -112,8 +112,22 @@ class Channel {
   }
 
   /// Disable DVC: restores the saved system volume
-  static Future<void> disableDvc() async {
-    await _invoke("disableDvc", {});
+  ///
+  /// With [release] the route (not the listener) lets go: the system volume is
+  /// not written and the saved original stays for the real disable.
+  static Future<void> disableDvc({bool release = false}) async {
+    await _invoke("disableDvc", {"release": release});
+  }
+
+  /// The active output's key (type + stable id when known), read from the
+  /// device the music stream is routed to; null when unreadable.
+  static Future<String?> probeDvcDeviceKey() =>
+      _invoke<String>("getDvcDeviceKey");
+
+  /// Applies a restore left pending by a disable on another output, once the
+  /// output it was saved for is active again.
+  static Future<void> applyPendingDvcRestore() async {
+    await _invoke("applyPendingDvcRestore", {});
   }
 
   /// Check if DVC is currently active
@@ -126,9 +140,31 @@ class Channel {
     return await _invokeRequired<int>("getSystemVolume", 0);
   }
 
+  /// The real attenuation (dB) Android applies at music step [index] on the
+  /// active output (API 28+); null where it cannot be read.
+  static Future<double?> getMusicStreamDb(int index) async {
+    final v = await _invoke<double>("getStreamVolumeDb", {"index": index});
+    return v;
+  }
+
   /// Get maximum system music volume
   static Future<int> getSystemMaxVolume() async {
     return await _invokeRequired<int>("getSystemMaxVolume", 15);
+  }
+
+  /// Volume panel: with [consume] on (and DVC off) Hype takes the volume keys
+  /// while in the foreground and steps the music stream itself, in [levels]
+  /// steps (0 = the system's own). Android only.
+  static Future<void> setVolumeKeys({
+    required bool consume,
+    required int levels,
+    bool systemWide = false,
+  }) async {
+    await _invoke("setVolumeKeys", {
+      "consume": consume,
+      "levels": levels,
+      "systemWide": systemWide,
+    });
   }
 
   /// Whether an app on this phone answers the system audio effects panel
@@ -606,6 +642,11 @@ class Channel {
   static Future<String> getAudioOutputType() async {
     return await _invokeRequired<String>("getAudioOutputType", "speaker");
   }
+
+  /// The output type, or null when it could not be read (no platform side, as
+  /// in a headless start). Unlike [getAudioOutputType] it has no fallback.
+  static Future<String?> probeAudioOutputType() =>
+      _invoke<String>("getAudioOutputType");
 
   /// Android's "Disable absolute volume" developer option: true when on, false
   /// when off, null when unknown (unreadable, or no platform side).
