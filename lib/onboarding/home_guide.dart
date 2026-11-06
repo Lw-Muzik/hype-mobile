@@ -9,8 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// The first guide tip's text. Store builds call the place "Discover" (see
 /// [AppConfig.directBuild]); direct builds name the service.
 String guideDiscoverMessage({required bool directBuild}) => directBuild
-    ? 'Open YouTube Music from Places for trending charts, popular songs, and artists to explore and stream.'
-    : 'Open Discover from Places for trending charts, popular songs, and artists to explore and stream.';
+    ? 'Open YouTube Music from your Library for trending charts, popular songs, and artists to explore and stream.'
+    : 'Open Discover from your Library for trending charts, popular songs, and artists to explore and stream.';
 
 /// The second tip's text: it names Folders only where that place exists.
 String guidePlacesMessage({
@@ -19,7 +19,7 @@ String guidePlacesMessage({
 }) {
   final youtube = directBuild ? 'YouTube Music' : 'Discover';
   final folders = isAndroid ? 'Folders, ' : '';
-  return 'Places lists For You, Songs, Albums, Artists, Genres, $folders'
+  return 'Your Library holds For You, Songs, Albums, Artists, Genres, $folders'
       'Playlists, $youtube, and Cloud. Swipe right or press back to go up a level.';
 }
 

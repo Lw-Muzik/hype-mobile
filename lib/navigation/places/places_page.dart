@@ -1,6 +1,6 @@
-/// The Places list: every top-level destination, one row each.
+/// The Library: every top-level destination, one block each in a grid.
 ///
-/// The rows are plain callbacks. Opening a place is the shell's business (it
+/// The blocks are plain callbacks. Opening a place is the shell's business (it
 /// owns the transition), so this page never navigates by itself.
 library;
 
@@ -10,6 +10,7 @@ import 'package:eq_app/navigation/motion/morph.dart';
 import 'package:flutter/material.dart';
 
 import '../../config/app_config.dart';
+import '../../themes/app_fonts.dart';
 import '../../themes/ember.dart';
 import 'place_app_bar.dart';
 
@@ -57,7 +58,35 @@ extension PlaceLabel on PlaceId {
     PlaceId.cloud => Icons.cloud_rounded,
   };
 
-  /// Morph tag of this place's list row; the page's title answers with the
+  /// Each block's own colour: a wash across it, its icon chip and the large
+  /// faint icon in its corner. One family (same saturation and lightness),
+  /// different hues, readable on the dark ground.
+  Color get tint => switch (this) {
+    PlaceId.forYou => Ember.accent,
+    PlaceId.songs => const Color(0xFFFB7185),
+    PlaceId.albums => const Color(0xFFA78BFA),
+    PlaceId.artists => const Color(0xFF2DD4BF),
+    PlaceId.genres => const Color(0xFFE879F9),
+    PlaceId.folders => const Color(0xFF818CF8),
+    PlaceId.playlists => const Color(0xFF4ADE80),
+    PlaceId.youtube => const Color(0xFFFB923C),
+    PlaceId.cloud => const Color(0xFF38BDF8),
+  };
+
+  /// One short line under the name: what is behind the block.
+  String get blurb => switch (this) {
+    PlaceId.forYou => 'Mixes and picks',
+    PlaceId.songs => 'Every track',
+    PlaceId.albums => 'By record',
+    PlaceId.artists => 'By who made it',
+    PlaceId.genres => 'By sound',
+    PlaceId.folders => 'On this device',
+    PlaceId.playlists => 'Yours and saved',
+    PlaceId.youtube => 'Charts, moods, new music',
+    PlaceId.cloud => 'Drive and Dropbox',
+  };
+
+  /// Morph tag of this place's block; the page's title answers with the
   /// header tag of the place's page key.
   String get morphTag => 'place:$name';
 }
@@ -69,7 +98,8 @@ List<PlaceId> visiblePlaces({required bool isIos}) => [
     if (!(isIos && id == PlaceId.folders)) id,
 ];
 
-/// Wraps a row's icon and title so the page it opens can morph from them.
+/// Wraps a block so the page it opens grows out of it and its title morphs
+/// from it.
 Widget placeMorphTag(Object tag, Widget child) =>
     MorphTag(tag: tag, child: child);
 
@@ -105,100 +135,140 @@ class PlacesPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: fancy ? Colors.transparent : Ember.ground,
       appBar: PlaceAppBar(
-        title: 'Places',
+        title: kLibraryTitle,
         onMenu: onMenu,
         onSearch: onSearch,
         fancy: fancy,
         menuKey: menuKey,
         searchKey: searchKey,
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.only(top: 4),
-        itemExtent: kPlaceRowExtent,
+      body: GridView.builder(
+        padding: const EdgeInsets.fromLTRB(
+          Ember.gutter - 4,
+          8,
+          Ember.gutter - 4,
+          24,
+        ),
+        // Two columns on a phone, more where there is room (a tablet shows
+        // four), each block a little wider than tall.
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: kPlaceTileMaxExtent,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.3,
+        ),
         itemCount: places.length,
-        itemBuilder: (context, i) =>
-            PlaceRow(id: places[i], onTap: () => onOpen(context, places[i])),
+        itemBuilder: (context, i) => PlaceTile(
+          id: places[i],
+          fancy: fancy,
+          onTap: () => onOpen(context, places[i]),
+        ),
       ),
     );
   }
 }
 
-/// Same height as a library list row, so Places and the lists it opens share
-/// one rhythm.
-const double kPlaceRowExtent = 72.0;
+/// The root page's title.
+const String kLibraryTitle = 'Library';
 
-class PlaceRow extends StatelessWidget {
-  const PlaceRow({super.key, required this.id, required this.onTap});
+/// The widest a block may get before another column fits.
+const double kPlaceTileMaxExtent = 220.0;
+
+/// One destination: its colour washed across a dark block, an icon chip at the
+/// top, the name and a short line at the bottom, and the icon again, large and
+/// faint, in the corner. The whole block is the morph tag, so the page it
+/// opens grows out of it.
+class PlaceTile extends StatelessWidget {
+  const PlaceTile({
+    super.key,
+    required this.id,
+    required this.onTap,
+    this.fancy = false,
+  });
 
   final PlaceId id;
   final VoidCallback onTap;
 
+  /// Translucent over the app's cover backdrop, as the shell's fancy mode.
+  final bool fancy;
+
   @override
   Widget build(BuildContext context) {
-    const radius = BorderRadius.all(Radius.circular(Ember.radiusTile));
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Ember.gutter - 6),
-      child: Material(
-        color: Colors.transparent,
+    const radius = BorderRadius.all(Radius.circular(Ember.radiusTile + 4));
+    final tint = id.tint;
+    final base = fancy ? Ember.surface.withValues(alpha: 0.55) : Ember.surface;
+    return placeMorphTag(
+      id.morphTag,
+      Material(
+        color: base,
         borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          borderRadius: radius,
           onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-            child: Row(
+          splashColor: tint.withValues(alpha: 0.18),
+          highlightColor: tint.withValues(alpha: 0.08),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  tint.withValues(alpha: 0.26),
+                  tint.withValues(alpha: 0.05),
+                ],
+              ),
+            ),
+            child: Stack(
               children: [
-                Expanded(
-                  // Tag only the icon and title, so a flight starts from them
-                  // and not from a stretched whole-row stand-in.
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: placeMorphTag(
-                      id.morphTag,
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.circular(
-                                Ember.radiusTile,
-                              ),
-                            ),
-                            child: Icon(
-                              id.icon,
-                              size: 26,
-                              color: onSurface.withValues(alpha: 0.45),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Flexible(
-                            child: Text(
-                              id.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.2,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                Positioned(
+                  right: -14,
+                  bottom: -16,
+                  child: Icon(
+                    id.icon,
+                    size: 96,
+                    color: tint.withValues(alpha: 0.12),
                   ),
                 ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 20,
-                  color: onSurface.withValues(alpha: 0.3),
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: tint.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(
+                            Ember.radiusControl,
+                          ),
+                        ),
+                        child: Icon(id.icon, size: 21, color: tint),
+                      ),
+                      const Spacer(),
+                      Text(
+                        id.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppFonts.displayStyle(
+                          fontSize: 17,
+                          color: Ember.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        id.blurb,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Ember.textPrimary.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

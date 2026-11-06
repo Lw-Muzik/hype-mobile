@@ -6,7 +6,6 @@ import '/audio/eq/eq_labels.dart';
 import '/extensions/build_context_extension.dart';
 import '/widgets/tone_knob.dart';
 import 'audio_fx.dart';
-import 'volume_controls.dart';
 import '../themes/ember.dart';
 
 /// The app's one accent, not a fifth colour invented for this screen.
@@ -28,97 +27,73 @@ class ToneView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AppController>(
       builder: (context, controller, _) {
-        return LayoutBuilder(
-          builder: (context, page) {
-            // The knobs keep the room they had; the volume card sits below and
-            // the page scrolls when both do not fit.
-            final knobCardHeight = (page.maxHeight * 0.6).clamp(260.0, 460.0);
-            return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHeaderRow(context, controller),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: knobCardHeight,
-                    child: FancyCard(
-                      isFancy: controller.isFancy,
-                      child: Center(
-                        child: AnimatedOpacity(
-                          opacity: controller.toneEnabled ? 1.0 : 0.4,
-                          duration: const Duration(milliseconds: 250),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final knobSize = context.isMobile
-                                  ? (constraints.maxWidth / 2 - 8).clamp(
-                                      0.0,
-                                      220.0,
-                                    )
-                                  : 350.0;
-                              return Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  ToneKnob(
-                                    label: "BASS",
-                                    value: controller.bassGain,
-                                    max: 22.5,
-                                    valueText: toneValueLabel(
-                                      controller.bassGain,
-                                      bass: true,
-                                      mode: controller.eqSettings.toneValues,
-                                    ),
-                                    activeColor: _kAccent,
-                                    size: knobSize,
-                                    onChanged: controller.toneEnabled
-                                        ? (v) => controller.bassGain = v
-                                        : (_) {},
-                                  ),
-                                  ToneKnob(
-                                    label: "TREBLE",
-                                    value: controller.trebleGain,
-                                    valueText: toneValueLabel(
-                                      controller.trebleGain,
-                                      bass: false,
-                                      mode: controller.eqSettings.toneValues,
-                                    ),
-                                    activeColor: _kCut,
-                                    size: knobSize,
-                                    onChanged: controller.toneEnabled
-                                        ? (v) => controller.trebleGain = v
-                                        : (_) {},
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
+        // The knobs take the whole page: nothing below them, so the page never
+        // scrolls and a drag on a knob is never taken for a scroll. Balance,
+        // mono and tempo live on the Space page.
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeaderRow(context, controller),
+              const SizedBox(height: 8),
+              Expanded(
+                child: FancyCard(
+                  isFancy: controller.isFancy,
+                  child: Center(
+                    child: AnimatedOpacity(
+                      opacity: controller.toneEnabled ? 1.0 : 0.4,
+                      duration: const Duration(milliseconds: 250),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final knobSize = context.isMobile
+                              ? (constraints.maxWidth / 2 - 8).clamp(0.0, 220.0)
+                              : 350.0;
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              ToneKnob(
+                                label: "BASS",
+                                value: controller.bassGain,
+                                max: 22.5,
+                                valueText: toneValueLabel(
+                                  controller.bassGain,
+                                  bass: true,
+                                  mode: controller.eqSettings.toneValues,
+                                ),
+                                activeColor: _kAccent,
+                                size: knobSize,
+                                onChanged: controller.toneEnabled
+                                    ? (v) => controller.bassGain = v
+                                    : (_) {},
+                              ),
+                              ToneKnob(
+                                label: "TREBLE",
+                                value: controller.trebleGain,
+                                valueText: toneValueLabel(
+                                  controller.trebleGain,
+                                  bass: false,
+                                  mode: controller.eqSettings.toneValues,
+                                ),
+                                activeColor: _kCut,
+                                size: knobSize,
+                                onChanged: controller.toneEnabled
+                                    ? (v) => controller.trebleGain = v
+                                    : (_) {},
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  _buildInfoRow(controller),
-                  const SizedBox(height: 12),
-                  const SettingsHeader(title: "VOLUME"),
-                  FancyCard(
-                    isFancy: controller.isFancy,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: VolumeControls(
-                        settings: controller.dspCore,
-                        onChanged: (v) => controller.dspCore = v,
-                        stereoExpand: controller.stereoExpand,
-                        onStereoExpand: (v) => controller.stereoExpand = v,
-                        disabledReason: controller.systemWideDisabledReason,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                ],
+                ),
               ),
-            );
-          },
+              const SizedBox(height: 8),
+              _buildInfoRow(controller),
+              const SizedBox(height: 8),
+            ],
+          ),
         );
       },
     );

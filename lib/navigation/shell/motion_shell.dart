@@ -20,7 +20,7 @@ import '../../models/track_extras.dart';
 import '../../onboarding/coach_marks.dart';
 import '../../onboarding/home_guide.dart';
 import '../../pages/equalizer.dart';
-import '../../pages/home/widgets/ember_mini_player.dart';
+import '../../widgets/bottom_player.dart';
 import '../../pages/menu_screen.dart';
 import '../../pages/search_page.dart';
 import '../../player/player_ui.dart';
@@ -538,7 +538,9 @@ class _MotionShellState extends State<MotionShell>
       builder: (context, hasMini, _) {
         final mq = MediaQuery.of(context);
         final inset = mq.padding.bottom;
-        final pad = inset + (hasMini ? EmberMiniPlayer.height : 0);
+        final pad =
+            inset +
+            (hasMini ? BottomPlayer.barHeight + BottomPlayer.barGap : 0);
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -666,20 +668,16 @@ class _MotionShellState extends State<MotionShell>
   Widget _miniBar() {
     return KeyedSubtree(
       key: _miniKey,
+      // The same floating bar as Settings: the blurred cover under rounded
+      // corners, its own inset below.
       child: RepaintBoundary(
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Ember.surface,
-            border: Border(top: BorderSide(color: Ember.outline, width: 0.5)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Consumer<AppController>(
-              builder: (context, controller, _) =>
-                  widget.miniPlayerBuilder?.call(context, controller) ??
-                  EmberMiniPlayer(controller: controller),
-            ),
-          ),
+        child: Consumer<AppController>(
+          builder: (context, controller, _) =>
+              widget.miniPlayerBuilder?.call(context, controller) ??
+              BottomPlayer(
+                controller: controller,
+                onTap: () => AppNav.toPlayer(context, recordOrigin: false),
+              ),
         ),
       ),
     );

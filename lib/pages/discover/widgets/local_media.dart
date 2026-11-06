@@ -11,6 +11,8 @@ import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
 
 import '../../../controllers/app_controller.dart';
+import '../../../services/connect/connect_protocol.dart' show EnqueueMode;
+import '../../../services/connect/remote/connect_play_router.dart';
 import '../../../services/artwork_service.dart';
 import '../../../widgets/song_options_sheet.dart';
 import 'media_widgets.dart';
@@ -215,11 +217,26 @@ void showLocalSongOptions(BuildContext context, SongModel song) {
 }
 
 /// Queues [songs] right after the playing track. With nothing playing there is
-/// no "after", so they simply start.
+/// no "after", so they simply start. While another device is the player (Hype
+/// Connect) they are queued there.
+///
+/// Everything taken from [context] is read before the first wait, so it may be
+/// a sheet's context that closes straight after calling this.
 Future<void> playLocalNext(BuildContext context, List<SongModel> songs) async {
   if (songs.isEmpty) return;
   final controller = context.read<AppController>();
   final messenger = ScaffoldMessenger.maybeOf(context);
+  final routed = ConnectPlayRouter.enqueueSongs(songs, EnqueueMode.next);
+  if (routed != null) {
+    await routed;
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('Playing next'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
   if (!controller.hasNowPlaying) {
     await controller.playSongFromList(songs, 0);
     return;

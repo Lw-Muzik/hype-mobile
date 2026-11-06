@@ -12,6 +12,7 @@ import '/services/track_identify.dart';
 import '/pages/album_songs.dart';
 import '/pages/artist_songs.dart';
 import 'playlist_widget.dart';
+import '/pages/discover/widgets/local_media.dart' show playLocalNext;
 
 /// Bottom sheet with song actions: Identify track, Add to playlist, etc.
 class SongOptionsSheet extends StatefulWidget {
@@ -196,6 +197,18 @@ class _SongOptionsSheetState extends State<SongOptionsSheet> {
             ),
           ),
           const Divider(),
+
+          // Play next: right after the song playing now. Started before the
+          // sheet closes; it reads what it needs from this context at once.
+          ListTile(
+            leading: const Icon(Icons.queue_play_next_rounded),
+            title: const Text("Play next"),
+            subtitle: const Text("Right after the song playing now"),
+            onTap: () {
+              playLocalNext(context, [widget.song]);
+              Navigator.pop(context);
+            },
+          ),
 
           // Identify track
           if (_applying) ...[

@@ -41,7 +41,7 @@ void main() {
 
     scenes.toLibrary();
     await advance(tester, 600);
-    expect(find.text('Places'), findsOneWidget);
+    expect(find.text('Library'), findsOneWidget);
     expect(scenes.library.canPop, isFalse);
 
     // An origin the factory cannot build lands on Places, not a blank page.
@@ -49,6 +49,6 @@ void main() {
       LibraryPageKey('album', {'id': 99999}),
     ]);
     await tester.pump();
-    expect(find.text('Places'), findsOneWidget);
+    expect(find.text('Library'), findsOneWidget);
   });
 }

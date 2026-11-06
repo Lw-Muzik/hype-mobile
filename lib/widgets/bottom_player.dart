@@ -17,7 +17,15 @@ import '../player/player_ui.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AppController controller;
-  const BottomPlayer({super.key, required this.controller});
+
+  /// Replaces the default tap: the shell's own bar opens the player it owns.
+  final VoidCallback? onTap;
+
+  const BottomPlayer({super.key, required this.controller, this.onTap});
+
+  /// The bar's height, and the gap under it above the system inset.
+  static const double barHeight = 64;
+  static const double barGap = 8;
 
   @override
   State<BottomPlayer> createState() => _BottomPlayerState();
@@ -27,6 +35,12 @@ class _BottomPlayerState extends State<BottomPlayer>
     with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
+    // Its own Material: the shell shows this bar over its layers, where no
+    // Scaffold sits above it, and Text without one draws the debug underline.
+    return Material(type: MaterialType.transparency, child: _bar(context));
+  }
+
+  Widget _bar(BuildContext context) {
     final connect = HypeConnect.instanceOrNull;
     if (connect != null) {
       return RemoteBuilder(
@@ -54,18 +68,35 @@ class _BottomPlayerState extends State<BottomPlayer>
   Widget _local(BuildContext context) {
     if (!widget.controller.hasNowPlaying) return const SizedBox.shrink();
     final song = widget.controller.songs[widget.controller.songId];
-    final closed = ArtworkWidget(
-      useSaved: true,
-      path: song.data,
-      songId: song.id,
+    // The cover, blurred, under the bar's row. The image itself is filtered
+    // (edges clamped) rather than through a backdrop filter: a backdrop filter
+    // reads back everything drawn under the bar on every frame, which the
+    // library's moving pages pay for.
+    final closed = SizedBox(
       width: MediaQuery.of(context).size.width - 24,
-      height: 64,
-      borderRadius: BorderRadius.circular(16),
+      height: BottomPlayer.barHeight,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-          child: bottomPlayer(widget.controller, context),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ImageFiltered(
+              imageFilter: ImageFilter.blur(
+                sigmaX: 40,
+                sigmaY: 40,
+                tileMode: TileMode.clamp,
+              ),
+              child: ArtworkWidget(
+                useSaved: true,
+                path: song.data,
+                songId: song.id,
+                width: MediaQuery.of(context).size.width - 24,
+                height: BottomPlayer.barHeight,
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            bottomPlayer(widget.controller, context),
+          ],
         ),
       ),
     );
@@ -74,9 +105,15 @@ class _BottomPlayerState extends State<BottomPlayer>
       padding: EdgeInsets.only(
         left: 12,
         right: 12,
-        bottom: MediaQuery.of(context).padding.bottom + 8,
+        bottom: MediaQuery.of(context).padding.bottom + BottomPlayer.barGap,
       ),
-      child: AppNav.host != null
+      child: widget.onTap != null
+          ? GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onTap,
+              child: closed,
+            )
+          : AppNav.host != null
           // Settings sits above the shell: close what is above it, then show
           // the player the shell owns.
           ? GestureDetector(

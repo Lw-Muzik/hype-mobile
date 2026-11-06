@@ -43,7 +43,10 @@ import '../widgets/artwork_widget.dart';
 import '../widgets/song_tile.dart';
 import 'album_songs.dart';
 import 'artist_songs.dart';
+import 'discover/widgets/local_media.dart'
+    show playLocalNext, showLocalSongOptions;
 import 'discover/widgets/yt_widgets.dart';
+import 'discover/yt_open.dart' show showTrackActions;
 import 'discover/yt_search_page.dart';
 import 'folder_songs.dart';
 import 'playlist_songs.dart';
@@ -487,6 +490,7 @@ class _SearchPageState extends State<SearchPage> {
             showTrackNumber: false,
             showOptionsIcon: false,
             onTap: () => _startLibraryStation(controller, song),
+            onLongPress: () => showLocalSongOptions(context, song),
           );
         }),
         if (songs.length > 5)
@@ -526,6 +530,7 @@ class _SearchPageState extends State<SearchPage> {
             (track) => YtTrackRow(
               track: track,
               onTap: () => _startYouTubeStation(track),
+              onLongPress: () => showTrackActions(context, track),
             ),
           ),
         if (!_search.ytLoading && _search.ytTracks.length > tracks.length)
@@ -857,6 +862,7 @@ class _SearchPageState extends State<SearchPage> {
             // These rows used to have no onTap at all — cloud results were
             // decorative.
             onTap: () => _startCloudStation(controller, file),
+            onLongPress: () => _showCloudActions(controller, file),
           );
         }),
         const SizedBox(height: 16),
@@ -979,6 +985,34 @@ class _SearchPageState extends State<SearchPage> {
     );
     AppNav.toPlayer(context);
     await started;
+  }
+
+  /// A cloud result's long press: "Play next" (a link is minted for it now;
+  /// the queue plays it after the song playing).
+  void _showCloudActions(AppController controller, CloudFile file) {
+    showModalBottomSheet<void>(
+      useRootNavigator: true,
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListTile(
+          leading: const Icon(Icons.queue_play_next_rounded),
+          title: const Text('Play next'),
+          subtitle: const Text('Right after the song playing now'),
+          onTap: () async {
+            Navigator.pop(sheetContext);
+            final url = await _cloudStreamUrl(controller, file);
+            if (!mounted) return;
+            if (url == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("That file couldn't be opened.")),
+              );
+              return;
+            }
+            await playLocalNext(context, [file.toSongModel(url)]);
+          },
+        ),
+      ),
+    );
   }
 
   Future<String?> _cloudStreamUrl(

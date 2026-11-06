@@ -25,8 +25,9 @@ Future<GlobalKey<LibraryNavigatorState>> _pump(WidgetTester tester) async {
             body: Align(
               alignment: Alignment.topLeft,
               child: SizedBox(
-                height: kPlaceRowExtent,
-                child: PlaceRow(id: PlaceId.albums, onTap: () {}),
+                width: 180,
+                height: 138,
+                child: PlaceTile(id: PlaceId.albums, onTap: () {}),
               ),
             ),
           ),
@@ -51,7 +52,7 @@ Future<void> _open(GlobalKey<LibraryNavigatorState> nav) =>
     );
 
 void main() {
-  testWidgets('opening a place flies the row into the title', (tester) async {
+  testWidgets('opening a place flies the block into the title', (tester) async {
     final nav = await _pump(tester);
     expect(_flights(), findsNothing);
     _open(nav);
@@ -61,7 +62,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('backing out of a place flies the title into the row', (
+  testWidgets('backing out of a place flies the title into the block', (
     tester,
   ) async {
     final nav = await _pump(tester);
@@ -75,15 +76,15 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('the row tag hugs the icon and title, not the whole row', (
+  testWidgets('the whole block is the tag, so the page grows out of it', (
     tester,
   ) async {
     await _pump(tester);
     final tag = find.descendant(
-      of: find.byType(PlaceRow),
+      of: find.byType(PlaceTile),
       matching: find.byType(MorphTag),
+      matchRoot: true,
     );
-    final rowWidth = tester.getSize(find.byType(PlaceRow)).width;
-    expect(tester.getSize(tag).width, lessThan(rowWidth * 0.6));
+    expect(tester.getSize(tag.first), tester.getSize(find.byType(PlaceTile)));
   });
 }

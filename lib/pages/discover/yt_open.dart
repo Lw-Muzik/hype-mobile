@@ -77,7 +77,8 @@ void openExploreItem(
   }
 }
 
-/// The actions on a track: radio, watch it and, in the direct build, download it.
+/// The actions on a track: play it next, radio, watch it and, in the direct
+/// build, download it.
 ///
 /// Shown from the overflow on a row rather than on a long press, because a long
 /// press inside a scrolling list is a gesture people trigger by accident.
@@ -104,6 +105,15 @@ Future<void> showTrackActions(BuildContext context, YtTrack track) async {
                 fontWeight: FontWeight.w700,
               ),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.queue_play_next_rounded),
+            title: const Text('Play next'),
+            subtitle: const Text('Right after the song playing now'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              YtPlayback.playNext(context, track);
+            },
           ),
           ListTile(
             leading: const Icon(Icons.radio_rounded),

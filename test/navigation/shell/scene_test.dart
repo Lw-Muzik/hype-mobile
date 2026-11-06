@@ -37,7 +37,7 @@ void main() {
     final app = FakeApp()..playing = false;
     await pumpShell(tester, app: app, library: FakeLibrary());
     expect(find.byKey(kPlayerKey), findsNothing);
-    expect(find.text('Places'), findsOneWidget);
+    expect(find.text('Library'), findsOneWidget);
   });
 
   testWidgets('toLibrary: the player zooms out and fades, the library lands', (

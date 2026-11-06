@@ -29,6 +29,7 @@ import 'package:provider/provider.dart';
 
 import '../radio/radio_queue.dart';
 import '../radio/youtube_station.dart';
+import '../connect/connect_protocol.dart' show EnqueueMode;
 import '../connect/remote/connect_play_router.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/track_extras.dart';
@@ -85,6 +86,44 @@ class YtPlayback {
         if (context.mounted) AppNav.toPlayer(context);
       },
     );
+  }
+
+  /// "Play next": [track] goes right after the song playing now, so it is the
+  /// next thing heard and the rest of the queue follows it unchanged. With
+  /// nothing playing there is no "after", so it simply starts (the player is
+  /// not opened: the user asked for a queue change, not a screen change).
+  /// While another device is the player it is queued there.
+  ///
+  /// Everything taken from [context] is read before the first wait, so it may
+  /// be a sheet's context that closes straight after calling this.
+  static Future<void> playNext(BuildContext context, YtTrack track) async {
+    final routed = ConnectPlayRouter.enqueueYt([track], EnqueueMode.next);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    void say(String message) => messenger?.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    if (routed != null) {
+      await routed;
+      say('Playing next');
+      return;
+    }
+    final controller = context.read<AppController>();
+    if (!track.isAvailable) {
+      say("That song can't be played.");
+      return;
+    }
+    if (!controller.hasNowPlaying) {
+      return playTracks(controller, [track], 0, complain: say);
+    }
+    final target = await _resolveForPlay(track, say);
+    if (target == null) return;
+    await cacheArtwork(track);
+    await controller.insertNext([songModelOf(track, target)]);
+    say('Playing next');
   }
 
   /// [play] without a screen to speak to.

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'audio_fx.dart';
+import 'volume_controls.dart';
 
 class SpaceView extends StatefulWidget {
   const SpaceView({super.key});
@@ -285,6 +286,26 @@ class _SpaceViewState extends State<SpaceView> {
                 ),
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // =============== VOLUME ===============
+        // Balance, mono and tempo. They sat under the tone knobs, which made
+        // that page scroll on a phone and a knob drag read as a scroll.
+        const SettingsHeader(title: "VOLUME"),
+        const SizedBox(height: 8),
+        FancyCard(
+          isFancy: controller.isFancy,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: VolumeControls(
+              settings: controller.dspCore,
+              onChanged: (v) => controller.dspCore = v,
+              stereoExpand: controller.stereoExpand,
+              onStereoExpand: (v) => controller.stereoExpand = v,
+              disabledReason: controller.systemWideDisabledReason,
+            ),
           ),
         ),
         const SizedBox(height: 16),

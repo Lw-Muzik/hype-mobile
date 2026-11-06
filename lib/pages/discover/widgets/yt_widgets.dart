@@ -192,6 +192,7 @@ class YtTrackRow extends StatelessWidget {
   final YtTrack track;
   final VoidCallback onTap;
   final VoidCallback? onMore;
+  final VoidCallback? onLongPress;
   final int? position;
 
   /// Fixed so the lists that hold these can use `itemExtent` — the difference
@@ -203,6 +204,7 @@ class YtTrackRow extends StatelessWidget {
     required this.track,
     required this.onTap,
     this.onMore,
+    this.onLongPress,
     this.position,
   });
 
@@ -221,6 +223,7 @@ class YtTrackRow extends StatelessWidget {
       position: position,
       onTap: onTap,
       onMore: onMore,
+      onLongPress: onLongPress,
     );
   }
 

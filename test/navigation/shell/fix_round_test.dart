@@ -12,6 +12,7 @@ import 'package:eq_app/services/connect/remote/connect_remote_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_zoom_drawer/flutter_zoom_drawer.dart';
+import 'package:eq_app/widgets/bottom_player.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'shell_harness.dart';
@@ -451,8 +452,9 @@ void main() {
           onBuild: (c) => inset = MediaQuery.of(c).viewInsets.bottom,
         ),
       );
-      // 300 of keyboard, 60 of which the mini player's padding already covers.
-      expect(inset, 240);
+      // 300 of keyboard, of which the mini player's room (the bar and the gap
+      // under it) already covers some.
+      expect(inset, 300 - (BottomPlayer.barHeight + BottomPlayer.barGap));
     });
 
     testWidgets(
