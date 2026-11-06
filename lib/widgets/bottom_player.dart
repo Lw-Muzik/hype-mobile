@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:eq_app/Routes/routes.dart';
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:eq_app/widgets/artwork_widget.dart';
 import 'package:eq_app/widgets/globals.dart';
 import 'package:flutter/material.dart';
@@ -75,7 +76,15 @@ class _BottomPlayerState extends State<BottomPlayer>
         right: 12,
         bottom: MediaQuery.of(context).padding.bottom + 8,
       ),
-      child: PlayerPresence.isOpen
+      child: AppNav.host != null
+          // Settings sits above the shell: close what is above it, then show
+          // the player the shell owns.
+          ? GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => AppNav.toPlayerFromOverlay(context),
+              child: closed,
+            )
+          : PlayerPresence.isOpen
           // This page was opened from the player: going back to it beats
           // opening a second one on top.
           ? GestureDetector(

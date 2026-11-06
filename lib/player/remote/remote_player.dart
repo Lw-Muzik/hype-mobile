@@ -22,6 +22,7 @@ import 'package:eq_app/Themes/app_fonts.dart';
 import 'package:eq_app/services/connect/connect_protocol.dart';
 import 'package:eq_app/services/connect/hype_connect.dart';
 import 'package:eq_app/services/connect/remote/connect_remote_session.dart';
+import 'package:eq_app/navigation/shell/player_exit.dart';
 import 'package:eq_app/themes/ember.dart';
 import 'package:eq_app/widgets/common.dart';
 
@@ -149,7 +150,7 @@ class _Header extends StatelessWidget {
           children: [
             IconButton(
               tooltip: 'Close',
-              onPressed: () => Navigator.of(context).maybePop(),
+              onPressed: () => leavePlayer(context),
               icon: const Icon(
                 Icons.keyboard_arrow_down_rounded,
                 color: Ember.textPrimary,
@@ -343,7 +344,7 @@ class _HeroArt extends StatelessWidget {
       },
       onVerticalDragEnd: (d) {
         if (d.velocity.pixelsPerSecond.dy > 700) {
-          Navigator.of(context).maybePop();
+          leavePlayer(context);
         }
       },
       child: AnimatedScale(

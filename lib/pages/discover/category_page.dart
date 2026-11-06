@@ -14,6 +14,10 @@ import '../../services/ytmusic/yt_repository.dart';
 import 'widgets/yt_widgets.dart';
 import 'yt_open.dart';
 
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
+import 'package:eq_app/navigation/yt_page_keys.dart';
+
 class YtCategoryPage extends StatefulWidget {
   final ExploreCategory category;
 
@@ -40,8 +44,9 @@ class _YtCategoryPageState extends State<YtCategoryPage> {
       _error = null;
     });
     try {
-      final shelves =
-          await YtMusicRepository.instance.categoryPage(widget.category);
+      final shelves = await YtMusicRepository.instance.categoryPage(
+        widget.category,
+      );
       if (!mounted) return;
       setState(() {
         _shelves = shelves;
@@ -65,40 +70,39 @@ class _YtCategoryPageState extends State<YtCategoryPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.category.title),
-        titleTextStyle: Theme.of(context)
-            .textTheme
-            .titleMedium
+        title: MorphTag(
+          tag: headerTag(ytCategoryKey(widget.category)),
+          child: Text(widget.category.title),
+        ),
+        titleTextStyle: Theme.of(context).textTheme.titleMedium
             ?.copyWith(fontWeight: FontWeight.w700),
       ),
       body: switch ((_loading, _error, _shelves.isEmpty)) {
         (true, _, _) => const YtSkeleton(),
         (_, final String message, _) => YtMessage(
-            icon: Icons.error_outline_rounded,
-            title: "That didn't load",
-            body: message,
-            onRetry: _load,
-          ),
+          icon: Icons.error_outline_rounded,
+          title: "That didn't load",
+          body: message,
+          onRetry: _load,
+        ),
         (_, _, true) => YtMessage(
-            icon: Icons.inbox_rounded,
-            title: 'Nothing here yet',
-            body: 'YouTube has nothing listed under '
-                '"${widget.category.title}" right now.',
-            onRetry: _load,
-          ),
+          icon: Icons.inbox_rounded,
+          title: 'Nothing here yet',
+          body:
+              'YouTube has nothing listed under '
+              '"${widget.category.title}" right now.',
+          onRetry: _load,
+        ),
         _ => ListView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 90),
-            itemCount: _shelves.length,
-            itemBuilder: (context, index) => YtShelfRow(
-              shelf: _shelves[index],
-              onOpen: (item) => openExploreItem(
-                context,
-                item,
-                siblings: _shelves[index].items,
-              ),
-              onHold: (item) => showTrackActions(context, item.asTrack()),
-            ),
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 90),
+          itemCount: _shelves.length,
+          itemBuilder: (context, index) => YtShelfRow(
+            shelf: _shelves[index],
+            onOpen: (item) =>
+                openExploreItem(context, item, siblings: _shelves[index].items),
+            onHold: (item) => showTrackActions(context, item.asTrack()),
           ),
+        ),
       },
     );
   }

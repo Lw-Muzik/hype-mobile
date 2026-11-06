@@ -18,15 +18,17 @@
 /// stacks a second sheet over itself.
 library;
 
+import 'package:eq_app/navigation/yt_page_keys.dart';
 import 'dart:async';
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
 
 import '../../Helpers/Channel.dart';
-import '../../Routes/routes.dart';
 import '../../config/app_config.dart';
 import '../../controllers/app_controller.dart';
 import '../../data/library_repository.dart';
@@ -256,10 +258,10 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
   }
 
   /// Closes the sheet and opens [page] over the player — back returns there.
-  void _navigate(Widget page) {
+  void _navigate(Widget page, LibraryPageKey key) {
     final host = widget.host;
     Navigator.of(context).pop();
-    if (host.mounted) Routes.routeTo(page, host);
+    if (host.mounted) AppNav.openPage(host, page, key: key);
   }
 
   // ---------------------------------------------------------------------------
@@ -677,7 +679,11 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
             label: 'View',
             onPressed: () {
               if (host.mounted) {
-                Routes.scaleTo(MixPlaylistPage(playlist: playlist), host);
+                AppNav.openPage(
+                  host,
+                  MixPlaylistPage(playlist: playlist),
+                  key: LibraryPageKey('mix', {'id': playlist.id}),
+                );
               }
             },
           ),
@@ -825,6 +831,16 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
         ),
         highlightVideoId: _subject.videoId,
       ),
+      ytListKey(
+        ExploreItem(
+          id: albumId,
+          kind: ExploreKind.album,
+          title: info.album ?? '',
+          thumbnail: info.isSong ? info.thumbnail : null,
+          artist: info.artist,
+        ),
+        highlightVideoId: _subject.videoId,
+      ),
     );
   }
 
@@ -851,7 +867,10 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
         return;
       }
     }
-    _navigate(YtArtistPage(item: item));
+    _navigate(
+      YtArtistPage(item: item),
+      ytArtistKey(item),
+    );
   }
 
   /// An artist YouTube credited without linking: the search result named
@@ -892,6 +911,13 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
         coverSongId: widget.song.id,
         coverPath: widget.song.data,
       ),
+      LibraryPageKey('album', {
+        'albumId': widget.song.albumId,
+        'album': album,
+        'songs': songs.length,
+        'coverSongId': widget.song.id,
+        'coverPath': widget.song.data,
+      }),
     );
   }
 
@@ -911,6 +937,14 @@ class _SongActionsSheetState extends State<SongActionsSheet> {
         coverSongId: widget.song.id,
         coverPath: widget.song.data,
       ),
+      LibraryPageKey('artist', {
+        'artistId': widget.song.artistId,
+        'artist': artist,
+        'songs': songs.length,
+        'albums': {for (final song in songs) song.album}.length,
+        'coverSongId': widget.song.id,
+        'coverPath': widget.song.data,
+      }),
     );
   }
 }

@@ -14,6 +14,8 @@
 /// The page is complete and useful with the phone in aeroplane mode.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:eq_app/Themes/app_fonts.dart';
 import 'dart:math';
 
@@ -23,7 +25,6 @@ import 'package:provider/provider.dart';
 
 import '../../controllers/app_controller.dart';
 import '../../data/library_repository.dart';
-import '../../routes/routes.dart';
 import '../../models/cloud_file.dart';
 import '../../services/mixes/daily_mix_service.dart';
 import '../../services/lyrics/lrclib_resolver.dart'
@@ -38,6 +39,7 @@ import '../discover/widgets/yt_widgets.dart';
 import '../discover/yt_open.dart';
 import 'mix_playlist_page.dart';
 import 'widgets/shelf.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
 
 class HomeSurface extends StatefulWidget {
   const HomeSurface({super.key});
@@ -352,16 +354,19 @@ class _HomeSurfaceState extends State<HomeSurface> with WidgetsBindingObserver {
   /// starts on the first one that resolves and grows behind it.
   Future<void> _playMix(AppController controller, ResolvedMix mix) async {
     if (mix.tracks.isEmpty) return;
-    Routes.playerTo(context);
-    await MixPlayback.play(
+    await AppNav.toPlayerWhileStarting(
+      context,
       controller,
-      mix,
-      resolveCloud: (file) async {
-        if (file.provider == CloudProvider.googleDrive) {
-          return controller.googleDriveService.getStreamUrl(file.fileId);
-        }
-        return controller.dropboxService.getTemporaryLink(file.fileId);
-      },
+      () => MixPlayback.play(
+        controller,
+        mix,
+        resolveCloud: (file) async {
+          if (file.provider == CloudProvider.googleDrive) {
+            return controller.googleDriveService.getStreamUrl(file.fileId);
+          }
+          return controller.dropboxService.getTemporaryLink(file.fileId);
+        },
+      ),
     );
   }
 
@@ -372,11 +377,14 @@ class _HomeSurfaceState extends State<HomeSurface> with WidgetsBindingObserver {
     List<SongModel> list,
     SongModel song,
   ) async {
-    Routes.playerTo(context);
-    await controller.playStation(
+    // The queue first: installing one drops the previous queue's origin, and
+    // opening the player records the origin of this page for the new queue.
+    final started = controller.playStation(
       song,
       LibraryStation(repo: _repo, seed: song),
     );
+    AppNav.toPlayer(context);
+    await started;
   }
 
   /// Opens an **app-owned** playlist.
@@ -384,7 +392,12 @@ class _HomeSurfaceState extends State<HomeSurface> with WidgetsBindingObserver {
   /// Deliberately not `PlaylistSongs`, which reads MediaStore: these rows can
   /// hold a drive file and a YouTube track, and their ids mean nothing there.
   void _openPlaylist(PlaylistSummary playlist) {
-    Routes.scaleTo(MixPlaylistPage(playlist: playlist), context);
+    AppNav.openPage(
+      context,
+      MixPlaylistPage(playlist: playlist),
+      key: LibraryPageKey('mix', {'id': playlist.id}),
+      morphFrom: itemTag(LibraryPageKey('mix', {'id': playlist.id})),
+    );
   }
 
   /// Keeps a mix, exactly as it stands, as a playlist.

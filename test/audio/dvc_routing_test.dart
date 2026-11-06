@@ -20,6 +20,31 @@ void main() {
     test('DVC off is always unity', () {
       expect(masterVolumeFor(dvcEnabled: false, dvcGainDb: -12), 0);
     });
+
+    test('DVC off applies the fine-volume trim', () {
+      expect(
+        masterVolumeFor(dvcEnabled: false, dvcGainDb: -12, fineTrimDb: -3.5),
+        -3.5,
+      );
+    });
+
+    test('the trim is limited to the master range', () {
+      expect(
+        masterVolumeFor(dvcEnabled: false, dvcGainDb: 0, fineTrimDb: -80),
+        -30,
+      );
+      expect(
+        masterVolumeFor(dvcEnabled: false, dvcGainDb: 0, fineTrimDb: 4),
+        0,
+      );
+    });
+
+    test('DVC on ignores the trim', () {
+      expect(
+        masterVolumeFor(dvcEnabled: true, dvcGainDb: -12, fineTrimDb: -3.5),
+        -12,
+      );
+    });
   });
 }
 

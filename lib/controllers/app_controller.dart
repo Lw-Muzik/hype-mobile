@@ -1,6 +1,7 @@
 import '../visualizers/visualizer_styles.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:audio_session/audio_session.dart' show AudioSession;
 import 'package:eq_app/global/index.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import '/exports/exports.dart';
 
 import '../audio/advanced/advanced_settings.dart';
+import '../audio/advanced/fine_volume.dart';
 import '../audio/dsp_core.dart';
 import '../audio/dvc/dvc_saved_volumes.dart' show dvcOutputChanged;
 import '../audio/dvc/dvc_settings.dart';
@@ -73,6 +75,7 @@ import '../models/track_extras.dart';
 import '../services/radio/radio_queue.dart';
 import '../services/radio/station_source.dart';
 import '../services/playback_session.dart';
+import '../navigation/playback_origin.dart';
 import 'queue_order.dart';
 import 'visualizer_tap.dart';
 import '../helpers/audio_visualizer.dart';
@@ -190,6 +193,7 @@ class AppController with ChangeNotifier implements StationSink {
   final volumePanel = VolumePanelController();
   PauseOnVolume? _pauseOnVolume;
   StreamSubscription<double>? _volumePanelSub;
+  StreamSubscription<double>? _fineFeedSub;
   int? _audioSessionId;
 
   /// Whether an app answers the system audio effects panel (MusicFX).
@@ -218,8 +222,110 @@ class AppController with ChangeNotifier implements StationSink {
         // The system keys keep their meaning while the equalizer applies to
         // all apps (the native side also checks DVC and calls).
         systemWide: systemWideActive,
+        fine: _fineModeSent = fineVolumeActive,
       ),
     );
+  }
+
+  // ---- Fine volume steps (Volume levels without DVC) ----
+
+  /// Whether Hype takes the volume keys to give exactly the chosen number of
+  /// levels: a level other than System default, DVC not running and the
+  /// equalizer not system-wide. Android's index does the coarse part and the
+  /// engine master gain trims in between.
+  bool get fineVolumeActive =>
+      Platform.isAndroid &&
+      _advanced.volumeLevels.levels != null &&
+      !dvcRunning &&
+      !systemWideActive;
+
+  bool _fineModeSent = false;
+  int? _fineLevel; // null = not synced with the system volume yet
+  int? _fineIndex; // the music-stream index Hype believes is set
+  int _fineMax = 0;
+  double _fineTrimDb = 0;
+  final List<int> _fineEchoes = []; // indices Hype set, echo still expected
+  final Map<int, double> _fineDbCache = {};
+  Future<void> _fineQueue = Future.value();
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    _refreshFineMode();
+  }
+
+  /// Entering or leaving fine mode (levels, DVC and system-wide all feed it):
+  /// the native side learns it and any trim is dropped.
+  void _refreshFineMode() {
+    if (!Platform.isAndroid || fineVolumeActive == _fineModeSent) return;
+    _resetFine();
+    _pushVolumeKeys();
+  }
+
+  /// A volume change Hype did not make, or leaving fine mode: forget the
+  /// synced level and let the master return to unity.
+  void _resetFine() {
+    final hadTrim = _fineTrimDb != 0;
+    _fineLevel = null;
+    _fineIndex = null;
+    _fineTrimDb = 0;
+    _fineEchoes.clear();
+    if (hadTrim) _pushMasterVolume();
+  }
+
+  /// The system volume feed: an index Hype did not set is an outside change.
+  void _onSystemVolumeForFine(double fraction) {
+    if (_fineLevel == null || _fineMax <= 0) return;
+    final index = (fraction * _fineMax).round();
+    final echo = _fineEchoes.indexOf(index);
+    if (echo >= 0) {
+      _fineEchoes.removeRange(0, echo + 1);
+      return;
+    }
+    if (index == _fineIndex) return;
+    _resetFine();
+  }
+
+  void _enqueueFineStep(bool up) {
+    _fineQueue = _fineQueue.then((_) => _fineStep(up)).catchError(
+      (Object e) => debugPrint('Fine volume step failed: $e'),
+    );
+  }
+
+  Future<void> _fineStep(bool up) async {
+    final levels = _advanced.volumeLevels.levels;
+    if (levels == null || !fineVolumeActive) return;
+    if (_fineMax <= 0) _fineMax = await Channel.getSystemMaxVolume();
+    final max = _fineMax;
+    if (max <= 0) return;
+    if (_fineLevel == null) {
+      final index = await Channel.getSystemVolume();
+      _fineIndex = index;
+      _fineLevel = fineLevelFromIndex(index: index, maxIndex: max, levels: levels);
+    }
+    if (_fineDbCache.isEmpty) {
+      for (var i = 1; i <= max; i++) {
+        final db = await Channel.getMusicStreamDb(i);
+        if (db != null && !db.isNaN) _fineDbCache[i] = db;
+      }
+    }
+    if (!fineVolumeActive) return; // changed while awaiting
+    final step = fineVolumeStep(
+      level: _fineLevel!,
+      levels: levels,
+      up: up,
+      maxIndex: max,
+      dbAt: (i) => _fineDbCache[i] ?? 20 * math.log(i / max) / math.ln10,
+    );
+    _fineLevel = step.level;
+    if (step.systemIndex != _fineIndex) {
+      _fineIndex = step.systemIndex;
+      _fineEchoes.add(step.systemIndex);
+      await Channel.setMusicStreamIndex(step.systemIndex);
+    }
+    _fineTrimDb = step.trimDb;
+    _pushMasterVolume();
+    volumePanel.show(step.level / levels);
   }
 
   Future<bool> openMusicFx() => Channel.openMusicFx(_audioSessionId ?? 0);
@@ -258,6 +364,8 @@ class AppController with ChangeNotifier implements StationSink {
             }
           })
         : null;
+    _fineFeedSub?.cancel();
+    _fineFeedSub = Platform.isAndroid ? feed.listen(_onSystemVolumeForFine) : null;
     _pushVolumeKeys();
     unawaited(refreshMusicFxAvailable());
     _audioFocus?.configureForceAudio(
@@ -353,9 +461,6 @@ class AppController with ChangeNotifier implements StationSink {
   bool _dvcResumePending = false;
   List<Map<String, String>> _playingApps = [];
 
-  // Song list/grid zoom: continuous extent (80=tiny grid, 300=list mode)
-  double _songGridExtent = 300.0; // default list mode
-
   // Graphic EQ: layout/tone/Auto save settings and the preset list + live
   // curve. `_eq.live` is on `_eq.live.hz`, which is `bandCentres(_eqSettings)`.
   late EqualizerSettings _eqSettings;
@@ -450,17 +555,6 @@ class AppController with ChangeNotifier implements StationSink {
   // player by itself; this holds the mix, the model download and the
   // one-time speed test. Started at the end of the constructor.
   late final StemsController stemsController = StemsController.app(_prefs);
-
-  // Song grid extent getters/setters
-  double get songGridExtent => _songGridExtent;
-  set songGridExtent(double value) {
-    final clamped = value.clamp(80.0, 300.0);
-    if ((clamped - _songGridExtent).abs() > 0.5) {
-      _songGridExtent = clamped;
-      _prefs.setDouble("songGridExtent", clamped);
-      notifyListeners();
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Equalizer
@@ -648,6 +742,7 @@ class AppController with ChangeNotifier implements StationSink {
     _audioFocus?.dispose();
     _pauseOnVolume?.dispose();
     _volumePanelSub?.cancel();
+    _fineFeedSub?.cancel();
     volumePanel.dispose();
     _headset?.dispose();
     _outputService?.dispose();
@@ -1130,6 +1225,9 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _onOutputRoute(ActiveRoute route) {
+    // A new output has its own volume curve and its own volume.
+    _fineDbCache.clear();
+    _resetFine();
     unawaited(_prefs.setString(_kOutputLastRoute, route.key));
     final name = route.deviceName;
     if (name != null) {
@@ -1677,7 +1775,11 @@ class AppController with ChangeNotifier implements StationSink {
   void _pushMasterVolume() {
     if (!Platform.isAndroid) return; // iOS has no DVC; master stays at 0 dB
     Channel.dspSetMasterVolumeDb(
-      masterVolumeFor(dvcEnabled: dvcRunning, dvcGainDb: _dvcGain),
+      masterVolumeFor(
+        dvcEnabled: dvcRunning,
+        dvcGainDb: _dvcGain,
+        fineTrimDb: fineVolumeActive ? _fineTrimDb : 0,
+      ),
     );
   }
 
@@ -2044,7 +2146,13 @@ class AppController with ChangeNotifier implements StationSink {
     if (!Platform.isAndroid) return;
     _dvcVolumeSub?.cancel();
     _dvcVolumeSub = Channel.dvcVolumeButtonStream.listen((direction) {
-      if (!dvcRunning) return;
+      if (!dvcRunning) {
+        // Fine mode: the native side forwards the key instead of stepping.
+        if (fineVolumeActive && (direction == "up" || direction == "down")) {
+          _enqueueFineStep(direction == "up");
+        }
+        return;
+      }
       final step = _advanced.volumeLevels.dvcStepDb;
       if (direction == "up") {
         dvcGain = (_dvcGain + step).clamp(-30.0, 0.0);
@@ -2113,6 +2221,11 @@ class AppController with ChangeNotifier implements StationSink {
         // The outgoing player of a crossfade runs on into its own next entry
         // while it fades; that is not the app changing track.
         if (handler.crossfadeInFlight) return;
+        // A queue being installed reports its first entry before the player
+        // reaches the start index; `songId` already names the track picked.
+        // Taken as a change, that one moment recorded a play of the list's
+        // first song, showed it in the notification and saved it.
+        if (_loadingQueue) return;
         // A queue shares one player, so its Replay Gain follows the index —
         // whoever moved it.
         if (index != null &&
@@ -2540,6 +2653,13 @@ class AppController with ChangeNotifier implements StationSink {
     // the last session is no longer what is about to play.
     _pendingResume = null;
     _queueGeneration++;
+    // One origin per queue: the list action that started this one records its
+    // own once the queue is running, so none carries over from the last.
+    _playbackOrigin = originForInstall(
+      _playbackOrigin,
+      oldIds: _songs.map((s) => s.id),
+      newIds: songList.map((s) => s.id),
+    );
     songs = songList;
     // A new list arriving while shuffle is already on has to *be* shuffled. The
     // `songs` setter copies the incoming order into both lists verbatim, so
@@ -2919,7 +3039,6 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   void _loadSettings() {
-    final freshInstall = !isExistingInstall(_prefs);
     // First: it inspects which prefs earlier versions wrote, and reads the
     // legacy curve for the boost-seeded headroom.
     _dspCore = DspCoreSettings.load(_prefs, isIos: Platform.isIOS);
@@ -2975,30 +3094,12 @@ class AppController with ChangeNotifier implements StationSink {
     _fades = FadeSettings.load(_prefs);
     _handler.fades = _fades;
     _replayGain = ReplayGainSettings.load(_prefs);
-    // New installs start with DVC on (spec section 6); pinned so it survives
-    // the install reading as existing from the second launch.
-    _dvcEnabled = _prefs.getBool("dvcEnabled") ?? freshInstall;
-    if (freshInstall && !_prefs.containsKey("dvcEnabled")) {
-      unawaited(_prefs.setBool("dvcEnabled", _dvcEnabled));
-    }
+    // DVC starts off: turning it on raises the system volume to maximum, which
+    // made music loud on a fresh install. Whoever turned it on keeps it.
+    _dvcEnabled = _prefs.getBool("dvcEnabled") ?? false;
     _dvcSettings = DvcSettings.load(_prefs);
     _dvcGain = _prefs.getDouble("dvcGain") ?? -30.0;
     _globalEqEnabled = _prefs.getBool("globalEqEnabled") ?? false;
-    // Song grid extent (migrate from old int scale if needed)
-    if (_prefs.containsKey("songGridExtent")) {
-      _songGridExtent = (_prefs.getDouble("songGridExtent") ?? 300.0).clamp(
-        80.0,
-        300.0,
-      );
-    } else {
-      // Migrate from old songGridScale: 0=list→300, 1=2-col→180, 2=3-col→120
-      final oldScale = _prefs.getInt("songGridScale") ?? 0;
-      _songGridExtent = oldScale == 0
-          ? 300.0
-          : oldScale == 1
-          ? 180.0
-          : 120.0;
-    }
     // Preamp & MBC
     _mbcEnabled = _prefs.getBool("mbcEnabled") ?? false;
     // Speaker correction EQ
@@ -3848,6 +3949,16 @@ class AppController with ChangeNotifier implements StationSink {
     });
   }
 
+  /// The library pages the current queue was started from. Saved with the
+  /// session so the player can lead back to them after a restart.
+  PlaybackOrigin? _playbackOrigin;
+  PlaybackOrigin? get playbackOrigin => _playbackOrigin;
+  set playbackOrigin(PlaybackOrigin? value) {
+    if (value == _playbackOrigin) return;
+    _playbackOrigin = value;
+    _saveSession();
+  }
+
   /// Records the current queue and position for the next launch.
   ///
   /// Debounced inside the store, so calling this on every track change and once
@@ -3867,6 +3978,7 @@ class AppController with ChangeNotifier implements StationSink {
         position: _pendingResume ?? handler.player.position,
         loopMode: handler.loopMode.index,
         videoMode: VideoRegistry.instance.videoMode,
+        origin: _playbackOrigin,
       ),
     );
   }
@@ -3913,6 +4025,7 @@ class AppController with ChangeNotifier implements StationSink {
     // Set before anything re-resolves, so a queue that was being watched keeps
     // resolving as video from the first track the resume touches.
     VideoRegistry.instance.videoMode = session.videoMode;
+    _playbackOrigin = session.origin;
 
     await handler.setLoopMode(
       LoopMode.values[session.loopMode.clamp(0, LoopMode.values.length - 1)],

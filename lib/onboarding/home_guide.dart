@@ -1,12 +1,38 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:eq_app/Themes/app_fonts.dart';
+import 'package:eq_app/config/app_config.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// The first guide tip's text. Store builds call the place "Discover" (see
+/// [AppConfig.directBuild]); direct builds name the service.
+String guideDiscoverMessage({required bool directBuild}) => directBuild
+    ? 'Open YouTube Music from Places for trending charts, popular songs, and artists to explore and stream.'
+    : 'Open Discover from Places for trending charts, popular songs, and artists to explore and stream.';
+
+/// The second tip's text: it names Folders only where that place exists.
+String guidePlacesMessage({
+  required bool directBuild,
+  required bool isAndroid,
+}) {
+  final youtube = directBuild ? 'YouTube Music' : 'Discover';
+  final folders = isAndroid ? 'Folders, ' : '';
+  return 'Places lists For You, Songs, Albums, Artists, Genres, $folders'
+      'Playlists, $youtube, and Cloud. Swipe right or press back to go up a level.';
+}
 
 /// A one-time overlay guide shown on the home screen after onboarding.
 /// Highlights key areas with a semi-transparent backdrop and floating tips.
 class HomeGuide extends StatefulWidget {
   final Widget child;
   final VoidCallback? onComplete;
+
+  /// True while the guide's scrim is up. The mini player (which sits above the
+  /// pages) hides then, so it never covers the scrim's buttons.
+  static final ValueNotifier<bool> visible = ValueNotifier<bool>(false);
+
   const HomeGuide({super.key, required this.child, this.onComplete});
 
   @override
@@ -20,25 +46,26 @@ class _HomeGuideState extends State<HomeGuide>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnim;
 
-  static const _tips = [
+  static List<_GuideTip> get _tips => [
     _GuideTip(
       title: 'Discover Music',
-      message:
-          'The Discover tab has trending charts, popular songs, and artists to explore and stream.',
+      message: guideDiscoverMessage(directBuild: AppConfig.directBuild),
       icon: Icons.explore_rounded,
       alignment: Alignment.center,
     ),
     _GuideTip(
       title: 'Browse Your Library',
-      message:
-          'Swipe between tabs for Artists, Albums, Genres, Songs, and Cloud storage.',
+      message: guidePlacesMessage(
+        directBuild: AppConfig.directBuild,
+        isAndroid: Platform.isAndroid,
+      ),
       icon: Icons.swipe_rounded,
       alignment: Alignment.center,
     ),
     _GuideTip(
       title: 'Now Playing',
       message:
-          'Tap any song to play. The mini player appears at the bottom — tap it to expand.',
+          'Tap any song to play. Music opens on the player; pull its artwork down, or tap the arrow, to see where the song came from. The mini player at the bottom brings it back.',
       icon: Icons.play_circle_rounded,
       alignment: Alignment.bottomCenter,
     ),
@@ -76,6 +103,7 @@ class _HomeGuideState extends State<HomeGuide>
       await Future.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
       setState(() => _show = true);
+      HomeGuide.visible.value = true;
       _fadeController.forward();
     } else {
       // Already shown — trigger coach marks immediately
@@ -98,12 +126,17 @@ class _HomeGuideState extends State<HomeGuide>
     await _fadeController.reverse();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('home_guide_shown', true);
+    HomeGuide.visible.value = false;
     if (mounted) setState(() => _show = false);
     widget.onComplete?.call();
   }
 
   @override
   void dispose() {
+    if (_show) {
+      // Not while the tree is being torn down.
+      scheduleMicrotask(() => HomeGuide.visible.value = false);
+    }
     _fadeController.dispose();
     super.dispose();
   }

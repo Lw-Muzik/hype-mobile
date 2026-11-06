@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '/pages/settings.dart';
+import '../../navigation/shell/player_exit.dart';
 import '../remote/connect_device_picker.dart';
 
 class Header extends StatelessWidget {
@@ -12,7 +13,7 @@ class Header extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => leavePlayer(context),
             icon: const Icon(
               Icons.keyboard_arrow_down_rounded,
               color: Colors.white,

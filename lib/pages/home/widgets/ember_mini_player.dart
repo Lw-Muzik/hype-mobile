@@ -10,11 +10,10 @@
 /// restored from disk, and going straight at the player starts nothing at all.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 
 import '../../../controllers/app_controller.dart';
-import '../../../player/now_playing_hero.dart';
-import '../../../routes/routes.dart';
 import '../../../themes/ember.dart';
 import '../../../widgets/artwork_widget.dart';
 import '../../../player/remote/connect_device_picker.dart';
@@ -51,26 +50,20 @@ class EmberMiniPlayer extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        // The player's own route, not the fading one: it slides up and hands
-        // its direction to the drag-to-dismiss gesture on the way back, and a
-        // cross-fade over a flying cover would wash the flight out.
-        onTap: () => Routes.playerTo(context),
+        onTap: () => AppNav.toPlayer(context, recordOrigin: false),
         child: SizedBox(
           height: height,
           child: Row(
             children: [
               const SizedBox(width: 12),
-              Hero(
-                tag: kNowPlayingHeroTag,
-                child: ClipRRect(
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: ArtworkWidget(
+                  songId: song.id,
+                  path: song.data,
+                  width: 42,
+                  height: 42,
                   borderRadius: BorderRadius.circular(8),
-                  child: ArtworkWidget(
-                    songId: song.id,
-                    path: song.data,
-                    width: 42,
-                    height: 42,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -79,12 +72,10 @@ class EmberMiniPlayer extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // The other end of the details' flight. Material
-                    // transparency for the same reason as the player's side: a
-                    // bare Text in flight has no DefaultTextStyle ancestor.
-                    Hero(
-                      tag: kNowPlayingTitleHeroTag,
-                      flightShuttleBuilder: fadeThroughShuttle,
+                    // Material transparency: a bare Text here has no
+                    // DefaultTextStyle ancestor.
+                    Padding(
+                      padding: EdgeInsets.zero,
                       child: Material(
                         type: MaterialType.transparency,
                         child: Text(
@@ -101,9 +92,8 @@ class EmberMiniPlayer extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Hero(
-                      tag: kNowPlayingArtistHeroTag,
-                      flightShuttleBuilder: fadeThroughShuttle,
+                    Padding(
+                      padding: EdgeInsets.zero,
                       child: Material(
                         type: MaterialType.transparency,
                         child: Text(

@@ -15,6 +15,7 @@
 /// correctly with the phone offline; it just cannot play those rows.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
@@ -22,11 +23,14 @@ import 'package:provider/provider.dart';
 import '../../controllers/app_controller.dart';
 import '../../data/library_repository.dart';
 import '../../models/cloud_file.dart';
-import '../../routes/routes.dart';
 import '../../services/mixes/mix_playback.dart';
 import '../../services/mixes/mix_track_ref.dart';
 import '../../services/ytmusic/yt_models.dart';
 import '../../themes/ember.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class MixPlaylistPage extends StatefulWidget {
   const MixPlaylistPage({super.key, required this.playlist});
@@ -48,8 +52,9 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
   }
 
   Future<void> _load() async {
-    final items =
-        await context.read<LibraryRepository>().playlistEntries(widget.playlist.id);
+    final items = await context.read<LibraryRepository>().playlistEntries(
+      widget.playlist.id,
+    );
     if (!mounted) return;
     setState(() {
       _items = items;
@@ -67,9 +72,12 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
         backgroundColor: Ember.ground,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: Text(
-          widget.playlist.name,
-          style: const TextStyle(color: Ember.textPrimary),
+        title: MorphTag(
+          tag: headerTag(LibraryPageKey('mix', {'id': widget.playlist.id})),
+          child: Text(
+            widget.playlist.name,
+            style: const TextStyle(color: Ember.textPrimary),
+          ),
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
@@ -80,15 +88,17 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
       body: !_loaded
           ? const SizedBox.shrink()
           : _items.isEmpty
-              ? Center(
-                  child: Text('Nothing in here yet',
-                      style: TextStyle(color: Ember.textTertiary)),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 100),
-                  itemCount: _items.length,
-                  itemBuilder: (context, index) => _row(controller, index),
-                ),
+          ? Center(
+              child: Text(
+                'Nothing in here yet',
+                style: TextStyle(color: Ember.textTertiary),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.only(bottom: 100),
+              itemCount: _items.length,
+              itemBuilder: (context, index) => _row(controller, index),
+            ),
     );
   }
 
@@ -105,7 +115,10 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(
-            color: Ember.textPrimary, fontSize: 14, fontWeight: FontWeight.w500),
+          color: Ember.textPrimary,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
       ),
       subtitle: Text(
         item.artist ?? _labelFor(item.source),
@@ -117,32 +130,35 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
   }
 
   static IconData _iconFor(String source) => switch (source) {
-        'cloud' => Icons.cloud_outlined,
-        'youtube' => Icons.play_circle_outline_rounded,
-        _ => Icons.music_note_rounded,
-      };
+    'cloud' => Icons.cloud_outlined,
+    'youtube' => Icons.play_circle_outline_rounded,
+    _ => Icons.music_note_rounded,
+  };
 
   static String _labelFor(String source) => switch (source) {
-        'cloud' => 'From your drive',
-        'youtube' => 'From YouTube',
-        _ => 'On this device',
-      };
+    'cloud' => 'From your drive',
+    'youtube' => 'From YouTube',
+    _ => 'On this device',
+  };
 
   Future<void> _playFrom(AppController controller, int index) async {
     final repo = context.read<LibraryRepository>();
     final refs = await _toRefs(controller, repo, _items.skip(index).toList());
     if (!mounted || refs.isEmpty) return;
 
-    Routes.playerTo(context);
-    await MixPlayback.play(
+    await AppNav.toPlayerWhileStarting(
+      context,
       controller,
-      ResolvedMixLike(refs),
-      resolveCloud: (file) async {
-        if (file.provider == CloudProvider.googleDrive) {
-          return controller.googleDriveService.getStreamUrl(file.fileId);
-        }
-        return controller.dropboxService.getTemporaryLink(file.fileId);
-      },
+      () => MixPlayback.play(
+        controller,
+        ResolvedMixLike(refs),
+        resolveCloud: (file) async {
+          if (file.provider == CloudProvider.googleDrive) {
+            return controller.googleDriveService.getStreamUrl(file.fileId);
+          }
+          return controller.dropboxService.getTemporaryLink(file.fileId);
+        },
+      ),
     );
   }
 
@@ -170,7 +186,9 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
 
     final cloudById = <String, CloudFile>{};
     for (final provider in CloudProvider.values) {
-      for (final file in controller.cloudCache.loadFileList(provider) ?? const <CloudFile>[]) {
+      for (final file
+          in controller.cloudCache.loadFileList(provider) ??
+              const <CloudFile>[]) {
         cloudById[file.fileId] = file;
       }
     }
@@ -184,13 +202,17 @@ class _MixPlaylistPageState extends State<MixPlaylistPage> {
         case 'youtube':
           final id = item.externalId;
           if (id == null) continue;
-          refs.add(MixTrackRef.youtube(YtTrack(
-            videoId: id,
-            title: item.title,
-            artist: item.artist,
-            playlistId: '',
-            playlistTitle: '',
-          )));
+          refs.add(
+            MixTrackRef.youtube(
+              YtTrack(
+                videoId: id,
+                title: item.title,
+                artist: item.artist,
+                playlistId: '',
+                playlistTitle: '',
+              ),
+            ),
+          );
         default:
           final song = byId[item.songId];
           if (song != null) refs.add(MixTrackRef.local(song));

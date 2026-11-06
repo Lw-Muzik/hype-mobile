@@ -319,6 +319,18 @@ public class DvcController {
         return true;
     }
 
+    /**
+     * Forward a volume key to Dart without DVC running (fine volume steps).
+     *
+     * @return true when Dart is listening and got the event
+     */
+    public static boolean forwardVolumeButton(String direction) {
+        final EventChannel.EventSink sink = eventSink;
+        if (sink == null) return false;
+        sink.success(direction);
+        return true;
+    }
+
     public static boolean isActive() {
         return dvcActive;
     }

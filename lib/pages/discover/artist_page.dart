@@ -27,6 +27,8 @@ import 'widgets/media_widgets.dart';
 import 'widgets/yt_hero.dart';
 import 'widgets/yt_widgets.dart';
 import 'yt_open.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 
 class YtArtistPage extends StatefulWidget {
   final ExploreItem item;
@@ -110,6 +112,7 @@ class _YtArtistPageState extends State<YtArtistPage> {
     final tracks = _tracks;
     final header = _header;
     return MediaPageScaffold(
+      headerMorphTag: headerTag(LibraryPageKey('ytArtist', {'id': widget.item.id})),
       title: _name,
       heroHeight: mediaArtistHeroHeight,
       background: _ArtistHero(

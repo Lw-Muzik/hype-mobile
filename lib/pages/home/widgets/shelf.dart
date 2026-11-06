@@ -6,9 +6,15 @@
 /// is easiest to keep when it is written once.
 library;
 
+import '../../../models/track_extras.dart';
+
 import 'package:eq_app/Themes/app_fonts.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 import '../../../data/library_repository.dart';
 import '../../../services/mixes/daily_mix_service.dart';
@@ -35,8 +41,10 @@ class ShelfHeader extends StatelessWidget {
           Text(title, style: Ember.shelfTitle(context)),
           if (subtitle case final text?) ...[
             const SizedBox(height: 2),
-            Text(text,
-                style: TextStyle(color: Ember.textTertiary, fontSize: 12)),
+            Text(
+              text,
+              style: TextStyle(color: Ember.textTertiary, fontSize: 12),
+            ),
           ],
         ],
       ),
@@ -90,8 +98,7 @@ class MixShelf extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 14),
                   child: GestureDetector(
                     onTap: () => onTap(mix),
-                    onLongPress:
-                        onSave == null ? null : () => onSave!(mix),
+                    onLongPress: onSave == null ? null : () => onSave!(mix),
                     child: SizedBox(
                       width: _cardSize,
                       child: Column(
@@ -101,8 +108,9 @@ class MixShelf extends StatelessWidget {
                             width: _cardSize,
                             height: _cardSize,
                             decoration: BoxDecoration(
-                              borderRadius:
-                                  BorderRadius.circular(Ember.radiusCard),
+                              borderRadius: BorderRadius.circular(
+                                Ember.radiusCard,
+                              ),
                               boxShadow: Ember.lift,
                               gradient: LinearGradient(
                                 begin: Alignment.topLeft,
@@ -118,10 +126,11 @@ class MixShelf extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Icon(Icons.auto_awesome_rounded,
-                                    size: 18,
-                                    color: Colors.white
-                                        .withValues(alpha: 0.75)),
+                                Icon(
+                                  Icons.auto_awesome_rounded,
+                                  size: 18,
+                                  color: Colors.white.withValues(alpha: 0.75),
+                                ),
                                 Text(
                                   mix.descriptor.toUpperCase(),
                                   maxLines: 3,
@@ -152,19 +161,26 @@ class MixShelf extends StatelessWidget {
                               Text(
                                 '${mix.length} tracks',
                                 style: TextStyle(
-                                    color: Ember.textTertiary, fontSize: 11),
+                                  color: Ember.textTertiary,
+                                  fontSize: 11,
+                                ),
                               ),
                               // Said plainly, because playing this one will use
                               // data and the user should know before they tap.
                               if (mix.hasRemote) ...[
                                 const SizedBox(width: 5),
-                                Icon(Icons.cloud_outlined,
-                                    size: 11, color: Ember.textTertiary),
+                                Icon(
+                                  Icons.cloud_outlined,
+                                  size: 11,
+                                  color: Ember.textTertiary,
+                                ),
                                 const SizedBox(width: 3),
                                 Text(
                                   'streams',
                                   style: TextStyle(
-                                      color: Ember.textTertiary, fontSize: 11),
+                                    color: Ember.textTertiary,
+                                    fontSize: 11,
+                                  ),
                                 ),
                               ],
                             ],
@@ -216,42 +232,51 @@ class PlaylistShelf extends StatelessWidget {
                 final playlist = playlists[index];
                 return Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: GestureDetector(
-                    onTap: () => onTap(playlist),
-                    child: SizedBox(
-                      width: _cardSize,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: _cardSize,
-                            height: _cardSize,
-                            decoration: BoxDecoration(
-                              color: Ember.surfaceHigh,
-                              borderRadius:
-                                  BorderRadius.circular(Ember.radiusTile),
-                              border: Border.all(color: Ember.outline),
+                  child: MorphTag(
+                    tag: itemTag(LibraryPageKey('mix', {'id': playlist.id})),
+                    child: GestureDetector(
+                      onTap: () => onTap(playlist),
+                      child: SizedBox(
+                        width: _cardSize,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: _cardSize,
+                              height: _cardSize,
+                              decoration: BoxDecoration(
+                                color: Ember.surfaceHigh,
+                                borderRadius: BorderRadius.circular(
+                                  Ember.radiusTile,
+                                ),
+                                border: Border.all(color: Ember.outline),
+                              ),
+                              child: Icon(
+                                Icons.queue_music_rounded,
+                                size: 34,
+                                color: Ember.accent,
+                              ),
                             ),
-                            child: Icon(Icons.queue_music_rounded,
-                                size: 34, color: Ember.accent),
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            playlist.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Ember.textPrimary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(height: 10),
+                            Text(
+                              playlist.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Ember.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                          Text(
-                            '${playlist.trackCount} tracks',
-                            style: TextStyle(
-                                color: Ember.textTertiary, fontSize: 11),
-                          ),
-                        ],
+                            Text(
+                              '${playlist.trackCount} tracks',
+                              style: TextStyle(
+                                color: Ember.textTertiary,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -307,17 +332,22 @@ class SongShelf extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          ClipRRect(
-                            borderRadius:
-                                BorderRadius.circular(Ember.radiusTile),
-                            child: ArtworkWidget(
-                              songId: song.id,
-                              path: song.data,
-                              type: ArtworkType.AUDIO,
-                              width: _cardSize,
-                              height: _cardSize,
-                              borderRadius:
-                                  BorderRadius.circular(Ember.radiusTile),
+                          MorphTag(
+                            tag: trackTag(song.ytVideoId ?? song.id),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(
+                                Ember.radiusTile,
+                              ),
+                              child: ArtworkWidget(
+                                songId: song.id,
+                                path: song.data,
+                                type: ArtworkType.AUDIO,
+                                width: _cardSize,
+                                height: _cardSize,
+                                borderRadius: BorderRadius.circular(
+                                  Ember.radiusTile,
+                                ),
+                              ),
                             ),
                           ),
                           const SizedBox(height: 10),
@@ -336,7 +366,9 @@ class SongShelf extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                color: Ember.textTertiary, fontSize: 11),
+                              color: Ember.textTertiary,
+                              fontSize: 11,
+                            ),
                           ),
                         ],
                       ),

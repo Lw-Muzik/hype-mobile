@@ -379,9 +379,13 @@ public class MainActivity extends AudioServiceFragmentActivity {
     private volatile int volumeKeyLevels = 0; // 0 = the system's own steps
     // The equalizer applies to all apps: the system keys keep their meaning.
     private volatile boolean volumeKeysSystemWide = false;
+    // Fine volume steps: the keys are forwarded to Dart, which sets the stream
+    // index and trims the engine gain in between.
+    private volatile boolean fineVolumeKeys = false;
 
     private boolean hypeOwnsVolumeKeys(int keyCode) {
-        if (!consumeVolumeKeys || DvcController.isActive() || volumeKeysSystemWide) return false;
+        if (!(consumeVolumeKeys || fineVolumeKeys)
+                || DvcController.isActive() || volumeKeysSystemWide) return false;
         // In a call or while the phone rings the keys belong to the system.
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         if (am == null || am.getMode() != AudioManager.MODE_NORMAL) return false;
@@ -420,8 +424,15 @@ public class MainActivity extends AudioServiceFragmentActivity {
             return true;
         }
         if (hypeOwnsVolumeKeys(keyCode)) {
-            stepMusicVolume(keyCode == KeyEvent.KEYCODE_VOLUME_UP);
-            return true;
+            final boolean up = keyCode == KeyEvent.KEYCODE_VOLUME_UP;
+            if (fineVolumeKeys && DvcController.forwardVolumeButton(up ? "up" : "down")) {
+                return true;
+            }
+            if (consumeVolumeKeys) {
+                stepMusicVolume(up);
+                return true;
+            }
+            return super.onKeyDown(keyCode, event);
         }
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
             if (DvcController.onVolumeButton("up")) return true;
@@ -822,6 +833,23 @@ public class MainActivity extends AudioServiceFragmentActivity {
                             volumeKeyLevels = lv == null ? 0 : lv;
                             Boolean sysWide = call.argument("systemWide");
                             volumeKeysSystemWide = sysWide != null && sysWide;
+                            Boolean fineKeys = call.argument("fine");
+                            fineVolumeKeys = fineKeys != null && fineKeys;
+                            result.success(null);
+                            break;
+                        }
+                        case "setMusicStreamIndex": {
+                            Integer streamIndex = call.argument("index");
+                            AudioManager streamAm = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                            if (streamIndex != null && streamAm != null) {
+                                final int streamMax = streamAm.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                                try {
+                                    streamAm.setStreamVolume(AudioManager.STREAM_MUSIC,
+                                            Math.max(0, Math.min(streamMax, streamIndex)), 0);
+                                } catch (SecurityException e) {
+                                    Log.w("MainActivity", "Music volume not settable", e);
+                                }
+                            }
                             result.success(null);
                             break;
                         }

@@ -7,6 +7,8 @@ import 'package:eq_app/controllers/app_controller.dart';
 import 'package:eq_app/data/library_database.dart';
 import 'package:eq_app/data/library_repository.dart';
 import 'package:eq_app/helpers/audio_handler.dart';
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/playback_origin.dart';
 import 'package:eq_app/pages/album_songs.dart';
 import 'package:eq_app/pages/artist_songs.dart';
 import 'package:eq_app/pages/discover/widgets/media_widgets.dart';
@@ -145,6 +147,17 @@ void pageTest(String name, Future<void> Function(WidgetTester t) body) {
   });
 }
 
+/// Stands in for the shell so a tap that opens the player does not build the
+/// real one.
+class _StubHost implements NavHost {
+  @override
+  Future<void> toPlayer({Object? morphFrom}) async {}
+  @override
+  Future<void> toLibrary({PlaybackOrigin? landOn, Object? morphFrom}) async {}
+  @override
+  LibraryNavigatorController get library => throw UnimplementedError();
+}
+
 void main() {
   late LibraryDatabase db;
   late LibraryRepository repo;
@@ -152,6 +165,7 @@ void main() {
   late Directory tmp;
 
   setUp(() {
+    AppNav.host = _StubHost();
     db = LibraryDatabase.forTesting(NativeDatabase.memory());
     repo = LibraryRepository(db);
     controller = FakeController();
@@ -160,6 +174,7 @@ void main() {
   });
 
   tearDown(() async {
+    AppNav.host = null;
     await db.close();
     tmp.deleteSync(recursive: true);
   });

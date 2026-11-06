@@ -25,10 +25,10 @@
 /// competing for it — and while the current track has no picture at all.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../Routes/routes.dart';
 import '../../controllers/app_controller.dart';
 import '../../services/video/video_registry.dart';
 import 'video_stage.dart';
@@ -134,7 +134,7 @@ class _VideoMiniPlayerState extends State<VideoMiniPlayer> {
                 onDrag: (delta) => setState(() {
                   _position = (_position ?? defaultPosition) + delta;
                 }),
-                onTap: () => Routes.playerTo(context),
+                onTap: () => AppNav.toPlayer(context, recordOrigin: false),
                 onClose: VideoPopout.instance.dismiss,
               ),
             ),

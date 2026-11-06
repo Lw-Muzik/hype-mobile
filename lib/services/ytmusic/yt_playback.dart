@@ -17,6 +17,7 @@
 /// therefore queues everything.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -29,7 +30,6 @@ import 'package:provider/provider.dart';
 import '../radio/radio_queue.dart';
 import '../radio/youtube_station.dart';
 import '../connect/remote/connect_play_router.dart';
-import '../../routes/routes.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/track_extras.dart';
 import '../video/video_registry.dart';
@@ -82,7 +82,7 @@ class YtPlayback {
         if (context.mounted) _complain(context, message);
       },
       onStarted: () {
-        if (context.mounted) Routes.playerTo(context);
+        if (context.mounted) AppNav.toPlayer(context);
       },
     );
   }
@@ -262,7 +262,7 @@ class YtPlayback {
     controller.playSongFromList([
       videoModelOf(track, expiresAt: target.expiresAt),
     ], 0);
-    Routes.playerTo(context);
+    AppNav.toPlayer(context);
 
     // Attached before the radio is asked to fill, for the same reason
     // [play] does it in that order: a fill takes the station it is filling on
@@ -397,7 +397,7 @@ class YtPlayback {
 
     final controller = context.read<AppController>();
     controller.playSongFromList([songModelOf(seed, target)], 0);
-    Routes.playerTo(context);
+    AppNav.toPlayer(context);
 
     RadioQueue.instance.attach(YouTubeStation(seed: seed.videoId));
     unawaited(RadioQueue.instance.fill(controller, force: true));

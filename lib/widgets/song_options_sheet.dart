@@ -1,3 +1,5 @@
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
@@ -96,15 +98,20 @@ class _SongOptionsSheetState extends State<SongOptionsSheet> {
     final songs = await repo.watchArtistSongs(artist).first;
     if (!mounted) return;
     nav.pop();
-    nav.push(
-      MaterialPageRoute(
-        builder: (_) => ArtistSongs(
-          artistId: widget.song.artistId,
-          artist: artist,
-          songs: songs.length,
-          albums: 0,
-        ),
+    AppNav.openPage(
+      context,
+      ArtistSongs(
+        artistId: widget.song.artistId,
+        artist: artist,
+        songs: songs.length,
+        albums: 0,
       ),
+      key: LibraryPageKey('artist', {
+        'artistId': widget.song.artistId,
+        'artist': artist,
+        'songs': songs.length,
+        'albums': 0,
+      }),
     );
   }
 
@@ -115,14 +122,18 @@ class _SongOptionsSheetState extends State<SongOptionsSheet> {
     final songs = await repo.watchAlbumSongs(album).first;
     if (!mounted) return;
     nav.pop();
-    nav.push(
-      MaterialPageRoute(
-        builder: (_) => AlbumSongs(
-          albumId: widget.song.albumId,
-          album: album,
-          songs: songs.length,
-        ),
+    AppNav.openPage(
+      context,
+      AlbumSongs(
+        albumId: widget.song.albumId,
+        album: album,
+        songs: songs.length,
       ),
+      key: LibraryPageKey('album', {
+        'albumId': widget.song.albumId,
+        'album': album,
+        'songs': songs.length,
+      }),
     );
   }
 
@@ -232,6 +243,7 @@ class _SongOptionsSheetState extends State<SongOptionsSheet> {
             onTap: () {
               Navigator.pop(context);
               showModalBottomSheet(
+                useRootNavigator: true,
                 context: context,
                 builder: (_) => BottomSheet(
                   onClosing: () {},

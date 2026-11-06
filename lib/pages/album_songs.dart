@@ -7,6 +7,8 @@
 /// the phone — Play next. Tracks are numbered the way the sleeve numbers them.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
@@ -19,7 +21,7 @@ import 'discover/widgets/local_media.dart';
 import 'discover/widgets/media_widgets.dart';
 import 'discover/widgets/yt_hero.dart';
 import 'discover/widgets/yt_widgets.dart';
-import '../Routes/routes.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
 
 class AlbumSongs extends StatefulWidget {
   final int? albumId;
@@ -86,7 +88,8 @@ class _AlbumSongsState extends State<AlbumSongs> {
         .watchArtistSongs(artist)
         .first;
     if (!mounted) return;
-    Routes.routeTo(
+    AppNav.openPage(
+      context,
       ArtistSongs(
         artistId: sample.artistId,
         artist: artist,
@@ -95,7 +98,14 @@ class _AlbumSongsState extends State<AlbumSongs> {
         coverSongId: sample.id,
         coverPath: sample.data,
       ),
-      context,
+      key: LibraryPageKey('artist', {
+        'artistId': sample.artistId,
+        'artist': artist,
+        'songs': songs.length,
+        'albums': {for (final s in songs) s.album}.length,
+        'coverSongId': sample.id,
+        'coverPath': sample.data,
+      }),
     );
   }
 
@@ -113,9 +123,11 @@ class _AlbumSongsState extends State<AlbumSongs> {
         final cover = _cover(songs);
         final enabled = songs.isNotEmpty;
         return MediaPageScaffold(
+          headerMorphTag: headerTag(
+            LibraryPageKey('album', {'albumId': widget.albumId}),
+          ),
           title: widget.album,
           heroHeight: mediaListHeroHeight,
-          bottomBar: const LocalMiniPlayerBar(),
           background: MediaListHero(
             kicker: 'ALBUM',
             title: widget.album,
@@ -164,17 +176,20 @@ class _AlbumSongsState extends State<AlbumSongs> {
                 size: 64,
                 primary: true,
                 onTap: enabled
-                    ? () => controller.playSongFromList(songs, 0)
+                    ? () {
+                        controller.playSongFromList(songs, 0);
+                        AppNav.toPlayer(context);
+                      }
                     : null,
               ),
               YtRoundButton(
                 icon: Icons.shuffle_rounded,
                 tooltip: 'Shuffle',
                 onTap: enabled
-                    ? () => controller.playSongFromList(
-                        [...songs]..shuffle(),
-                        0,
-                      )
+                    ? () {
+                        controller.playSongFromList([...songs]..shuffle(), 0);
+                        AppNav.toPlayer(context);
+                      }
                     : null,
               ),
             ],
@@ -212,7 +227,10 @@ class _AlbumSongsState extends State<AlbumSongs> {
                         duration: localClock(song),
                         current: song.id == currentId,
                         playing: controller.handler.player.playingStream,
-                        onTap: () => controller.playSongFromList(songs, index),
+                        onTap: () {
+                          controller.playSongFromList(songs, index);
+                          AppNav.toPlayer(context);
+                        },
                         onLongPress: () => showLocalSongOptions(context, song),
                         onMore: () => showLocalSongOptions(context, song),
                       );

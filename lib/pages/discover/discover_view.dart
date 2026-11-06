@@ -3,23 +3,28 @@
 /// The landing screen is the mood and genre grid, and it is deliberately the
 /// cheapest screen in the app to open: the categories come off disk first, so
 /// something is painted before any network call has been made. That matters
-/// more than it looks like it should, because on iOS this is the *first* tab —
-/// the screen the app opens on.
+/// more than it looks like it should, because it is one of the places the user
+/// reaches in a single tap from the Places list.
 ///
 /// The revalidation behind it is silent. If YouTube has added a genre since last
 /// time the grid updates in place; if the network is down, the user still has a
 /// working screen rather than a spinner.
 library;
 
+import 'package:eq_app/navigation/yt_page_keys.dart';
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:flutter/material.dart';
 
-import '../../Routes/routes.dart';
 import '../../services/ytmusic/yt_models.dart';
 import '../../services/ytmusic/yt_repository.dart';
 import 'category_page.dart';
 import 'widgets/yt_widgets.dart';
 import 'yt_search_page.dart';
 import '../../services/radio/radio_queue.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class DiscoverView extends StatefulWidget {
   const DiscoverView({super.key});
@@ -123,16 +128,16 @@ class _DiscoverViewState extends State<DiscoverView>
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
                 child: Text(
                   section.title,
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               sliver: SliverGrid(
-                gridDelegate:
-                    const SliverGridDelegateWithMaxCrossAxisExtent(
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 220,
                   mainAxisSpacing: 10,
                   crossAxisSpacing: 10,
@@ -164,27 +169,37 @@ class _SearchBar extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      child: GestureDetector(
-        onTap: () => Routes.routeTo(const YtSearchPage(), context),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
+      child: MorphTag(
+        tag: itemTag(const LibraryPageKey('ytSearch')),
+        child: GestureDetector(
+          onTap: () => AppNav.openPage(
+            context,
+            const YtSearchPage(),
+            key: const LibraryPageKey('ytSearch'),
+            morphFrom: itemTag(const LibraryPageKey('ytSearch')),
           ),
-          child: Row(
-            children: [
-              Icon(Icons.search_rounded,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.search_rounded,
                   size: 20,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
-              const SizedBox(width: 10),
-              Text(
-                'Songs, artists, albums…',
-                style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
                 ),
-              ),
-            ],
+                const SizedBox(width: 10),
+                Text(
+                  'Songs, artists, albums…',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -219,22 +234,29 @@ class _CategoryTile extends StatelessWidget {
       color: colour.withValues(alpha: 0.85),
       borderRadius: BorderRadius.circular(10),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () =>
-            Routes.routeTo(YtCategoryPage(category: category), context),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              category.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-                height: 1.2,
+      child: MorphTag(
+        tag: itemTag(ytCategoryKey(category)),
+        child: InkWell(
+          onTap: () => AppNav.openPage(
+            context,
+            YtCategoryPage(category: category),
+            key: ytCategoryKey(category),
+            morphFrom: itemTag(ytCategoryKey(category)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                category.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  height: 1.2,
+                ),
               ),
             ),
           ),

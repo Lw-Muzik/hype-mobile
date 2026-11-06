@@ -23,6 +23,8 @@
 /// [AppController.playStation] is not gated. YouTube keeps its existing gate.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -531,7 +533,11 @@ class _SearchPageState extends State<SearchPage> {
             'See all on YouTube',
             theme,
             colorScheme,
-            onTap: () => Routes.routeTo(const YtSearchPage(), context),
+            onTap: () => AppNav.openPage(
+              context,
+              const YtSearchPage(),
+              key: const LibraryPageKey('ytSearch'),
+            ),
           ),
         const SizedBox(height: 16),
       ],
@@ -936,11 +942,14 @@ class _SearchPageState extends State<SearchPage> {
     AppController controller,
     SongModel song,
   ) async {
-    Routes.playerTo(context);
-    await controller.playStation(
+    // The queue first: installing it resets the origin, which toPlayer then
+    // records for this one.
+    final started = controller.playStation(
       song,
       LibraryStation(repo: _repo, seed: song),
     );
+    AppNav.toPlayer(context);
+    await started;
   }
 
   /// A cloud result: mint a link, play it alone, build a station from the drive.
@@ -956,8 +965,7 @@ class _SearchPageState extends State<SearchPage> {
       );
       return;
     }
-    Routes.playerTo(context);
-    await controller.playStation(
+    final started = controller.playStation(
       file.toSongModel(url),
       CloudStation(
         // The whole drive, not just what matched — a station seeded from a
@@ -969,6 +977,8 @@ class _SearchPageState extends State<SearchPage> {
         resolve: (f) => _cloudStreamUrl(controller, f),
       ),
     );
+    AppNav.toPlayer(context);
+    await started;
   }
 
   Future<String?> _cloudStreamUrl(
@@ -1003,34 +1013,37 @@ class _SearchPageState extends State<SearchPage> {
       index = 0;
     }
     controller.playSongFromList(queue, index);
-    Routes.playerTo(context);
+    AppNav.toPlayer(context);
   }
 
   void _showAllSongs(List<SongModel> songs, AppController controller) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
+    AppNav.openPage(
+      context,
+      Builder(
+        builder: (pageContext) => Scaffold(
           appBar: AppBar(
             title: Text('Songs matching "${_search.query}"'),
             leading: IconButton(
               icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(pageContext).pop(),
             ),
           ),
           body: SongListView(
             songs: songs,
             controller: controller,
+            zoomKey: 'search',
             showTrackNumbers: false,
             showOptionsIcon: false,
             // A full list of matches reads as a list to play through, so this
             // one queues rather than starting a station.
             onTap: (song, index) {
               controller.playSongFromList(songs, index);
-              Routes.playerTo(context);
+              AppNav.toPlayer(pageContext);
             },
           ),
         ),
       ),
+      key: LibraryPageKey('songsAll', {'query': _search.query}),
     );
   }
 
@@ -1039,36 +1052,56 @@ class _SearchPageState extends State<SearchPage> {
   // ---------------------------------------------------------------------------
 
   void _navigateToArtist(ArtistModel artist) {
-    Routes.scaleTo(
+    AppNav.openPage(
+      context,
       ArtistSongs(
         songs: artist.numberOfTracks ?? 0,
         albums: artist.numberOfAlbums ?? 0,
         artistId: artist.id,
         artist: artist.artist,
       ),
-      context,
+      key: LibraryPageKey('artist', {
+        'artistId': artist.id,
+        'artist': artist.artist,
+        'songs': artist.numberOfTracks ?? 0,
+        'albums': artist.numberOfAlbums ?? 0,
+      }),
     );
   }
 
   void _navigateToAlbum(AlbumModel album) {
-    Routes.scaleTo(
-      AlbumSongs(albumId: album.id, album: album.album, songs: album.numOfSongs),
+    AppNav.openPage(
       context,
+      AlbumSongs(albumId: album.id, album: album.album, songs: album.numOfSongs),
+      key: LibraryPageKey('album', {
+        'albumId': album.id,
+        'album': album.album,
+        'songs': album.numOfSongs,
+      }),
     );
   }
 
   void _navigateToFolder(String path) {
-    Routes.scaleTo(FolderSongs(path: path), context);
+    AppNav.openPage(
+      context,
+      FolderSongs(path: path),
+      key: LibraryPageKey('folder', {'path': path}),
+    );
   }
 
   void _navigateToPlaylist(PlaylistModel playlist) {
-    Routes.scaleTo(
+    AppNav.openPage(
+      context,
       PlaylistSongs(
         playlistId: playlist.id,
         playlist: playlist.playlist,
         songs: playlist.numOfSongs,
       ),
-      context,
+      key: LibraryPageKey('playlist', {
+        'playlistId': playlist.id,
+        'playlist': playlist.playlist,
+        'songs': playlist.numOfSongs,
+      }),
     );
   }
 }

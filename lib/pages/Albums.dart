@@ -1,13 +1,26 @@
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+
 import '/exports/exports.dart';
 import '/data/library_repository.dart';
-import '/controllers/library_controller.dart';
-import '/Routes/routes.dart';
 import '/extensions/index.dart';
 import '/pages/album_songs.dart';
 
 import '../widgets/artwork_widget.dart';
 import '../widgets/library_list_row.dart';
-import '../widgets/pinch_zoom_grid.dart';
+import 'package:eq_app/navigation/zoom/persisted_zoom_list.dart';
+import 'package:eq_app/navigation/zoom/zoom_steps.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
+
+/// Pinch-zoom ladder, zoomed-out first: three grids, then the list.
+const List<ZoomStep> _albumsZoomSteps = [
+  ZoomStep.grid(maxTileExtent: 100.0, childAspectRatio: 0.75, spacing: 12),
+  ZoomStep.grid(maxTileExtent: 150.0, childAspectRatio: 0.75, spacing: 12),
+  ZoomStep.grid(maxTileExtent: 200.0, childAspectRatio: 0.75, spacing: 12),
+  ZoomStep.list(rowExtent: kLibraryRowExtent),
+];
 
 class Albums extends StatefulWidget {
   const Albums({super.key});
@@ -58,9 +71,8 @@ class _AlbumsState extends State<Albums> {
                 Icon(
                   Icons.album,
                   size: 64,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.3),
+                  color: Theme.of(context).colorScheme.onSurface
+                      .withValues(alpha: 0.3),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -73,110 +85,136 @@ class _AlbumsState extends State<Albums> {
         }
 
         final albums = snapshot.data!;
-        final library = context.read<LibraryController>();
         return Padding(
           padding: const EdgeInsets.all(8.0),
-          child: PinchZoomGrid(
-            initialExtent: library.gridExtentFor('albums', fallback: 200.0),
-            minExtent: 100.0,
-            maxExtent: 300.0,
-            onExtentChanged: (e) => library.setGridExtent('albums', e),
-            gridBuilder: (extent) => GridView.builder(
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: extent,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.75,
-              ),
-              itemCount: albums.length,
-              itemBuilder: (context, index) {
+          child: PersistedZoomList(
+            zoomKey: 'albums',
+            steps: _albumsZoomSteps,
+            fallbackStep: 2,
+            itemCount: albums.length,
+            itemBuilder: (context, index, step) {
+              if (step is GridZoomStep) {
                 final album = albums[index];
                 final albumName = "${album.getMap['album'] ?? 'Unknown'}";
-                return InkWell(
-                  onTap: () => Routes.scaleTo(
-                    AlbumSongs(
-                      albumId: album.id,
-                      album: albumName,
-                      songs: album.numOfSongs,
-                    ),
-                    context,
+                return MorphTag(
+                  tag: itemTag(
+                    LibraryPageKey('album', {
+                      'albumId': album.id,
+                      'album': albumName,
+                      'songs': album.numOfSongs,
+                    }),
                   ),
-                  child: Card(
-                    elevation: 1,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    onTap: () => AppNav.openPage(
+                      context,
+                      AlbumSongs(
+                        albumId: album.id,
+                        album: albumName,
+                        songs: album.numOfSongs,
+                      ),
+                      key: LibraryPageKey('album', {
+                        'albumId': album.id,
+                        'album': albumName,
+                        'songs': album.numOfSongs,
+                      }),
+                      morphFrom: itemTag(
+                        LibraryPageKey('album', {
+                          'albumId': album.id,
+                          'album': albumName,
+                          'songs': album.numOfSongs,
+                        }),
+                      ),
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Hero(
-                            tag: 'album_${album.id}',
-                            child: SizedBox(
-                              width: double.infinity,
-                              child: ArtworkWidget(
-                                borderRadius: BorderRadius.zero,
+                    child: Card(
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Hero(
+                              tag: 'album_${album.id}',
+                              child: SizedBox(
                                 width: double.infinity,
-                                height: double.infinity,
-                                songId: album.id,
-                                type: ArtworkType.ALBUM,
-                                path: '',
-                                other: albumName,
+                                child: ArtworkWidget(
+                                  borderRadius: BorderRadius.zero,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  songId: album.id,
+                                  type: ArtworkType.ALBUM,
+                                  path: '',
+                                  other: albumName,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-                          child: Text(
-                            albumName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(
-                              context,
-                            ).textTheme.titleMedium?.copyWith(fontSize: 13),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+                            child: Text(
+                              albumName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontSize: 13),
+                            ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                          child: Text(
-                            album.numOfSongs.nSongs,
-                            style: Theme.of(context).textTheme.bodySmall,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                            child: Text(
+                              album.numOfSongs.nSongs,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );
-              },
-            ),
-            listBuilder: ListView.builder(
-              itemExtent: kLibraryRowExtent,
-              addAutomaticKeepAlives: false,
-              addRepaintBoundaries: true,
-              itemCount: albums.length,
-              itemBuilder: (context, index) {
+              } else {
                 final album = albums[index];
                 final albumName = "${album.getMap['album'] ?? 'Unknown'}";
-                return LibraryListRow(
-                  title: albumName,
-                  subtitle: album.numOfSongs.nSongs,
-                  artworkId: album.id,
-                  artworkType: ArtworkType.ALBUM,
-                  artworkName: albumName,
-                  fallbackIcon: Icons.album_rounded,
-                  onTap: () => Routes.scaleTo(
-                    AlbumSongs(
-                      albumId: album.id,
-                      album: albumName,
-                      songs: album.numOfSongs,
+                return MorphTag(
+                  tag: itemTag(
+                    LibraryPageKey('album', {
+                      'albumId': album.id,
+                      'album': albumName,
+                      'songs': album.numOfSongs,
+                    }),
+                  ),
+                  child: LibraryListRow(
+                    title: albumName,
+                    subtitle: album.numOfSongs.nSongs,
+                    artworkId: album.id,
+                    artworkType: ArtworkType.ALBUM,
+                    artworkName: albumName,
+                    fallbackIcon: Icons.album_rounded,
+                    onTap: () => AppNav.openPage(
+                      context,
+                      AlbumSongs(
+                        albumId: album.id,
+                        album: albumName,
+                        songs: album.numOfSongs,
+                      ),
+                      key: LibraryPageKey('album', {
+                        'albumId': album.id,
+                        'album': albumName,
+                        'songs': album.numOfSongs,
+                      }),
+                      morphFrom: itemTag(
+                        LibraryPageKey('album', {
+                          'albumId': album.id,
+                          'album': albumName,
+                          'songs': album.numOfSongs,
+                        }),
+                      ),
                     ),
-                    context,
                   ),
                 );
-              },
-            ),
+              }
+            },
           ),
         );
       },

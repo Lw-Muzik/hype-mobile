@@ -1,13 +1,15 @@
+import 'package:eq_app/navigation/app_nav.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
 import '/exports/exports.dart';
-import '/Routes/routes.dart';
 import '../../Helpers/Channel.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/cloud_file.dart';
-import '../../widgets/bottom_player.dart';
 import '../../widgets/song_tile.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class CloudFolderSongs extends StatefulWidget {
   final String folderName;
@@ -216,132 +218,140 @@ class _CloudFolderSongsState extends State<CloudFolderSongs>
         titlePadding: EdgeInsets.zero,
         expandedTitleScale: 1.0,
         title: const SizedBox.shrink(),
-        background: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                accent.withValues(alpha: 0.18),
-                accent.withValues(alpha: 0.06),
-                theme.scaffoldBackgroundColor,
-              ],
-              stops: const [0.0, 0.5, 1.0],
-            ),
+        background: MorphTag(
+          tag: headerTag(
+            LibraryPageKey('cloudFolder', {
+              'folderName': widget.folderName,
+              'provider': widget.provider.name,
+            }),
           ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 56, 20, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // Provider badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          widget.provider == CloudProvider.googleDrive
-                              ? Icons.cloud_rounded
-                              : Icons.cloud_circle_rounded,
-                          size: 14,
-                          color: accent,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          widget.provider == CloudProvider.googleDrive
-                              ? 'Google Drive'
-                              : 'Dropbox',
-                          style: theme.textTheme.labelSmall?.copyWith(
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  accent.withValues(alpha: 0.18),
+                  accent.withValues(alpha: 0.06),
+                  theme.scaffoldBackgroundColor,
+                ],
+                stops: const [0.0, 0.5, 1.0],
+              ),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 56, 20, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // Provider badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            widget.provider == CloudProvider.googleDrive
+                                ? Icons.cloud_rounded
+                                : Icons.cloud_circle_rounded,
+                            size: 14,
                             color: accent,
-                            fontWeight: FontWeight.w600,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.provider == CloudProvider.googleDrive
+                                ? 'Google Drive'
+                                : 'Dropbox',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: accent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // Folder name
+                    Text(
+                      widget.folderName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // Stats row
+                    Row(
+                      children: [
+                        Text(
+                          '$songCount ${songCount == 1 ? 'song' : 'songs'}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.3,
+                              ),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _formatBytes(totalSize),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.5,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        // Shuffle play button
+                        if (!_loading && _songModels != null)
+                          FilledButton.tonalIcon(
+                            onPressed: () {
+                              final songs = _songModels!;
+                              if (songs.isEmpty) return;
+                              final randomIndex = math.Random().nextInt(
+                                songs.length,
+                              );
+                              final controller = Provider.of<AppController>(
+                                context,
+                                listen: false,
+                              );
+                              controller.playSongFromList(songs, randomIndex);
+                              AppNav.toPlayer(context);
+                            },
+                            icon: const Icon(Icons.shuffle_rounded, size: 18),
+                            label: const Text('Shuffle'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              textStyle: const TextStyle(fontSize: 13),
+                            ),
+                          ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  // Folder name
-                  Text(
-                    widget.folderName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  // Stats row
-                  Row(
-                    children: [
-                      Text(
-                        '$songCount ${songCount == 1 ? 'song' : 'songs'}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Container(
-                          width: 3,
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.3,
-                            ),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        _formatBytes(totalSize),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      // Shuffle play button
-                      if (!_loading && _songModels != null)
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final songs = _songModels!;
-                            if (songs.isEmpty) return;
-                            final randomIndex = math.Random().nextInt(
-                              songs.length,
-                            );
-                            final controller = Provider.of<AppController>(
-                              context,
-                              listen: false,
-                            );
-                            controller.playSongFromList(songs, randomIndex);
-                            Routes.playerTo(context);
-                          },
-                          icon: const Icon(Icons.shuffle_rounded, size: 18),
-                          label: const Text('Shuffle'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            textStyle: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -362,9 +372,6 @@ class _CloudFolderSongsState extends State<CloudFolderSongs>
               ? Colors.transparent
               : Theme.of(context).scaffoldBackgroundColor,
           body: _buildContent(controller),
-          bottomNavigationBar: controller.hasMiniPlayer
-              ? BottomPlayer(controller: controller)
-              : null,
         );
       },
     );
@@ -453,9 +460,10 @@ class _CloudFolderSongsState extends State<CloudFolderSongs>
     return SongListView(
       songs: songs,
       controller: controller,
+      zoomKey: 'cloud_folder',
       onTap: (song, index) {
         controller.playSongFromList(songs, index);
-        Routes.playerTo(context);
+        AppNav.toPlayer(context);
       },
     );
   }

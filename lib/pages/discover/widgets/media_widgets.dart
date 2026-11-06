@@ -21,6 +21,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../../../themes/ember.dart';
 import '../../../Themes/app_fonts.dart';
 import 'yt_hero.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 /// Corner radius of artwork drawn at [size]: tiles are rounder than rows.
 BorderRadius mediaArtRadius(double size, {bool circular = false}) =>
@@ -88,7 +89,7 @@ class MediaPageScaffold extends StatefulWidget {
     required this.background,
     required this.slivers,
     this.controller,
-    this.bottomBar,
+    this.headerMorphTag,
   });
 
   final String title;
@@ -101,8 +102,8 @@ class MediaPageScaffold extends StatefulWidget {
   /// Supply one to scroll the page from outside; otherwise the page owns it.
   final ScrollController? controller;
 
-  /// Pinned under the page — the mini player on the library pages.
-  final Widget? bottomBar;
+  /// Names the header as the landing spot of the row that opened the page.
+  final Object? headerMorphTag;
 
   @override
   State<MediaPageScaffold> createState() => _MediaPageScaffoldState();
@@ -146,7 +147,6 @@ class _MediaPageScaffoldState extends State<MediaPageScaffold> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Ember.ground,
-      bottomNavigationBar: widget.bottomBar,
       body: CustomScrollView(
         controller: _scroll,
         slivers: [
@@ -172,7 +172,12 @@ class _MediaPageScaffoldState extends State<MediaPageScaffold> {
             ),
             flexibleSpace: FlexibleSpaceBar(
               collapseMode: CollapseMode.parallax,
-              background: widget.background,
+              background: widget.headerMorphTag == null
+                  ? widget.background
+                  : MorphTag(
+                      tag: widget.headerMorphTag!,
+                      child: widget.background,
+                    ),
             ),
           ),
           ...widget.slivers,

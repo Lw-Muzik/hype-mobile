@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../services/player_reveal_bus.dart';
 import 'package:flutter/material.dart';
 
 /// A fixed-extent [ListView] with an A–Z rail for jumping through long lists —
@@ -12,17 +13,28 @@ class AlphabetFastScroll extends StatefulWidget {
     super.key,
     required this.itemCount,
     required this.itemExtent,
-    required this.itemBuilder,
+    this.itemBuilder,
+    this.controller,
+    this.child,
     this.sectionKeyOf,
     this.padding,
     this.minItemsForRail = 30,
     this.revealTick,
     this.revealIndex,
-  });
+  }) : assert(
+         child != null ? controller != null : itemBuilder != null,
+         'Give either an itemBuilder, or a child list with its controller.',
+       );
 
   final int itemCount;
   final double itemExtent;
-  final IndexedWidgetBuilder itemBuilder;
+  final IndexedWidgetBuilder? itemBuilder;
+
+  /// An already-built fixed-extent list (scrolled by [controller]) to put the
+  /// rail on, instead of building one from [itemBuilder]. The controller is
+  /// borrowed, never disposed here.
+  final ScrollController? controller;
+  final Widget? child;
 
   /// First-letter of item [index]. Null disables the rail (e.g. when the list
   /// is sorted by date or duration, where an alphabet has no meaning).
@@ -47,7 +59,8 @@ class _AlphabetFastScrollState extends State<AlphabetFastScroll> {
     'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
   ];
 
-  final ScrollController _scroll = ScrollController();
+  late ScrollController _scroll;
+  bool _ownsScroll = false;
   Map<String, int> _letterIndex = const {};
   String? _activeLetter;
 
@@ -57,13 +70,24 @@ class _AlphabetFastScrollState extends State<AlphabetFastScroll> {
   @override
   void initState() {
     super.initState();
+    _adoptController();
     _rebuildIndex();
     widget.revealTick?.addListener(_onReveal);
+  }
+
+  void _adoptController() {
+    final given = widget.controller;
+    _ownsScroll = given == null;
+    _scroll = given ?? ScrollController();
   }
 
   @override
   void didUpdateWidget(covariant AlphabetFastScroll old) {
     super.didUpdateWidget(old);
+    if (!identical(old.controller, widget.controller)) {
+      if (_ownsScroll) _scroll.dispose();
+      _adoptController();
+    }
     if (old.itemCount != widget.itemCount ||
         old.sectionKeyOf != widget.sectionKeyOf) {
       _rebuildIndex();
@@ -77,7 +101,7 @@ class _AlphabetFastScrollState extends State<AlphabetFastScroll> {
   @override
   void dispose() {
     widget.revealTick?.removeListener(_onReveal);
-    _scroll.dispose();
+    if (_ownsScroll) _scroll.dispose();
     super.dispose();
   }
 
@@ -94,6 +118,10 @@ class _AlphabetFastScrollState extends State<AlphabetFastScroll> {
     final visibleTop = _scroll.offset;
     final visibleBottom = visibleTop + viewport - widget.itemExtent;
     if (rowTop >= visibleTop && rowTop <= visibleBottom) return;
+    if (PlayerRevealBus.instant) {
+      _scroll.jumpTo(target);
+      return;
+    }
     _scroll.animateTo(
       target,
       duration: const Duration(milliseconds: 350),
@@ -155,15 +183,16 @@ class _AlphabetFastScrollState extends State<AlphabetFastScroll> {
 
   @override
   Widget build(BuildContext context) {
-    final list = ListView.builder(
-      controller: _scroll,
-      padding: widget.padding,
-      itemExtent: widget.itemExtent,
-      itemCount: widget.itemCount,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: widget.itemBuilder,
-    );
+    final list = widget.child ??
+        ListView.builder(
+          controller: _scroll,
+          padding: widget.padding,
+          itemExtent: widget.itemExtent,
+          itemCount: widget.itemCount,
+          addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
+          itemBuilder: widget.itemBuilder!,
+        );
 
     if (!_railEnabled) return list;
 

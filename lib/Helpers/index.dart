@@ -354,6 +354,7 @@ String formatTime(Duration time) {
 // method to invoke the delete window
 void showDeleteWindow(String type, String path, BuildContext context) {
   showModalBottomSheet(
+    useRootNavigator: true,
     showDragHandle: true,
     // backgroundColor: Colors.transparent,
     context: context,

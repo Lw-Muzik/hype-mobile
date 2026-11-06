@@ -155,16 +155,28 @@ class Channel {
   /// Volume panel: with [consume] on (and DVC off) Hype takes the volume keys
   /// while in the foreground and steps the music stream itself, in [levels]
   /// steps (0 = the system's own). Android only.
+  ///
+  /// With [fine] on, Hype takes the keys whatever [consume] says and forwards
+  /// each press to Dart (the DVC volume-button event channel), which sets the
+  /// music stream index with [setMusicStreamIndex] and trims the engine gain.
   static Future<void> setVolumeKeys({
     required bool consume,
     required int levels,
     bool systemWide = false,
+    bool fine = false,
   }) async {
     await _invoke("setVolumeKeys", {
       "consume": consume,
       "levels": levels,
       "systemWide": systemWide,
+      "fine": fine,
     });
+  }
+
+  /// Sets the music stream to [index] without showing the system volume UI.
+  /// Android only.
+  static Future<void> setMusicStreamIndex(int index) async {
+    await _invoke("setMusicStreamIndex", {"index": index});
   }
 
   /// Whether an app on this phone answers the system audio effects panel

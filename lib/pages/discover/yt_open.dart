@@ -11,10 +11,11 @@
 /// thing to play, so they play.
 library;
 
+import 'package:eq_app/navigation/yt_page_keys.dart';
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../Routes/routes.dart';
 import '../../config/app_config.dart';
 import '../../controllers/library_controller.dart';
 import '../../services/ytmusic/yt_download.dart';
@@ -23,6 +24,7 @@ import '../../services/ytmusic/yt_models.dart';
 import '../../services/ytmusic/yt_playback.dart';
 import 'artist_page.dart';
 import 'opened_list_page.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
 
 /// Opens [item], using [siblings] as the queue when it turns out to be a track.
 ///
@@ -38,9 +40,19 @@ void openExploreItem(
   switch (item.kind) {
     case ExploreKind.playlist:
     case ExploreKind.album:
-      Routes.routeTo(YtOpenedListPage(item: item), context);
+      AppNav.openPage(
+        context,
+        YtOpenedListPage(item: item),
+        key: ytListKey(item),
+        morphFrom: itemTag(ytListKey(item)),
+      );
     case ExploreKind.artist:
-      Routes.routeTo(YtArtistPage(item: item), context);
+      AppNav.openPage(
+        context,
+        YtArtistPage(item: item),
+        key: ytArtistKey(item),
+        morphFrom: itemTag(ytArtistKey(item)),
+      );
     case ExploreKind.video:
       // A video plays with the videos it was listed alongside, exactly as a
       // song plays with its siblings. Picking the third result in the Videos
@@ -72,6 +84,7 @@ void openExploreItem(
 Future<void> showTrackActions(BuildContext context, YtTrack track) async {
   final theme = Theme.of(context);
   await showModalBottomSheet<void>(
+    useRootNavigator: true,
     context: context,
     backgroundColor: theme.colorScheme.surface,
     shape: const RoundedRectangleBorder(

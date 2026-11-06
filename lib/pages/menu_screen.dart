@@ -1,4 +1,5 @@
 import 'package:eq_app/Themes/app_fonts.dart';
+
 import 'dart:io';
 
 import '/exports/exports.dart';
@@ -6,6 +7,12 @@ import '/exports/exports.dart';
 import '../Routes/routes.dart';
 import '../controllers/app_controller.dart';
 import '../controllers/drawer_controller.dart';
+
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library/library_pages.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/places/places_page.dart';
+
 import 'equalizer.dart';
 import 'Settings.dart';
 import '../player/lyrics_view.dart';
@@ -22,6 +29,21 @@ class _MenuScreenState extends State<MenuScreen> {
   void _navigate(Widget page) {
     context.read<DrawerProvider>().closeDrawer();
     Routes.routeTo(page, context, animate: true);
+  }
+
+  /// Lands on Places, then opens Cloud from there (rather than stacking it on
+  /// whatever trail the library is showing).
+  Future<void> _openCloud() async {
+    final library = AppNav.host?.library;
+    if (library != null && library.path.isNotEmpty) {
+      await library.showPath(const []);
+    }
+    if (!mounted) return;
+    await AppNav.openPage(
+      context,
+      buildPlaceScaffold(PlaceId.cloud),
+      key: LibraryPageKey.place(PlaceId.cloud.name),
+    );
   }
 
   void _closeAndRun(VoidCallback action) {
@@ -123,9 +145,7 @@ class _MenuScreenState extends State<MenuScreen> {
                             icon: Icons.cloud_rounded,
                             label: 'Cloud Music',
                             subtitle: 'Google Drive & Dropbox',
-                            onTap: () {
-                              context.read<DrawerProvider>().closeDrawer();
-                            },
+                            onTap: () => _closeAndRun(_openCloud),
                           ),
                           _MenuItem(
                             icon: Icons.refresh_rounded,
@@ -153,9 +173,9 @@ class _MenuScreenState extends State<MenuScreen> {
                           label: 'Report a Bug',
                           subtitle: 'Send feedback',
                           onTap: () => _closeAndRun(
-                            () => Wiredash.of(
-                              context,
-                            ).show(inheritMaterialTheme: true),
+                            () =>
+                                Wiredash.of(context)
+                                    .show(inheritMaterialTheme: true),
                           ),
                         ),
                         _MenuItem(

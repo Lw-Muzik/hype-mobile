@@ -13,10 +13,12 @@
 /// only files on the phone. `queryPlaylists` is not supported on iOS.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+
 import 'dart:io';
 
 import 'package:eq_app/Helpers/index.dart';
-import 'package:eq_app/Routes/routes.dart';
 import 'package:eq_app/controllers/app_controller.dart';
 import 'package:eq_app/extensions/index.dart';
 import 'package:eq_app/pages/playlist_songs.dart';
@@ -25,6 +27,9 @@ import '/exports/exports.dart';
 import '../data/library_repository.dart';
 import '../themes/ember.dart';
 import 'home/mix_playlist_page.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class PlayListView extends StatefulWidget {
   const PlayListView({super.key});
@@ -170,52 +175,80 @@ class _PlayListViewState extends State<PlayListView> {
               if (own.isNotEmpty) ...[
                 _heading(context, 'YOUR PLAYLISTS'),
                 for (final playlist in own)
-                  _Tile(
-                    title: playlist.name,
-                    subtitle: playlist.trackCount.nSongs,
-                    cover: _OwnCover(playlist: playlist),
-                    onTap: () => Routes.scaleTo(
-                      MixPlaylistPage(playlist: playlist),
-                      context,
+                  MorphTag(
+                    tag: itemTag(LibraryPageKey('mix', {'id': playlist.id})),
+                    child: _Tile(
+                      title: playlist.name,
+                      subtitle: playlist.trackCount.nSongs,
+                      cover: _OwnCover(playlist: playlist),
+                      onTap: () => AppNav.openPage(
+                        context,
+                        MixPlaylistPage(playlist: playlist),
+                        key: LibraryPageKey('mix', {'id': playlist.id}),
+                        morphFrom: itemTag(
+                          LibraryPageKey('mix', {'id': playlist.id}),
+                        ),
+                      ),
+                      onLongPress: () => _delete(playlist),
                     ),
-                    onLongPress: () => _delete(playlist),
                   ),
               ],
               if (_device.isNotEmpty) ...[
                 _heading(context, 'ON THIS DEVICE'),
                 for (final playlist in _device)
-                  _Tile(
-                    title: playlist.playlist,
-                    subtitle: playlist.numOfSongs.nSongs,
-                    cover: Hero(
-                      tag: 'playlist_${playlist.id}',
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Ember.surfaceHigh,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(
-                          Icons.playlist_play_rounded,
-                          color: Ember.textSecondary,
-                          size: 26,
+                  MorphTag(
+                    tag: itemTag(
+                      LibraryPageKey('playlist', {
+                        'playlistId': playlist.id,
+                        'playlist': playlist.playlist,
+                        'songs': playlist.numOfSongs,
+                      }),
+                    ),
+                    child: _Tile(
+                      title: playlist.playlist,
+                      subtitle: playlist.numOfSongs.nSongs,
+                      cover: Hero(
+                        tag: 'playlist_${playlist.id}',
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Ember.surfaceHigh,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            Icons.playlist_play_rounded,
+                            color: Ember.textSecondary,
+                            size: 26,
+                          ),
                         ),
                       ),
-                    ),
-                    onTap: () => Routes.scaleTo(
-                      PlaylistSongs(
-                        playlistId: playlist.id,
-                        playlist: playlist.playlist,
-                        songs: playlist.numOfSongs,
+                      onTap: () => AppNav.openPage(
+                        context,
+                        PlaylistSongs(
+                          playlistId: playlist.id,
+                          playlist: playlist.playlist,
+                          songs: playlist.numOfSongs,
+                        ),
+                        key: LibraryPageKey('playlist', {
+                          'playlistId': playlist.id,
+                          'playlist': playlist.playlist,
+                          'songs': playlist.numOfSongs,
+                        }),
+                        morphFrom: itemTag(
+                          LibraryPageKey('playlist', {
+                            'playlistId': playlist.id,
+                            'playlist': playlist.playlist,
+                            'songs': playlist.numOfSongs,
+                          }),
+                        ),
                       ),
-                      context,
-                    ),
-                    onLongPress: () => showDeletePlaylist(
-                      controller,
-                      playlist.playlist,
-                      playlist.id,
-                      context,
+                      onLongPress: () => showDeletePlaylist(
+                        controller,
+                        playlist.playlist,
+                        playlist.id,
+                        context,
+                      ),
                     ),
                   ),
               ],

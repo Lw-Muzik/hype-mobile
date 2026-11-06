@@ -1,11 +1,13 @@
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:eq_app/Global/index.dart';
 import '/exports/exports.dart';
 import '../controllers/app_controller.dart';
 import '../data/library_repository.dart';
-import '../widgets/bottom_player.dart';
 import '/widgets/song_options_sheet.dart';
 import '/widgets/song_tile.dart';
-import '/Routes/routes.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class FolderSongs extends StatefulWidget {
   final String path;
@@ -53,10 +55,13 @@ class _FolderSongsState extends State<FolderSongs> {
       elevation: 0,
       flexibleSpace: FlexibleSpaceBar(
         centerTitle: true,
-        background: _buildFlexibleSpaceBackground(
-          context,
-          appController,
-          songs,
+        background: MorphTag(
+          tag: headerTag(LibraryPageKey('folder', {'path': widget.path})),
+          child: _buildFlexibleSpaceBackground(
+            context,
+            appController,
+            songs,
+          ),
         ),
       ),
     );
@@ -127,9 +132,6 @@ class _FolderSongsState extends State<FolderSongs> {
               ? Colors.transparent
               : Theme.of(context).scaffoldBackgroundColor,
           body: _buildSongList(controller, songs, hasData),
-          bottomNavigationBar: controller.hasMiniPlayer
-              ? BottomPlayer(controller: controller)
-              : null,
         );
       },
     );
@@ -146,18 +148,21 @@ class _FolderSongsState extends State<FolderSongs> {
     return SongListView(
       songs: songs,
       controller: controller,
+      zoomKey: 'folder_songs',
       onTap: (song, index) {
         controller.playSongFromList(songs, index);
-        Routes.playerTo(context);
+        AppNav.toPlayer(context);
       },
       onLongPress: (song, index) {
         showModalBottomSheet(
+          useRootNavigator: true,
           context: context,
           builder: (_) => SongOptionsSheet(song: song),
         );
       },
       onOptions: (song, index) {
         showModalBottomSheet(
+          useRootNavigator: true,
           context: context,
           builder: (_) => SongOptionsSheet(song: song),
         );

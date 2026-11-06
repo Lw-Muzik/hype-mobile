@@ -3,13 +3,13 @@ import '/pages/index_page.dart';
 import 'package:flutter/material.dart';
 
 import '../pages/equalizer.dart';
+import '../navigation/app_nav.dart';
 import '../pages/loader.dart';
 import '../player/player_presence.dart';
 import '../player/player_ui.dart';
 
 class Routes {
   static String home = "/";
-  static String player = "/player";
   static String equalizer = "/equalizer";
   static String loader = "/assetLoader";
 
@@ -65,7 +65,9 @@ class Routes {
     );
   }
 
-  /// Player route: slides up from the list on open and back DOWN on pop, so
+  /// Opens the player. Under the shell that is a scene change (see
+  /// `navigation/shell`); this route is what a tree without the shell gets.
+  /// It slides up from the list on open and back DOWN on pop, so
   /// the drag-to-dismiss gesture in the player hands off into the pop
   /// transition without a direction change. The list beneath
   /// is painted by the framework for the whole reverse transition, which is
@@ -75,6 +77,12 @@ class Routes {
   /// this goes back to that one rather than stacking a second; see
   /// [PlayerPresence].
   static void playerTo(BuildContext context) {
+    // Under the shell the player is a scene, not a route.
+    final host = AppNav.host;
+    if (host != null) {
+      host.toPlayer();
+      return;
+    }
     final navigator = Navigator.of(context);
     if (PlayerPresence.isOpen) {
       navigator.popUntil(
@@ -129,7 +137,6 @@ class Routes {
 
   static Map<String, Widget Function(dynamic context)> routes() {
     return {
-      player: (context) => const Player(),
       equalizer: (context) => const Equalizer(),
       home: (context) => const IndexPage(),
       loader: (context) => const AssetLoader(),

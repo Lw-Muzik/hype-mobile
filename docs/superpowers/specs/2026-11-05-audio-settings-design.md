@@ -194,7 +194,7 @@ Custom.
 
 | Control | Default | Platform |
 |---|---|---|
-| Enable direct volume control | carries Hype's current DVC value; new installs on | Android |
+| Enable direct volume control | carries Hype's current DVC value; new installs off (owner, Nov 6: turning it on raises the system volume to maximum, so music started too loud) | Android |
 | No DVC for Bluetooth absolute volume | on | Android — disable DVC on Bluetooth when absolute volume is detected or cannot be detected |
 | No DVC – preamp reduction | Android −6.0 dB · iOS 0.0 dB | Both — −10.0…0 dB, 0.5 dB steps; applied before the EQ whenever DVC is not in use (always on iOS). Replaces auto-gain (decision 4) |
 | Volume | carries Hype's DVC Volume | Android — the DVC level itself (Hype's existing "DVC Volume" slider, kept here and on the EQ page) |

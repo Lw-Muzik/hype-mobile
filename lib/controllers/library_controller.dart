@@ -80,14 +80,57 @@ class LibraryController extends ChangeNotifier {
 
   Future<void> rescan() => scan(force: true);
 
-  /// Per-category pinch-zoom level (grid extent): each library
-  /// category remembers its own zoom independently. Read once at tab build;
-  /// written on pinch release — no notify, nothing else depends on it live.
-  double gridExtentFor(String tab, {required double fallback}) =>
-      _prefs.getDouble('library_extent_$tab') ?? fallback;
+  /// Per-list pinch-zoom level, as an index into that list's zoom steps
+  /// (higher = more zoomed in, the last step being the list when the list has
+  /// one). Read once when the list builds; written when a pinch settles — no
+  /// notify, nothing else depends on it live.
+  ///
+  /// A saved step is clamped to the [stepCount] steps of the ladder; without
+  /// one the result is [fallback]. Layouts saved before zoom steps existed are
+  /// not mapped here: they depend on the width the list gets, see
+  /// [legacyZoomExtent].
+  int zoomStepFor(String key, {required int fallback, int stepCount = 0}) {
+    final saved = _prefs.getInt('$_kZoomPrefix$key');
+    if (saved == null) return fallback;
+    return stepCount == 0 ? saved : saved.clamp(0, stepCount - 1);
+  }
 
-  void setGridExtent(String tab, double extent) =>
-      _prefs.setDouble('library_extent_$tab', extent);
+  /// The grid extent a list saved before zoom steps existed
+  /// (`library_extent_<key>`, or the one shared Songs value `songGridExtent`),
+  /// while no step has been stored for it yet; otherwise null.
+  ///
+  /// The old widget always settled on `(screenWidth - 24) / columns`, so the
+  /// value stands for a column count that only the list's real width can turn
+  /// into a step (`legacyZoomStep`); the list does that at its first layout and
+  /// stores the result with [setZoomStep], after which this answers null.
+  double? legacyZoomExtent(String key) {
+    if (_prefs.getInt('$_kZoomPrefix$key') != null) return null;
+    return _legacyExtentFor(key);
+  }
+
+  Future<void> setZoomStep(String key, int step) =>
+      _prefs.setInt('$_kZoomPrefix$key', step);
+
+  static const _kZoomPrefix = 'library_zoom_';
+  static const _songListKeys = {
+    'songs',
+    'genre_songs',
+    'folder_songs',
+    'cloud_folder',
+    'search',
+  };
+
+  double? _legacyExtentFor(String key) {
+    final own = _prefs.getDouble('library_extent_$key');
+    if (own != null) return own;
+    if (!_songListKeys.contains(key)) return null;
+    final shared = _prefs.getDouble('songGridExtent');
+    if (shared != null) return shared;
+    // Older still: songGridScale 0 = list, 1 = two columns, 2 = three.
+    final scale = _prefs.getInt('songGridScale');
+    if (scale == null) return null;
+    return scale == 0 ? 300.0 : (scale == 1 ? 180.0 : 120.0);
+  }
 
   void setSongSort(SongSort sort, SortDir dir) {
     if (sort == _songSort && dir == _songDir) return;

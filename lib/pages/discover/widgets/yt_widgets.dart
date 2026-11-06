@@ -19,6 +19,9 @@ import 'package:flutter/material.dart';
 import '../../../services/ytmusic/parse/yt_json.dart';
 import '../../../services/ytmusic/yt_models.dart';
 import 'media_widgets.dart';
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
+import 'package:eq_app/navigation/yt_page_keys.dart';
 
 /// Artwork, fetched at the size it will be drawn.
 class YtArtwork extends StatelessWidget {
@@ -96,7 +99,7 @@ class YtTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final circular = item.kind == ExploreKind.artist;
-    return MediaTile(
+    final tile = MediaTile(
       width: width,
       circular: circular,
       title: item.title,
@@ -134,6 +137,17 @@ class YtTile extends StatelessWidget {
             )
           : null,
     );
+    return switch (item.kind) {
+      ExploreKind.playlist || ExploreKind.album => MorphTag(
+        tag: itemTag(ytListKey(item)),
+        child: tile,
+      ),
+      ExploreKind.artist => MorphTag(
+        tag: itemTag(ytArtistKey(item)),
+        child: tile,
+      ),
+      _ => tile,
+    };
   }
 }
 
@@ -195,7 +209,10 @@ class YtTrackRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MediaTrackRow(
-      art: YtArtwork(url: track.thumbnail, size: 44),
+      art: MorphTag(
+        tag: trackTag(track.videoId),
+        child: YtArtwork(url: track.thumbnail, size: 44),
+      ),
       title: track.title,
       byline: _byline,
       duration: mediaClock(track.durationSecs),

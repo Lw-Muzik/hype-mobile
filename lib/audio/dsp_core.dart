@@ -11,9 +11,15 @@ bool isExistingInstall(SharedPreferences prefs) =>
 /// Direct Volume Control setting.
 ///
 /// With DVC on, the user's level (-30..0 dB, -30 = silence) is the engine's
-/// master volume. With DVC off the master stays at unity (0 dB).
-double masterVolumeFor({required bool dvcEnabled, required double dvcGainDb}) {
-  if (!dvcEnabled) return 0.0;
+/// master volume. With DVC off the master stays at unity (0 dB), except for
+/// the fine-volume trim ([fineTrimDb], <= 0) that fills in between the
+/// system's own steps.
+double masterVolumeFor({
+  required bool dvcEnabled,
+  required double dvcGainDb,
+  double fineTrimDb = 0.0,
+}) {
+  if (!dvcEnabled) return fineTrimDb.clamp(-30.0, 0.0).toDouble();
   return dvcGainDb.clamp(-30.0, 0.0).toDouble();
 }
 

@@ -132,8 +132,19 @@ class ArtworkService {
     return file.path;
   }
 
-  Future<String> get _temp async =>
-      _tempPath ??= (await getTemporaryDirectory()).path;
+  /// Test seam: stands in for the platform temp-dir lookup.
+  @visibleForTesting
+  Future<String> Function()? tempPathForTest;
+
+  /// Test seam: announces a replacement like [setChosenArtwork] does.
+  @visibleForTesting
+  void announceChangeForTest(int id) => _changes.add(id);
+
+  Future<String> get _temp async {
+    final seam = tempPathForTest;
+    if (seam != null) return seam();
+    return _tempPath ??= (await getTemporaryDirectory()).path;
+  }
 
   /// Returns an on-disk PNG path for the requested art, extracting if needed.
   /// Null means no art is available (caller shows the placeholder).

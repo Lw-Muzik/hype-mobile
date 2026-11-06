@@ -1,10 +1,15 @@
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+
 import 'dart:ui';
 
 import '/exports/exports.dart';
-import '/Routes/routes.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/cloud_file.dart';
 import 'cloud_folder_songs.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class CloudView extends StatefulWidget {
   const CloudView({super.key});
@@ -560,102 +565,120 @@ class _CloudFolderCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
       color: Colors.transparent,
-      child: InkWell(
-        onTap: () => Routes.routeTo(
-          CloudFolderSongs(
-            folderName: folderName,
-            files: files,
-            provider: provider,
-          ),
-          context,
+      child: MorphTag(
+        tag: itemTag(
+          LibraryPageKey('cloudFolder', {
+            'folderName': folderName,
+            'provider': provider.name,
+          }),
         ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Background gradient
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: gradientPair,
-                ),
-              ),
+        child: InkWell(
+          onTap: () => AppNav.openPage(
+            context,
+            CloudFolderSongs(
+              folderName: folderName,
+              files: files,
+              provider: provider,
             ),
-            // Frosted glass overlay in fancy mode
-            if (isFancy)
-              BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(color: Colors.transparent),
-              ),
-            // Large folder icon (watermark)
-            Positioned(
-              top: -8,
-              right: -12,
-              child: Icon(
-                Icons.folder_rounded,
-                size: 80,
-                color: Colors.white.withValues(alpha: 0.04),
-              ),
+            key: LibraryPageKey('cloudFolder', {
+              'folderName': folderName,
+              'provider': provider.name,
+            }),
+            morphFrom: itemTag(
+              LibraryPageKey('cloudFolder', {
+                'folderName': folderName,
+                'provider': provider.name,
+              }),
             ),
-            // Cloud provider badge
-            Positioned(
-              top: 12,
-              right: 12,
-              child: Icon(
-                provider == CloudProvider.googleDrive
-                    ? Icons.cloud_rounded
-                    : Icons.cloud_circle_rounded,
-                size: 16,
-                color: Colors.white.withValues(alpha: 0.3),
-              ),
-            ),
-            // Bottom label overlay (matching local folderArtwork pattern)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Background gradient
+              Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withValues(alpha: 0.6),
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: gradientPair,
+                  ),
+                ),
+              ),
+              // Frosted glass overlay in fancy mode
+              if (isFancy)
+                BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(color: Colors.transparent),
+                ),
+              // Large folder icon (watermark)
+              Positioned(
+                top: -8,
+                right: -12,
+                child: Icon(
+                  Icons.folder_rounded,
+                  size: 80,
+                  color: Colors.white.withValues(alpha: 0.04),
+                ),
+              ),
+              // Cloud provider badge
+              Positioned(
+                top: 12,
+                right: 12,
+                child: Icon(
+                  provider == CloudProvider.googleDrive
+                      ? Icons.cloud_rounded
+                      : Icons.cloud_circle_rounded,
+                  size: 16,
+                  color: Colors.white.withValues(alpha: 0.3),
+                ),
+              ),
+              // Bottom label overlay (matching local folderArtwork pattern)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.6),
+                      ],
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        folderName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$songCount ${songCount == 1 ? 'Song' : 'Songs'}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.6),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      folderName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$songCount ${songCount == 1 ? 'Song' : 'Songs'}',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ],
-                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -756,9 +779,8 @@ class _ProviderChip extends StatelessWidget {
                                 connected ? 'Connected' : 'Tap to connect',
                                 style: theme.textTheme.labelSmall?.copyWith(
                                   color: connected
-                                      ? const Color(
-                                          0xFF4CAF50,
-                                        ).withValues(alpha: 0.8)
+                                      ? const Color(0xFF4CAF50)
+                                            .withValues(alpha: 0.8)
                                       : theme.colorScheme.onSurface.withValues(
                                           alpha: 0.35,
                                         ),

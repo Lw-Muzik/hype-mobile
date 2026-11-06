@@ -6,6 +6,7 @@
 /// songs are already here), and every track with its own art.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
@@ -18,6 +19,10 @@ import 'discover/widgets/local_media.dart';
 import 'discover/widgets/media_widgets.dart';
 import 'discover/widgets/yt_hero.dart';
 import 'discover/widgets/yt_widgets.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class PlaylistSongs extends StatefulWidget {
   final int playlistId;
@@ -46,6 +51,7 @@ class _PlaylistSongsState extends State<PlaylistSongs> {
   /// show the list without it.
   Future<void> _edit(SongModel song) async {
     await showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       builder: (context) => BottomSheet(
         onClosing: () {},
@@ -67,13 +73,16 @@ class _PlaylistSongsState extends State<PlaylistSongs> {
       future: _songsFuture,
       builder: (context, snapshot) {
         final songs = snapshot.data ?? const <SongModel>[];
-        final loading = !snapshot.hasData;
+        // A failed query shows the empty state, not an endless skeleton.
+        final loading = !snapshot.hasData && !snapshot.hasError;
         final enabled = songs.isNotEmpty;
         final cover = [for (final s in songs.take(3)) LocalArtSource.song(s)];
         return MediaPageScaffold(
+          headerMorphTag: headerTag(
+            LibraryPageKey('playlist', {'playlistId': widget.playlistId}),
+          ),
           title: widget.playlist,
           heroHeight: mediaListHeroHeight,
-          bottomBar: const LocalMiniPlayerBar(),
           background: MediaListHero(
             kicker: 'PLAYLIST',
             title: widget.playlist,
@@ -97,26 +106,27 @@ class _PlaylistSongsState extends State<PlaylistSongs> {
                 size: 64,
                 primary: true,
                 onTap: enabled
-                    ? () => controller.playSongFromList(songs, 0)
+                    ? () {
+                        controller.playSongFromList(songs, 0);
+                        AppNav.toPlayer(context);
+                      }
                     : null,
               ),
               YtRoundButton(
                 icon: Icons.shuffle_rounded,
                 tooltip: 'Shuffle',
                 onTap: enabled
-                    ? () => controller.playSongFromList(
-                        [...songs]..shuffle(),
-                        0,
-                      )
+                    ? () {
+                        controller.playSongFromList([...songs]..shuffle(), 0);
+                        AppNav.toPlayer(context);
+                      }
                     : null,
               ),
             ],
           ),
           slivers: [
             if (loading)
-              const SliverFillRemaining(
-                child: YtTrackSkeleton(),
-              )
+              const SliverFillRemaining(child: YtTrackSkeleton())
             else if (songs.isEmpty)
               const SliverFillRemaining(
                 hasScrollBody: false,
@@ -138,16 +148,21 @@ class _PlaylistSongsState extends State<PlaylistSongs> {
                       return MediaHighlight(
                         current: song.id == currentId,
                         child: MediaTrackRow(
-                          art: LocalArtwork(
-                            size: 44,
-                            sources: [LocalArtSource.song(song)],
+                          art: MorphTag(
+                            tag: trackTag(song.id),
+                            child: LocalArtwork(
+                              size: 44,
+                              sources: [LocalArtSource.song(song)],
+                            ),
                           ),
                           title: song.title,
                           byline: localByline(song),
                           duration: localClock(song),
                           position: index + 1,
-                          onTap: () =>
-                              controller.playSongFromList(songs, index),
+                          onTap: () {
+                            controller.playSongFromList(songs, index);
+                            AppNav.toPlayer(context);
+                          },
                           onLongPress: () => _edit(song),
                           onMore: () => _edit(song),
                         ),
@@ -161,10 +176,7 @@ class _PlaylistSongsState extends State<PlaylistSongs> {
                   padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
                   child: Text(
                     localFacts(songs),
-                    style: TextStyle(
-                      color: Ember.textTertiary,
-                      fontSize: 12.5,
-                    ),
+                    style: TextStyle(color: Ember.textTertiary, fontSize: 12.5),
                   ),
                 ),
               ),

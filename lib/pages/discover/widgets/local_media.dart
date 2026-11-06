@@ -12,7 +12,6 @@ import 'package:provider/provider.dart';
 
 import '../../../controllers/app_controller.dart';
 import '../../../services/artwork_service.dart';
-import '../../../widgets/bottom_player.dart';
 import '../../../widgets/song_options_sheet.dart';
 import 'media_widgets.dart';
 
@@ -209,6 +208,7 @@ String? localClock(SongModel song) {
 /// The overflow / long-press menu every library list opens.
 void showLocalSongOptions(BuildContext context, SongModel song) {
   showModalBottomSheet(
+    useRootNavigator: true,
     context: context,
     builder: (_) => SongOptionsSheet(song: song),
   );
@@ -237,13 +237,3 @@ Future<void> playLocalNext(BuildContext context, List<SongModel> songs) async {
   );
 }
 
-/// The mini player, under the page while something is loaded.
-class LocalMiniPlayerBar extends StatelessWidget {
-  const LocalMiniPlayerBar({super.key});
-
-  @override
-  Widget build(BuildContext context) => Consumer<AppController>(
-    builder: (context, c, _) =>
-        c.hasMiniPlayer ? BottomPlayer(controller: c) : const SizedBox.shrink(),
-  );
-}

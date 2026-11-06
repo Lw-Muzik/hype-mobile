@@ -1,8 +1,11 @@
 // ignore_for_file: library_private_types_in_public_api, depend_on_referenced_packages
 import 'package:eq_app/Themes/app_fonts.dart';
+
 import 'dart:async';
 
 import 'package:rxdart/rxdart.dart';
+import 'package:flutter/gestures.dart'
+    show DeviceGestureSettings, DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -10,7 +13,6 @@ import 'package:provider/provider.dart';
 import '/services/player_reveal_bus.dart';
 
 import '../global/index.dart';
-import '/Routes/routes.dart';
 import 'player_body.dart';
 import 'widgets/controls.dart';
 import 'widgets/header.dart';
@@ -25,7 +27,15 @@ import 'video/video_stage.dart';
 import 'video/video_surface.dart';
 import '../onboarding/coach_marks.dart';
 import '../services/video/video_registry.dart';
-import 'now_playing_hero.dart';
+import '../navigation/app_nav.dart';
+import '../navigation/library/library_tags.dart' show kNowPlayingArtTag;
+import '../navigation/motion/morph.dart' show MorphScope;
+import '../navigation/motion_spec.dart';
+import '../navigation/playback_origin.dart';
+import '../navigation/shell/cover_drag.dart';
+import '../navigation/shell/player_chrome.dart';
+import '../navigation/shell/player_exit.dart';
+import '../navigation/shell/scene_controller.dart';
 import 'player_presence.dart';
 import 'remote/remote_player.dart';
 import 'remote/remote_scope.dart';
@@ -64,8 +74,7 @@ class _PlayerState extends State<Player> with TickerProviderStateMixin {
     Future.delayed(const Duration(milliseconds: 1500), () {
       if (!mounted) return;
       _coachController.hasBeenShown().then((shown) {
-        final remote =
-            HypeConnect.instanceOrNull?.session?.isRemote ?? false;
+        final remote = HypeConnect.instanceOrNull?.session?.isRemote ?? false;
         if (!shown && mounted && !remote) {
           _coachController.start(context, [
             CoachStep(
@@ -108,23 +117,44 @@ class _PlayerState extends State<Player> with TickerProviderStateMixin {
     ).animate(_animationController!);
   }
 
-  // ── Slide-down-to-dismiss ────────────────────────────────
-  // A downward drag/fling on the card pops the player; its route (playerTo)
-  // reverse-slides the player DOWN while the framework paints the list route
-  // beneath, and PlayerRevealBus scrolls that list to the now-playing row. We
-  // accumulate the drag distance so a slow-but-long pull commits too, not just
-  // a fast fling.
+  // ── Pull-the-card-down ───────────────────────────────────
+  // Under the shell a downward drag on the card moves the player away with the
+  // finger: progress is the travel past the slop over the real cover side. The
+  // release rules and the move itself live in `SceneController`. Without a
+  // shell (a bare player route) the older distance rule pops the route.
   double _dragDy = 0;
+  CoverDrag? _coverDrag;
 
-  void _handleDismissDragUpdate(DragUpdateDetails details) {
-    _dragDy += details.delta.dy;
+  CoverDrag? get _drag {
+    final host = AppNav.host;
+    if (host is! SceneController) return null;
+    return _coverDrag ??= CoverDrag(
+      host,
+      fallbackExtent: () => MediaQuery.sizeOf(context).width * 0.8,
+    );
   }
 
-  /// Returns true if the gesture was handled as a downward drag (dismissed, or
+  void _handleDismissDragStart(DragStartDetails details) {
+    _dragDy = 0;
+    _drag?.start(details.globalPosition.dy);
+  }
+
+  void _handleDismissDragUpdate(DragUpdateDetails details) {
+    final drag = _drag;
+    if (drag == null) {
+      _dragDy += details.delta.dy;
+      return;
+    }
+    drag.update(details.globalPosition.dy);
+  }
+
+  /// Returns true if the gesture was handled as a downward drag (moved away, or
   /// a small downward move that should NOT fall through to "open lyrics").
   /// Returns false for an upward/neutral gesture so the caller can open lyrics.
   bool _handleDismissDragEnd(DragEndDetails details) {
     final vy = details.velocity.pixelsPerSecond.dy;
+    final drag = _drag;
+    if (drag != null) return drag.end(vy);
     final commit =
         _dragDy > MediaQuery.of(context).size.height * 0.18 || vy > 700;
     final wasDownward = _dragDy > 8 || vy > 200;
@@ -171,7 +201,14 @@ class _PlayerState extends State<Player> with TickerProviderStateMixin {
         if (!context.read<AppController>().hasNowPlaying) {
           // Remote mode ended with nothing of our own to show.
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) Navigator.of(context).maybePop();
+            if (!context.mounted) return;
+            final host = AppNav.host;
+            if (host != null) {
+              // Nothing left to show: the library, at its top level.
+              host.toLibrary(landOn: const PlaybackOrigin([]));
+            } else {
+              Navigator.of(context).maybePop();
+            }
           });
           return const Scaffold(backgroundColor: Ember.ground);
         }
@@ -218,6 +255,7 @@ class _PlayerState extends State<Player> with TickerProviderStateMixin {
                       cardDeckKey: _cardDeckKey,
                       controlsKey: _controlsKey,
                       actionBarKey: _actionBarKey,
+                      onDismissDragStart: _handleDismissDragStart,
                       onDismissDragUpdate: _handleDismissDragUpdate,
                       onDismissDragEnd: _handleDismissDragEnd,
                     ),
@@ -242,6 +280,7 @@ class _PlayerLayout extends StatelessWidget {
   final GlobalKey cardDeckKey;
   final GlobalKey controlsKey;
   final GlobalKey actionBarKey;
+  final void Function(DragStartDetails)? onDismissDragStart;
   final void Function(DragUpdateDetails)? onDismissDragUpdate;
   final bool Function(DragEndDetails)? onDismissDragEnd;
 
@@ -254,6 +293,7 @@ class _PlayerLayout extends StatelessWidget {
     required this.cardDeckKey,
     required this.controlsKey,
     required this.actionBarKey,
+    this.onDismissDragStart,
     this.onDismissDragUpdate,
     this.onDismissDragEnd,
   });
@@ -283,30 +323,35 @@ class _PlayerLayout extends StatelessWidget {
       child: Column(
         children: [
           SizedBox(height: topPadding),
-          const Header(),
+          const PlayerChrome(child: Header()),
           _CardDeck(
             controller: controller,
             animation: animation,
             cardKey: cardKey,
             spotlightKey: cardDeckKey,
+            onDismissDragStart: onDismissDragStart,
             onDismissDragUpdate: onDismissDragUpdate,
             onDismissDragEnd: onDismissDragEnd,
           ),
           _TrackInfo(controller: controller),
           SizedBox(height: gap),
-          _WaveformProgress(controller: controller),
+          PlayerChrome(child: _WaveformProgress(controller: controller)),
           SizedBox(height: gap * 1.4),
-          KeyedSubtree(
-            key: controlsKey,
-            child: Controls(
-              onNextPressed: onControlNext,
-              onPrevPressed: onControlPrev,
+          PlayerChrome(
+            child: KeyedSubtree(
+              key: controlsKey,
+              child: Controls(
+                onNextPressed: onControlNext,
+                onPrevPressed: onControlPrev,
+              ),
             ),
           ),
           SizedBox(height: gap * 1.4),
-          KeyedSubtree(
-            key: actionBarKey,
-            child: playerActionBar(controller, context),
+          PlayerChrome(
+            child: KeyedSubtree(
+              key: actionBarKey,
+              child: playerActionBar(controller, context),
+            ),
           ),
           SizedBox(height: bottomPadding + gap),
         ],
@@ -330,7 +375,7 @@ class _PlayerLayout extends StatelessWidget {
       child: Column(
         children: [
           SizedBox(height: topPadding),
-          const Header(),
+          const PlayerChrome(child: Header()),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -349,6 +394,7 @@ class _PlayerLayout extends StatelessWidget {
                           cardKey: cardKey,
                           landscape: true,
                           spotlightKey: cardDeckKey,
+                          onDismissDragStart: onDismissDragStart,
                           onDismissDragUpdate: onDismissDragUpdate,
                           onDismissDragEnd: onDismissDragEnd,
                         ),
@@ -365,19 +411,25 @@ class _PlayerLayout extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _WaveformProgress(controller: controller),
+                        PlayerChrome(
+                          child: _WaveformProgress(controller: controller),
+                        ),
                         SizedBox(height: gap * 1.4),
-                        KeyedSubtree(
-                          key: controlsKey,
-                          child: Controls(
-                            onNextPressed: onControlNext,
-                            onPrevPressed: onControlPrev,
+                        PlayerChrome(
+                          child: KeyedSubtree(
+                            key: controlsKey,
+                            child: Controls(
+                              onNextPressed: onControlNext,
+                              onPrevPressed: onControlPrev,
+                            ),
                           ),
                         ),
                         SizedBox(height: gap * 1.4),
-                        KeyedSubtree(
-                          key: actionBarKey,
-                          child: playerActionBar(controller, context),
+                        PlayerChrome(
+                          child: KeyedSubtree(
+                            key: actionBarKey,
+                            child: playerActionBar(controller, context),
+                          ),
                         ),
                       ],
                     ),
@@ -400,6 +452,7 @@ class _CardDeck extends StatelessWidget {
   final GlobalKey<AnimatedPlayerCardState> cardKey;
   final bool landscape;
   final GlobalKey? spotlightKey;
+  final void Function(DragStartDetails)? onDismissDragStart;
   final void Function(DragUpdateDetails)? onDismissDragUpdate;
   final bool Function(DragEndDetails)? onDismissDragEnd;
 
@@ -409,6 +462,7 @@ class _CardDeck extends StatelessWidget {
     required this.cardKey,
     this.landscape = false,
     this.spotlightKey,
+    this.onDismissDragStart,
     this.onDismissDragUpdate,
     this.onDismissDragEnd,
   });
@@ -438,6 +492,8 @@ class _CardDeck extends StatelessWidget {
       behavior: HitTestBehavior.translucent,
       // Downward drag/fling pops the player (route slides it down) and returns
       // to the now-playing list; a fast upward fling opens lyrics.
+      dragStartBehavior: DragStartBehavior.down,
+      onVerticalDragStart: onDismissDragStart,
       onVerticalDragUpdate: onDismissDragUpdate,
       onVerticalDragEnd: (details) {
         final consumed = onDismissDragEnd?.call(details) ?? false;
@@ -457,102 +513,108 @@ class _CardDeck extends StatelessWidget {
             // cannot host it.
             child: ListenableBuilder(
               listenable: VideoRegistry.instance,
-              builder: (context, _) => AnimatedPlayerCard(
-                key: cardKey,
-                itemCount: controller.songs.length,
-                currentSongId: controller.songId,
-                onPageChanged: (page) {
-                  if (page > controller.songId) {
-                    controller.next();
-                  } else if (page < controller.songId) {
-                    // Skip the >3s restart check — card already animated,
-                    // user explicitly chose previous track. Through the
-                    // controller, which fades the change like any other skip
-                    // and keeps a gapless queue whole; loading the track here
-                    // directly cut, and dropped the rest of the queue.
-                    controller.skipTo(page);
-                  }
-                },
-                itemBuilder: (context, index, {bool isActive = false}) {
-                  // A video occupies the card where the artwork would be — the
-                  // player screen is where playback lives, and a video is a track
-                  // being played, not a place to navigate to. Only the track
-                  // actually playing gets it: there is one surface, and the cards
-                  // either side are previews of things not yet started.
-                  final isVideo =
-                      index == controller.songId &&
-                      VideoRegistry.instance.isVideo(
-                        controller.songs[index].id,
-                      );
-                  if (isVideo) {
-                    return GestureDetector(
-                      // Opaque, not the default `deferToChild`. When the stage
-                      // is not the surface owner it draws nothing, and a child
-                      // with no hit area meant this tap fell straight through
-                      // to the card stacked behind — whose own handler pops the
-                      // player. Tapping a video to go full screen closed the
-                      // screen instead.
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => openFullscreenVideo(context),
-                      onLongPress: () => showTrackInfo(context, controller),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.all(
-                            Radius.circular(14),
-                          ),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              const VideoStage(
-                                host: VideoHost.card,
-                                // Opaque, so the card cannot show the deck
-                                // through itself. Without this the stage was
-                                // transparent whenever it was not the owner
-                                // and the *next* track's card showed through,
-                                // which reads exactly like the player having
-                                // the wrong artwork.
-                                placeholder: ColoredBox(color: Colors.black),
-                              ),
-                              // The only way the floating window is ever opened.
-                              // It used to open itself whenever a video played
-                              // and the card was not hosting it, which put an
-                              // undismissed window over the transport controls.
-                              Positioned(
-                                top: 6,
-                                right: 6,
-                                child: _PopOutButton(
-                                  onTap: () {
-                                    VideoPopout.instance.request();
-                                    Routes.pop(context);
-                                  },
+              builder: (context, _) => _DeckDuringArtFlight(
+                child: AnimatedPlayerCard(
+                  key: cardKey,
+                  itemCount: controller.songs.length,
+                  currentSongId: controller.songId,
+                  onPageChanged: (page) {
+                    if (page > controller.songId) {
+                      controller.next();
+                    } else if (page < controller.songId) {
+                      // Skip the >3s restart check — card already animated,
+                      // user explicitly chose previous track. Through the
+                      // controller, which fades the change like any other skip
+                      // and keeps a gapless queue whole; loading the track here
+                      // directly cut, and dropped the rest of the queue.
+                      controller.skipTo(page);
+                    }
+                  },
+                  itemBuilder: (context, index, {bool isActive = false}) {
+                    // A video occupies the card where the artwork would be — the
+                    // player screen is where playback lives, and a video is a track
+                    // being played, not a place to navigate to. Only the track
+                    // actually playing gets it: there is one surface, and the cards
+                    // either side are previews of things not yet started.
+                    final isVideo =
+                        index == controller.songId &&
+                        VideoRegistry.instance.isVideo(
+                          controller.songs[index].id,
+                        );
+                    if (isVideo) {
+                      return GestureDetector(
+                        // Opaque, not the default `deferToChild`. When the stage
+                        // is not the surface owner it draws nothing, and a child
+                        // with no hit area meant this tap fell straight through
+                        // to the card stacked behind — whose own handler pops the
+                        // player. Tapping a video to go full screen closed the
+                        // screen instead.
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => openFullscreenVideo(context),
+                        onLongPress: () => showTrackInfo(context, controller),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.all(
+                              Radius.circular(14),
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                const VideoStage(
+                                  host: VideoHost.card,
+                                  // Opaque, so the card cannot show the deck
+                                  // through itself. Without this the stage was
+                                  // transparent whenever it was not the owner
+                                  // and the *next* track's card showed through,
+                                  // which reads exactly like the player having
+                                  // the wrong artwork.
+                                  placeholder: ColoredBox(color: Colors.black),
                                 ),
-                              ),
-                            ],
+                                // The only way the floating window is ever opened.
+                                // It used to open itself whenever a video played
+                                // and the card was not hosting it, which put an
+                                // undismissed window over the transport controls.
+                                Positioned(
+                                  top: 6,
+                                  right: 6,
+                                  child: _PopOutButton(
+                                    onTap: () {
+                                      VideoPopout.instance.request();
+                                      leavePlayer(context);
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                        ),
+                      );
+                    }
+                    return InkWell(
+                      // Tap the cover to return to the now-playing list (tap OR
+                      // swipe-down both go back to the current category).
+                      onTap: () {
+                        // Under the shell the move reveals the row itself, at
+                        // once, before the library zooms in.
+                        if (AppNav.host == null) {
+                          PlayerRevealBus.revealNowPlaying();
+                        }
+                        leavePlayer(context);
+                      },
+                      onLongPress: () => showTrackInfo(context, controller),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: playerCard(
+                          animation,
+                          context,
+                          controller,
+                          songIndex: index,
                         ),
                       ),
                     );
-                  }
-                  return InkWell(
-                    // Tap the cover to return to the now-playing list (tap OR
-                    // swipe-down both go back to the current category).
-                    onTap: () {
-                      PlayerRevealBus.revealNowPlaying();
-                      Routes.pop(context);
-                    },
-                    onLongPress: () => showTrackInfo(context, controller),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: playerCard(
-                        animation,
-                        context,
-                        controller,
-                        songIndex: index,
-                      ),
-                    ),
-                  );
-                },
+                  },
+                ),
               ),
             ),
           ),
@@ -569,9 +631,22 @@ class _CardDeck extends StatelessWidget {
       ),
     );
 
+    // Under the shell the card drag starts after an 8 dp slop on every
+    // platform (iOS defaults to a wider one).
+    final mq = MediaQuery.of(context);
+    final slopped = AppNav.host == null
+        ? cardContent
+        : MediaQuery(
+            data: mq.copyWith(
+              gestureSettings: const DeviceGestureSettings(
+                touchSlop: MotionSpec.dragSlop,
+              ),
+            ),
+            child: cardContent,
+          );
     final card = spotlightKey != null
-        ? KeyedSubtree(key: spotlightKey, child: cardContent)
-        : cardContent;
+        ? KeyedSubtree(key: spotlightKey, child: slopped)
+        : slopped;
 
     // In landscape the parent Column is centered — use a constrained size
     // instead of Expanded so mainAxisAlignment: center can work.
@@ -627,14 +702,10 @@ class _TrackInfo extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // The details fly too, or the cover moves while the words it belongs
-          // to blink into place — which is the half-finished look that gives a
-          // transition away. `Material` transparency because a bare `Text` in
-          // flight has no `DefaultTextStyle` ancestor and renders with the
-          // debug underline.
-          Hero(
-            tag: kNowPlayingTitleHeroTag,
-            flightShuttleBuilder: fadeThroughShuttle,
+          // Material transparency: a bare Text here has no DefaultTextStyle
+          // ancestor.
+          Padding(
+            padding: EdgeInsets.zero,
             child: Material(
               type: MaterialType.transparency,
               child: _MarqueeText(
@@ -648,9 +719,8 @@ class _TrackInfo extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Hero(
-            tag: kNowPlayingArtistHeroTag,
-            flightShuttleBuilder: fadeThroughShuttle,
+          Padding(
+            padding: EdgeInsets.zero,
             child: Material(
               type: MaterialType.transparency,
               child: _MarqueeText(
@@ -888,6 +958,30 @@ class _PopOutButton extends StatelessWidget {
             size: 18,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// While the cover flies between the player and a list row the stand-in is
+/// the cover. The deck hides with it: its other cards sit stacked behind the
+/// tagged one (and the old card fades out on a track change), and would show
+/// where the cover was.
+class _DeckDuringArtFlight extends StatelessWidget {
+  const _DeckDuringArtFlight({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = MorphScope.maybeOf(context);
+    if (scope == null) return child;
+    return ValueListenableBuilder<Set<Object>>(
+      valueListenable: scope.hiddenTags,
+      child: child,
+      builder: (context, hidden, child) => Opacity(
+        opacity: hidden.contains(kNowPlayingArtTag) ? 0 : 1,
+        child: child,
       ),
     );
   }

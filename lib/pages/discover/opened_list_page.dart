@@ -18,6 +18,9 @@
 /// arriving here from the player ("Go to album") shows where the song sits.
 library;
 
+import 'package:eq_app/navigation/yt_page_keys.dart';
+import 'package:eq_app/navigation/app_nav.dart';
+
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -27,7 +30,6 @@ import 'package:provider/provider.dart';
 import '../../config/app_config.dart';
 import '../../controllers/app_controller.dart';
 import '../../models/track_extras.dart';
-import '../../Routes/routes.dart';
 import '../../services/ytmusic/parse/yt_json.dart';
 import '../../services/ytmusic/parse/yt_tracks.dart';
 import '../../services/ytmusic/yt_models.dart';
@@ -39,6 +41,9 @@ import 'widgets/media_widgets.dart';
 import 'widgets/yt_hero.dart';
 import 'widgets/yt_widgets.dart';
 import 'yt_open.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 
 class YtOpenedListPage extends StatefulWidget {
   final ExploreItem item;
@@ -112,7 +117,8 @@ class _YtOpenedListPageState extends State<YtOpenedListPage> {
     if (index < 6) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      final target = mediaListHeroHeight(context) + 64 + index * _rowHeight - 160;
+      final target =
+          mediaListHeroHeight(context) + 64 + index * _rowHeight - 160;
       _scroll.animateTo(
         math.min(target, _scroll.position.maxScrollExtent),
         duration: const Duration(milliseconds: 700),
@@ -155,6 +161,7 @@ class _YtOpenedListPageState extends State<YtOpenedListPage> {
     final player = context.read<AppController>().handler.player;
 
     return MediaPageScaffold(
+      headerMorphTag: headerTag(LibraryPageKey('ytList', {'id': widget.item.id})),
       controller: _scroll,
       title: title,
       heroHeight: mediaListHeroHeight,
@@ -173,71 +180,70 @@ class _YtOpenedListPageState extends State<YtOpenedListPage> {
             : () => startPlaylistDownload(context, tracks),
       ),
       slivers: [
-          if (_loading)
-            const SliverFillRemaining(
-              hasScrollBody: false,
-              child: YtTrackSkeleton(),
-            )
-          else if (_error case final String message)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: YtMessage(
-                icon: Icons.error_outline_rounded,
-                title: "That didn't open",
-                body: message,
-                onRetry: _load,
-              ),
-            )
-          else if (tracks.isEmpty)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: YtMessage(
-                icon: Icons.inbox_rounded,
-                title: 'No tracks here',
-                body: 'YouTube lists nothing playable in this one.',
-                onRetry: _load,
-              ),
-            )
-          else ...[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              sliver: SliverFixedExtentList(
-                itemExtent: _rowHeight,
-                delegate: SliverChildBuilderDelegate(
-                  childCount: tracks.length,
-                  (context, index) => _isAlbum
-                      ? _albumRow(
-                          context,
-                          tracks,
-                          index,
-                          albumArtist: list?.artist,
-                          current: index == currentIndex,
-                          playing: player.playingStream,
-                        )
-                      : MediaHighlight(
-                          current: index == currentIndex,
-                          child: YtTrackRow(
-                            track: tracks[index],
-                            position: index + 1,
-                            onTap: () =>
-                                YtPlayback.play(context, tracks, index),
-                            onMore: () =>
-                                showTrackActions(context, tracks[index]),
-                          ),
+        if (_loading)
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: YtTrackSkeleton(),
+          )
+        else if (_error case final String message)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: YtMessage(
+              icon: Icons.error_outline_rounded,
+              title: "That didn't open",
+              body: message,
+              onRetry: _load,
+            ),
+          )
+        else if (tracks.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: YtMessage(
+              icon: Icons.inbox_rounded,
+              title: 'No tracks here',
+              body: 'YouTube lists nothing playable in this one.',
+              onRetry: _load,
+            ),
+          )
+        else ...[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            sliver: SliverFixedExtentList(
+              itemExtent: _rowHeight,
+              delegate: SliverChildBuilderDelegate(
+                childCount: tracks.length,
+                (context, index) => _isAlbum
+                    ? _albumRow(
+                        context,
+                        tracks,
+                        index,
+                        albumArtist: list?.artist,
+                        current: index == currentIndex,
+                        playing: player.playingStream,
+                      )
+                    : MediaHighlight(
+                        current: index == currentIndex,
+                        child: YtTrackRow(
+                          track: tracks[index],
+                          position: index + 1,
+                          onTap: () => YtPlayback.play(context, tracks, index),
+                          onMore: () =>
+                              showTrackActions(context, tracks[index]),
                         ),
-                ),
+                      ),
               ),
             ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 110),
-                child: Text(
-                  list?.stats ?? _countLabel(tracks.length),
-                  style: TextStyle(color: Ember.textTertiary, fontSize: 12.5),
-                ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 110),
+              child: Text(
+                list?.stats ?? _countLabel(tracks.length),
+                style: TextStyle(color: Ember.textTertiary, fontSize: 12.5),
               ),
             ),
-          ],
+          ),
+        ],
       ],
     );
   }
@@ -345,7 +351,11 @@ class _Hero extends StatelessWidget {
           : YtArtwork(url: portrait, size: 24, circular: true),
       onTap: target == null
           ? null
-          : () => Routes.routeTo(YtArtistPage(item: target), context),
+          : () => AppNav.openPage(
+              context,
+              YtArtistPage(item: target),
+              key: ytArtistKey(target),
+            ),
     );
   }
 }

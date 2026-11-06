@@ -1,3 +1,4 @@
+import 'package:eq_app/navigation/app_nav.dart';
 import 'dart:io';
 import '/exports/exports.dart';
 
@@ -6,7 +7,6 @@ import '/widgets/song_options_sheet.dart';
 import '/widgets/song_sort_button.dart';
 import '/widgets/song_list_skeleton.dart';
 import '/data/library_repository.dart';
-import '/routes/routes.dart';
 import '/controllers/app_controller.dart';
 import '/controllers/library_controller.dart';
 import '/services/local_music_scanner.dart';
@@ -64,6 +64,7 @@ class _AllSongsState extends State<AllSongs> {
 
   void _openOptions(SongModel song) {
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       builder: (_) => SongOptionsSheet(song: song),
     );
@@ -99,7 +100,7 @@ class _AllSongsState extends State<AllSongs> {
                     fastScrollKey: _fastKey(library.songSort),
                     onTap: (song, index) {
                       controller.playSongFromList(songs, index);
-                      Routes.playerTo(context);
+                      AppNav.toPlayer(context);
                     },
                     onLongPress: (song, index) => _openOptions(song),
                     onOptions: (song, index) => _openOptions(song),

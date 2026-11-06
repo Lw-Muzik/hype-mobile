@@ -26,7 +26,9 @@ import '../player/fade_settings.dart';
 import '../services/video/video_registry.dart';
 import '../services/ytmusic/yt_audio_source.dart';
 import '../services/ytmusic/yt_innertube.dart';
-import '../player/now_playing_hero.dart';
+import '../navigation/app_nav.dart';
+import '../navigation/motion/morph.dart';
+import '../navigation/library/library_tags.dart' show kNowPlayingArtTag;
 import '../Themes/ember.dart';
 
 SystemUiOverlayStyle overlay = const SystemUiOverlayStyle(
@@ -123,6 +125,7 @@ Widget playerActionBar(AppController controller, BuildContext context) {
           label: 'Queue',
           onTap: () {
             showModalBottomSheet(
+              useRootNavigator: true,
               context: context,
               isScrollControlled: true,
               isDismissible: true,
@@ -157,6 +160,7 @@ Widget playerActionBar(AppController controller, BuildContext context) {
           label: 'Listen',
           onTap: () {
             showModalBottomSheet(
+              useRootNavigator: true,
               context: context,
               isScrollControlled: true,
               backgroundColor: Colors.transparent,
@@ -261,84 +265,92 @@ Widget playerCard(
   if (idx < 0 || idx >= controller.songs.length) return const SizedBox.shrink();
   final song = controller.songs[idx];
 
-  return Align(
-    alignment: const Alignment(0, -0.15),
-    child: AnimatedBuilder(
-      animation: animation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: animation.value,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 420),
-              child: AspectRatio(
-                aspectRatio: 1.0,
-                // The hero wraps the cover and NOTHING else. Wrapping the card
-                // slot instead — the Align, the padding, the constraints — made
-                // the flight run from a 42px thumbnail to a full-width box with
-                // the artwork sitting somewhere inside it, which is why it read
-                // as a jump rather than as the cover moving. Source and
-                // destination have to be the same visible object.
-                child: _artworkHero(
-                  enabled: idx == controller.songId,
-                  song: song,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.4),
-                          blurRadius: 30,
-                          offset: const Offset(0, 12),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: ArtworkWidget(
-                        quality: 100,
+  return LayoutBuilder(
+    builder: (context, slot) => Align(
+      alignment: const Alignment(0, -0.15),
+      child: AnimatedBuilder(
+        animation: animation,
+        builder: (context, child) {
+          // On a phone the width binds first, as it always has. On a tablet the
+          // cover grows into the room the card has rather than stopping at
+          // 420 dp, keeping a margin for its shadow above and below.
+          final room = _coverSide(slot);
+          return Transform.scale(
+            scale: animation.value,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: room, maxHeight: room),
+                child: AspectRatio(
+                  aspectRatio: 1.0,
+                  // The hero wraps the cover and NOTHING else. Wrapping the card
+                  // slot instead — the Align, the padding, the constraints — made
+                  // the flight run from a 42px thumbnail to a full-width box with
+                  // the artwork sitting somewhere inside it, which is why it read
+                  // as a jump rather than as the cover moving. Source and
+                  // destination have to be the same visible object.
+                  child: _artworkHero(
+                    enabled: idx == controller.songId,
+                    song: song,
+                    child: Container(
+                      decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(18),
-                        size: 1000,
-                        songId: song.id,
-                        type: ArtworkType.AUDIO,
-                        path: song.data,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.4),
+                            blurRadius: 30,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: ArtworkWidget(
+                          quality: 100,
+                          borderRadius: BorderRadius.circular(18),
+                          size: 1000,
+                          songId: song.id,
+                          type: ArtworkType.AUDIO,
+                          path: song.data,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     ),
   );
 }
 
-/// Ties this cover to the mini player's, or leaves it alone.
+/// The largest side the player's cover may take in [slot]: never less than
+/// the 420 dp it always had, more where the slot has the room (tablets).
+double _coverSide(BoxConstraints slot) {
+  const phone = 420.0;
+  final w = slot.maxWidth - 64;
+  final h = slot.maxHeight * 0.86;
+  if (!w.isFinite || !h.isFinite) return phone;
+  final fits = w < h ? w : h;
+  return fits > phone ? fits : phone;
+}
+
+/// Marks this cover as the player's art, or leaves it alone.
 ///
-/// Only the card actually playing may carry the tag: the deck builds the tracks
-/// either side too, and two heroes sharing a tag in one route is an assertion
-/// failure rather than a worse animation.
+/// The shell flies this one cover between the player and the list row or tile
+/// the music was started from (`navigation/shell/scene_controller.dart`). Only
+/// the card actually playing may carry the tag: the deck builds the tracks
+/// either side too, and two widgets sharing a tag in one scene would make the
+/// flight ambiguous. The cover is not tied to the mini player's thumbnail.
 Widget _artworkHero({
   required bool enabled,
   required SongModel song,
   required Widget child,
 }) {
   if (!enabled) return child;
-  // NO custom flightShuttleBuilder, deliberately.
-  //
-  // A shuttle builds a fresh subtree, and `ArtworkWidget` resolves its image
-  // through a Future — showing `assets/audio.jpeg` until that lands. A new one
-  // asks for a decode size neither end has cached, so it decodes from scratch
-  // and has nothing to show for the whole flight; what appears instead is the
-  // deck's own cards through an empty shuttle, which reads as the wrong album
-  // flying.
-  //
-  // Flutter's default shuttle reuses the destination hero's own subtree, whose
-  // image is already being resolved for the page it is landing on.
-  return Hero(tag: kNowPlayingHeroTag, child: child);
+  return MorphTag(tag: kNowPlayingArtTag, child: child);
 }
 
 /// Folder thumbnail. The representative track is now supplied by the caller
@@ -457,6 +469,7 @@ Widget headerWidget(
               List<SongModel> s = data;
               if (s.isNotEmpty) {
                 controller.playSongFromList(s, 0);
+                AppNav.toPlayer(context);
               }
             },
             child: Card(

@@ -5,9 +5,9 @@
 /// transport to that device.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
 import 'package:flutter/material.dart';
 
-import 'package:eq_app/routes/routes.dart';
 import 'package:eq_app/services/connect/hype_connect.dart';
 import 'package:eq_app/services/connect/remote/connect_remote_session.dart';
 import 'package:eq_app/themes/ember.dart';
@@ -32,7 +32,7 @@ class RemoteMiniPlayer extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => Routes.playerTo(context),
+        onTap: () => AppNav.toPlayer(context, recordOrigin: false),
         child: SizedBox(
           height: height,
           child: Stack(

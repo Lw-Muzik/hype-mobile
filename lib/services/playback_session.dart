@@ -30,6 +30,8 @@ import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../navigation/playback_origin.dart';
+
 /// The most tracks a saved session will hold.
 ///
 /// An endless radio queue grows for as long as someone listens, and restoring
@@ -71,6 +73,10 @@ class PlaybackSession {
   /// into an audio one from the second track onward.
   final bool videoMode;
 
+  /// The library pages the queue was started from, or null when it did not
+  /// come from one (or the save predates this field).
+  final PlaybackOrigin? origin;
+
   const PlaybackSession({
     required this.songs,
     required this.index,
@@ -79,6 +85,7 @@ class PlaybackSession {
     this.shuffled = false,
     this.loopMode = 0,
     this.videoMode = false,
+    this.origin,
   });
 
   /// The queue in the order it should play.
@@ -111,6 +118,7 @@ class PlaybackSession {
     'shuffled': shuffled,
     'loopMode': loopMode,
     'videoMode': videoMode,
+    if (origin != null) 'origin': origin!.toJson(),
     'songs': [for (final song in songs) song.getMap],
     if (shuffledOrder != null) 'shuffledOrder': shuffledOrder,
   };
@@ -150,6 +158,7 @@ class PlaybackSession {
       ),
       loopMode: (json['loopMode'] as num?)?.toInt() ?? 0,
       videoMode: json['videoMode'] == true,
+      origin: PlaybackOrigin.fromJson(json['origin']),
     );
     // Clamped against the queue actually recovered, which may be shorter than
     // the one that was saved.
@@ -162,6 +171,7 @@ class PlaybackSession {
       position: session.position.isNegative ? Duration.zero : session.position,
       loopMode: session.loopMode,
       videoMode: session.videoMode,
+      origin: session.origin,
     );
   }
 
@@ -193,6 +203,7 @@ class PlaybackSession {
       position: position,
       loopMode: loopMode,
       videoMode: videoMode,
+      origin: origin,
     );
   }
 }

@@ -7,11 +7,12 @@
 /// and are left out.
 library;
 
+import 'package:eq_app/navigation/app_nav.dart';
+import 'package:eq_app/navigation/library_page_key.dart';
 import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:provider/provider.dart';
 
-import '../Routes/routes.dart';
 import '../controllers/app_controller.dart';
 import '../data/library_repository.dart';
 import 'album_songs.dart';
@@ -19,6 +20,9 @@ import 'discover/widgets/local_media.dart';
 import 'discover/widgets/media_widgets.dart';
 import 'discover/widgets/yt_hero.dart';
 import 'discover/widgets/yt_widgets.dart';
+
+import 'package:eq_app/navigation/library/library_tags.dart';
+import 'package:eq_app/navigation/motion/morph.dart';
 
 class ArtistSongs extends StatefulWidget {
   final int? artistId;
@@ -76,7 +80,9 @@ class _ArtistSongsState extends State<ArtistSongs> {
     final byName = <String, List<SongModel>>{};
     for (final s in songs) {
       final name = (s.album ?? '').trim();
-      byName.putIfAbsent(name.isEmpty ? 'Unknown Album' : name, () => []).add(s);
+      byName
+          .putIfAbsent(name.isEmpty ? 'Unknown Album' : name, () => [])
+          .add(s);
     }
     return [for (final e in byName.entries) _LocalAlbum(e.key, e.value)];
   }
@@ -113,9 +119,11 @@ class _ArtistSongsState extends State<ArtistSongs> {
                 albums.length == 1 ? '1 album' : '${albums.length} albums',
               ].join(' • ');
         return MediaPageScaffold(
+          headerMorphTag: headerTag(
+            LibraryPageKey('artist', {'artistId': widget.artistId}),
+          ),
           title: widget.artist,
           heroHeight: mediaArtistHeroHeight,
-          bottomBar: const LocalMiniPlayerBar(),
           background: MediaArtistHero(
             name: widget.artist,
             stats: stats,
@@ -130,9 +138,7 @@ class _ArtistSongsState extends State<ArtistSongs> {
           ),
           slivers: [
             if (loading)
-              const SliverFillRemaining(
-                child: YtSkeleton(),
-              )
+              const SliverFillRemaining(child: YtSkeleton())
             else if (songs.isEmpty)
               const SliverFillRemaining(
                 hasScrollBody: false,
@@ -153,16 +159,19 @@ class _ArtistSongsState extends State<ArtistSongs> {
                         tooltip: 'Play',
                         size: 58,
                         primary: true,
-                        onTap: () => controller.playSongFromList(songs, 0),
+                        onTap: () {
+                          controller.playSongFromList(songs, 0);
+                          AppNav.toPlayer(context);
+                        },
                       ),
                       const SizedBox(width: 14),
                       YtRoundButton(
                         icon: Icons.shuffle_rounded,
                         tooltip: 'Shuffle',
-                        onTap: () => controller.playSongFromList(
-                          [...songs]..shuffle(),
-                          0,
-                        ),
+                        onTap: () {
+                          controller.playSongFromList([...songs]..shuffle(), 0);
+                          AppNav.toPlayer(context);
+                        },
                       ),
                       const SizedBox(width: 14),
                       YtRoundButton(
@@ -184,10 +193,13 @@ class _ArtistSongsState extends State<ArtistSongs> {
                       : 'Songs',
                   songs: _top(songs),
                   currentId: currentId,
-                  onTap: (song) => controller.playSongFromList(
-                    songs,
-                    songs.indexWhere((s) => s.id == song.id),
-                  ),
+                  onTap: (song) {
+                    controller.playSongFromList(
+                      songs,
+                      songs.indexWhere((s) => s.id == song.id),
+                    );
+                    AppNav.toPlayer(context);
+                  },
                 ),
               ),
               if (albums.isNotEmpty)
@@ -199,34 +211,55 @@ class _ArtistSongsState extends State<ArtistSongs> {
                       count: albums.length,
                       builder: (context, index, width) {
                         final album = albums[index];
-                        return MediaTile(
-                          width: width,
-                          title: album.name,
-                          subtitle: album.songs.length == 1
-                              ? '1 song'
-                              : '${album.songs.length} songs',
-                          art: LocalArtwork(
-                            size: width,
-                            placeholder: Icons.album_rounded,
-                            sources: [
-                              if (album.first.albumId != null)
-                                LocalArtSource(
-                                  id: album.first.albumId!,
-                                  type: ArtworkType.ALBUM,
-                                  other: album.name,
-                                ),
-                              LocalArtSource.song(album.first),
-                            ],
-                          ),
-                          onTap: () => Routes.routeTo(
-                            AlbumSongs(
-                              albumId: album.first.albumId,
-                              album: album.name,
-                              songs: album.songs.length,
-                              coverSongId: album.first.id,
-                              coverPath: album.first.data,
+                        return _albumTag(
+                          album.first.albumId,
+                          child: MediaTile(
+                            width: width,
+                            title: album.name,
+                            subtitle: album.songs.length == 1
+                                ? '1 song'
+                                : '${album.songs.length} songs',
+                            art: LocalArtwork(
+                              size: width,
+                              placeholder: Icons.album_rounded,
+                              sources: [
+                                if (album.first.albumId != null)
+                                  LocalArtSource(
+                                    id: album.first.albumId!,
+                                    type: ArtworkType.ALBUM,
+                                    other: album.name,
+                                  ),
+                                LocalArtSource.song(album.first),
+                              ],
                             ),
-                            context,
+                            onTap: () => AppNav.openPage(
+                              context,
+                              AlbumSongs(
+                                albumId: album.first.albumId,
+                                album: album.name,
+                                songs: album.songs.length,
+                                coverSongId: album.first.id,
+                                coverPath: album.first.data,
+                              ),
+                              key: LibraryPageKey('album', {
+                                'albumId': album.first.albumId,
+                                'album': album.name,
+                                'songs': album.songs.length,
+                                'coverSongId': album.first.id,
+                                'coverPath': album.first.data,
+                              }),
+                              morphFrom: album.first.albumId == null
+                                  ? null
+                                  : itemTag(
+                                      LibraryPageKey('album', {
+                                        'albumId': album.first.albumId,
+                                        'album': album.name,
+                                        'songs': album.songs.length,
+                                        'coverSongId': album.first.id,
+                                        'coverPath': album.first.data,
+                                      }),
+                                    ),
+                            ),
                           ),
                         );
                       },
@@ -240,6 +273,16 @@ class _ArtistSongsState extends State<ArtistSongs> {
     );
   }
 }
+
+/// Tags an album tile for the cover flight to the album page. An album with no
+/// id has no identity to match on (every such tile would share one tag), so it
+/// goes untagged.
+Widget _albumTag(int? albumId, {required Widget child}) => albumId == null
+    ? child
+    : MorphTag(
+        tag: itemTag(LibraryPageKey('album', {'albumId': albumId})),
+        child: child,
+      );
 
 /// The page's song rows, five at a time, built lazily so a long catalogue
 /// costs only the rows on screen.
@@ -280,9 +323,12 @@ class _TopSongsState extends State<_TopSongs> {
             return MediaHighlight(
               current: song.id == widget.currentId,
               child: MediaTrackRow(
-                art: LocalArtwork(
-                  size: 44,
-                  sources: [LocalArtSource.song(song)],
+                art: MorphTag(
+                  tag: trackTag(song.id),
+                  child: LocalArtwork(
+                    size: 44,
+                    sources: [LocalArtSource.song(song)],
+                  ),
                 ),
                 title: song.title,
                 byline: localByline(song, artist: false),
