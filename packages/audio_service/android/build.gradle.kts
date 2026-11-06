@@ -68,6 +68,8 @@ android {
 }
 
 dependencies {
-    implementation("androidx.media:media:1.7.0")
+    // AudioService (public) extends MediaBrowserServiceCompat, so apps that call
+    // AudioService statics must see androidx.media on their compile classpath.
+    api("androidx.media:media:1.7.0")
     implementation("androidx.core:core:1.13.1")
 }
