@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -8,13 +7,14 @@ import 'package:eq_app/visualizers/spectrum_bars/frame.dart';
 import 'package:eq_app/visualizers/spectrum_bars/geometry.dart';
 import 'package:eq_app/visualizers/spectrum_bars/presets.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 /// Power fed in place of real frames while the heard audio is silent.
 const double _floorPower = 1.5849e-13;
 
-/// Silence tick: 30 fps.
-const Duration _tick = Duration(milliseconds: 33);
+/// Silence frames are fed at most this often (about 30 per second).
+const Duration _silenceEvery = Duration(milliseconds: 30);
 const double _tickDt = 1 / 30;
 
 /// Trail presets keep drawing at least this long once silence starts, so the
@@ -45,26 +45,33 @@ class SpectrumBarsView extends StatefulWidget {
   State<SpectrumBarsView> createState() => SpectrumBarsViewState();
 }
 
-class SpectrumBarsViewState extends State<SpectrumBarsView> {
+class SpectrumBarsViewState extends State<SpectrumBarsView>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final SpectrumBarsAnalyzer _analyzer = SpectrumBarsAnalyzer(
     widget.preset,
   );
   final SpectrumBarsMesh _mesh = SpectrumBarsMesh();
   final Float32List _silence = Float32List(256)..fillRange(0, 256, _floorPower);
-  final Stopwatch _clock = Stopwatch();
+  // Newest native frame, copied here; processed by the next tick only.
+  final Float32List _pending = Float32List(256);
   final ValueNotifier<int> _repaint = ValueNotifier<int>(0);
 
+  late final Ticker _ticker = createTicker(_onTick);
   SpectrumFeed? _feed;
-  Timer? _timer;
   ui.Image? _trail;
 
-  double _time = 0;
   int _pw = 0, _ph = 0; // physical size in pixels
-  bool _hasFrame = false;
-  bool _fedSilence = false;
-  bool _quiet = false; // silence phase finished; waiting for real frames
-  int _idleTicks = 0;
-  int _silentTicks = 0;
+  double _time = 0;
+  bool _hasPending = false;
+  bool _everFrame = false;
+  bool _quiet = true; // nothing left to animate; ticker stopped
+  bool _inBackground = false;
+
+  // Ticker-clock bookkeeping, reset whenever the ticker is (re)started.
+  Duration? _lastProcessed;
+  Duration _lastRealAt = Duration.zero;
+  Duration? _silenceSince;
+  Duration? _lastSilenceAt;
 
   @visibleForTesting
   Float64List get debugBars => _analyzer.bars;
@@ -72,12 +79,18 @@ class SpectrumBarsViewState extends State<SpectrumBarsView> {
   Float64List get debugPeaks => _analyzer.peaks.pos;
   @visibleForTesting
   ui.Image? get debugTrail => _trail;
+  @visibleForTesting
+  SpectrumBarsMesh get debugMesh => _mesh;
+  @visibleForTesting
+  bool get debugTickerActive => _ticker.isActive;
+  @visibleForTesting
+  int debugProcessed = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _subscribe();
-    _timer = Timer.periodic(_tick, _onTick);
   }
 
   void _subscribe() {
@@ -86,22 +99,46 @@ class SpectrumBarsViewState extends State<SpectrumBarsView> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        if (_inBackground) return;
+        _inBackground = true;
+        _feed?.dispose();
+        _feed = null;
+        _hasPending = false;
+        if (_ticker.isActive) _ticker.stop();
+      case AppLifecycleState.resumed:
+        if (!_inBackground) return;
+        _inBackground = false;
+        _subscribe();
+        // Music may have stopped while away: let the stall rule settle it.
+        if (_everFrame && !_quiet) _startTicker();
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
+
+  @override
   void didUpdateWidget(SpectrumBarsView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.frames != widget.frames) _subscribe();
+    if (oldWidget.frames != widget.frames && !_inBackground) _subscribe();
     if (oldWidget.preset.id != widget.preset.id) {
       _analyzer.setPreset(widget.preset);
       _dropTrail();
-      _quiet = false;
-      _silentTicks = 0;
+      _silenceSince = null;
       _rebuildMesh();
       _repaint.value++;
+      if (_everFrame && !_inBackground) _startTicker();
     }
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _ticker.dispose();
     _feed?.dispose();
     _feed = null;
     _dropTrail();
@@ -114,33 +151,53 @@ class SpectrumBarsViewState extends State<SpectrumBarsView> {
     _trail = null;
   }
 
+  /// Native frame: keep only the newest, the ticker does the work.
   void _onFrame(Float32List power) {
-    double dt;
-    if (!_hasFrame || _fedSilence) {
-      dt = _tickDt;
-    } else {
-      dt = _clock.elapsedMicroseconds / 1e6;
-    }
-    _clock
-      ..reset()
-      ..start();
-    _hasFrame = true;
-    _fedSilence = false;
+    if (power.length != _pending.length) return;
+    _pending.setAll(0, power);
+    _hasPending = true;
+    _everFrame = true;
     _quiet = false;
-    _idleTicks = 0;
-    _silentTicks = 0;
-    _advance(power, dt);
+    _startTicker();
   }
 
-  void _onTick(Timer _) {
-    _idleTicks++;
-    if (_quiet || _tick * _idleTicks < widget.stallAfter) return;
-    _fedSilence = true;
-    _silentTicks++;
+  void _startTicker() {
+    _quiet = false;
+    if (_ticker.isActive) return;
+    _lastProcessed = null;
+    _lastRealAt = Duration.zero;
+    _silenceSince = null;
+    _lastSilenceAt = null;
+    _ticker.start();
+  }
+
+  void _onTick(Duration elapsed) {
+    if (_hasPending) {
+      _hasPending = false;
+      final last = _lastProcessed;
+      var dt = _tickDt;
+      if (last != null) {
+        final d = (elapsed - last).inMicroseconds / 1e6;
+        if (d > 0) dt = d;
+      }
+      _lastProcessed = elapsed;
+      _lastRealAt = elapsed;
+      _silenceSince = null;
+      _lastSilenceAt = null;
+      _advance(_pending, dt);
+      return;
+    }
+    if (elapsed - _lastRealAt < widget.stallAfter) return;
+    final since = _silenceSince ??= elapsed;
+    final lastS = _lastSilenceAt;
+    if (lastS != null && elapsed - lastS < _silenceEvery) return;
+    _lastSilenceAt = elapsed;
+    _lastProcessed = elapsed;
     _advance(_silence, _tickDt);
     if (_allSettled() &&
-        (!widget.preset.hasTrail || _tick * _silentTicks >= _trailSettle)) {
+        (!widget.preset.hasTrail || elapsed - since >= _trailSettle)) {
       _quiet = true;
+      _ticker.stop();
     }
   }
 
@@ -154,30 +211,35 @@ class SpectrumBarsViewState extends State<SpectrumBarsView> {
   }
 
   void _advance(Float32List power, double dt) {
+    debugProcessed++;
     final fps = (1 / dt).clamp(5.0, 120.0);
     final step = 1 / fps;
     _time += step;
     _analyzer.update(power, fps: fps, time: _time);
     _rebuildMesh();
-    if (widget.preset.hasTrail && _pw > 0 && _ph > 0) {
-      final w = _pw.toDouble(), h = _ph.toDouble();
-      final rec = ui.PictureRecorder();
-      paintSpectrumBarsFrame(
-        ui.Canvas(rec),
-        preset: widget.preset,
-        mesh: _mesh,
-        previous: _trail,
-        fps: fps,
-        width: w,
-        height: h,
-      );
-      final pic = rec.endRecording();
-      final next = pic.toImageSync(_pw, _ph);
-      pic.dispose();
-      _trail?.dispose();
-      _trail = next;
-    }
+    _drawTrail(fps, _trail);
     _repaint.value++;
+  }
+
+  /// Renders the next trail image (trail presets only) over [previous].
+  void _drawTrail(double fps, ui.Image? previous) {
+    if (!widget.preset.hasTrail || _pw <= 0 || _ph <= 0) return;
+    final w = _pw.toDouble(), h = _ph.toDouble();
+    final rec = ui.PictureRecorder();
+    paintSpectrumBarsFrame(
+      ui.Canvas(rec),
+      preset: widget.preset,
+      mesh: _mesh,
+      previous: previous,
+      fps: fps,
+      width: w,
+      height: h,
+    );
+    final pic = rec.endRecording();
+    final next = pic.toImageSync(_pw, _ph);
+    pic.dispose();
+    _trail?.dispose();
+    _trail = next;
   }
 
   void _rebuildMesh() {
@@ -204,7 +266,10 @@ class SpectrumBarsViewState extends State<SpectrumBarsView> {
     _pw = pw;
     _ph = ph;
     _dropTrail();
-    _mesh.vertexCount = 0;
+    // Keep the resting picture: rebuild at the new size from the current
+    // bars and peaks, and redraw a fresh trail frame.
+    _rebuildMesh();
+    _drawTrail(60, null);
   }
 
   @override

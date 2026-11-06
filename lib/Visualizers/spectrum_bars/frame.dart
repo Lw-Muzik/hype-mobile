@@ -86,6 +86,14 @@ _WarpGrid _gridFor(double w, double h, double zoom, double zoomExp) {
   return _grid = _WarpGrid(w, h, zoom, zoomExp);
 }
 
+/// The warp is defined per 60 fps frame. Apply it as if 60 / fps frames had
+/// elapsed (zoom ^ (60 / fps)); the exponent is quantised to 1/8 so a jittery
+/// frame time does not rebuild the vertex grid every frame.
+double _frameZoom(double zoom, double fps) {
+  final k = (60 / fps * 8).round() / 8;
+  return k == 1 ? zoom : math.pow(zoom, k).toDouble();
+}
+
 /// Draws one frame: black, the previous frame decayed (and, with zoom != 1,
 /// warped), then the bars.
 void paintSpectrumBarsFrame(
@@ -115,7 +123,8 @@ void paintSpectrumBarsFrame(
       );
       paint.shader = shader;
       canvas.drawVertices(
-        _gridFor(width, height, preset.zoom, preset.zoomExp).vertices,
+        _gridFor(width, height, _frameZoom(preset.zoom, fps), preset.zoomExp)
+            .vertices,
         ui.BlendMode.srcOver,
         paint,
       );

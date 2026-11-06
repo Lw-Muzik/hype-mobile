@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import '/Helpers/audio_visualizer.dart';
+import '/helpers/audio_visualizer.dart';
 import '/routes/routes.dart';
 import '/controllers/app_controller.dart';
 import '/widgets/body.dart';
@@ -927,6 +927,8 @@ class _SettingsState extends State<Settings> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
+          // Reactivity and beat sensitivity do nothing for the spectrum styles
+          if (!isSpectrumBarsStyle(controller.visualizerStyle)) ...[
           // Reactivity slider
           ListTile(
             title: const Text("Reactivity"),
@@ -984,6 +986,7 @@ class _SettingsState extends State<Settings> {
               ],
             ),
           ),
+          ],
         ]),
 
         // MilkDrop settings (Android only, shown when milkdrop style is active)

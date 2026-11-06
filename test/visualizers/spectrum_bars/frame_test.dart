@@ -126,43 +126,58 @@ void main() {
     });
   });
 
+  Future<double> dotsCentroid(int frames, double fps) async {
+    // A 4 px wide bright bar centred on x = 180. A one pixel column would be
+    // smeared to nothing by the filtered sampling before 50 frames pass.
+    final rec = ui.PictureRecorder();
+    ui.Canvas(rec)
+      ..drawRect(
+        const ui.Rect.fromLTWH(0, 0, 200, 200),
+        ui.Paint()..color = const ui.Color(0xFF000000),
+      )
+      ..drawRect(
+        const ui.Rect.fromLTWH(178, 0, 4, 200),
+        ui.Paint()..color = const ui.Color(0xFFFFFFFF),
+      );
+    var img = await rec.endRecording().toImage(200, 200);
+    for (var i = 0; i < frames; i++) {
+      final next = await _render(
+        'dots',
+        SpectrumBarsMesh(),
+        200,
+        200,
+        previous: img,
+        fps: fps,
+      );
+      img.dispose();
+      img = next;
+    }
+    final d = await _pixels(img);
+    var sum = 0.0, weighted = 0.0;
+    for (var x = 0; x < 200; x++) {
+      final v = _px(d, 200, x, 100)[0].toDouble();
+      sum += v;
+      weighted += v * (x + 0.5);
+    }
+    expect(sum, greaterThan(0));
+    return weighted / sum;
+  }
+
   testWidgets('dots trail drifts inward', (tester) async {
     await tester.runAsync(() async {
-      // A 4 px wide bright bar centred on x = 180. A one pixel column would be
-      // smeared to nothing by the filtered sampling before 50 frames pass.
-      final rec = ui.PictureRecorder();
-      ui.Canvas(rec)
-        ..drawRect(
-          const ui.Rect.fromLTWH(0, 0, 200, 200),
-          ui.Paint()..color = const ui.Color(0xFF000000),
-        )
-        ..drawRect(
-          const ui.Rect.fromLTWH(178, 0, 4, 200),
-          ui.Paint()..color = const ui.Color(0xFFFFFFFF),
-        );
-      var img = await rec.endRecording().toImage(200, 200);
-      for (var i = 0; i < 50; i++) {
-        final next = await _render(
-          'dots',
-          SpectrumBarsMesh(),
-          200,
-          200,
-          previous: img,
-          fps: 60,
-        );
-        img.dispose();
-        img = next;
-      }
-      final d = await _pixels(img);
-      var sum = 0.0, weighted = 0.0;
-      for (var x = 0; x < 200; x++) {
-        final v = _px(d, 200, x, 100)[0].toDouble();
-        sum += v;
-        weighted += v * (x + 0.5);
-      }
-      expect(sum, greaterThan(0));
       // Content at 80 px from the centre shrinks by 1.001007^50 (about 4 px).
-      expect(weighted / sum, closeTo(176, 2));
+      expect(await dotsCentroid(50, 60), closeTo(176, 2));
+    });
+  });
+
+  testWidgets('dots drift is fps-compensated: 25 frames at 30 fps ~ 50 at 60', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final at60 = await dotsCentroid(50, 60);
+      final at30 = await dotsCentroid(25, 30);
+      expect(at30, closeTo(176, 2));
+      expect((at30 - at60).abs(), lessThan(1.0));
     });
   });
 }

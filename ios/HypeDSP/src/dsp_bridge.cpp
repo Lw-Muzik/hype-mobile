@@ -5,6 +5,7 @@
 #include "stems/stem_engine.h"
 #include "stems_ios/av_pcm_source.h"
 #include "bar_spectrum.h"
+#include "spectrum_window.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -393,6 +394,11 @@ int dsp_bar_spectrum(const float* mono, int decim, float* out256) {
     if (!mono || !out256) return 0;
     spectrum->compute(mono, decim, out256);
     return BarSpectrum::kBins;
+}
+
+int64_t dsp_spectrum_window_end(int64_t prevCount, int64_t latestCount,
+                                double ageSeconds, int sampleRate) {
+    return spectrumWindowEnd(prevCount, latestCount, ageSeconds, sampleRate);
 }
 
 } // extern "C"

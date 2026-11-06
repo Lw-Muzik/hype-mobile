@@ -23,6 +23,11 @@ undefined=$(comm -23 "$T/hdr.txt" "$T/cpp.txt" || true)
 [ -z "$undeclared" ] || { echo "used but undeclared:"; echo "$undeclared"; exit 1; }
 [ -z "$undefined" ] || { echo "declared but undefined:"; echo "$undefined"; exit 1; }
 
+echo "[3b] feed reads host time and the walk function"
+grep -q mach_absolute_time ios/Runner/HypeAudioTap.m
+grep -q dsp_spectrum_window_end ios/Runner/HypeAudioTap.m
+grep -q bandTime ios/Runner/HypeAudioTap.m
+
 echo "[4] dsp_bridge.cpp C++ syntax"
 clang -fsyntax-only -x c++ -std=c++17 -I ios/HypeDSP/src -I ios/HypeDSP/include "$CPP"
 

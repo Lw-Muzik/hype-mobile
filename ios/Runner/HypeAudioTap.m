@@ -2,6 +2,7 @@
 #import <MediaToolbox/MediaToolbox.h>
 #import <Accelerate/Accelerate.h>
 #import <HypeDSP/dsp_bridge.h>
+#import <mach/mach_time.h>
 #import <os/lock.h>
 #import <pthread.h>
 
@@ -84,7 +85,13 @@ typedef struct {
     // Full-rate mono audio for the band levels (audio thread writes).
     float bandRing[BAND_RING];
     int64_t bandWritten;      // atomic: samples written
-    int64_t spectrumSeen;     // bandWritten at the last takeSpectrum (main thread only)
+    // Newest completed buffer: where it started and when it finished (host
+    // time). Published under bandSeq (odd while the audio thread writes) so
+    // the main thread reads a consistent pair without a lock.
+    int64_t bandPrev;
+    uint64_t bandTime;
+    uint32_t bandSeq;         // atomic
+    int64_t spectrumSeen;     // window end at the last takeSpectrum (main thread only)
 } TapContext;
 
 static void designBassBiquad(double *c, int highPass, double fc, double fs) {
@@ -139,7 +146,15 @@ static void captureBass(TapContext *ctx, const float *interleaved, int numFrames
             ctx->bassFill = 0;
         }
     }
+    // Time stamp for the spectrum window walk (see takeSpectrum). No locks, no
+    // allocation: three plain stores between two sequence bumps.
+    const uint32_t seq = __atomic_load_n(&ctx->bandSeq, __ATOMIC_RELAXED);
+    __atomic_store_n(&ctx->bandSeq, seq + 1, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    ctx->bandPrev = bandStart;
+    ctx->bandTime = mach_absolute_time();
     __atomic_store_n(&ctx->bandWritten, bandStart + numFrames, __ATOMIC_RELEASE);
+    __atomic_store_n(&ctx->bandSeq, seq + 2, __ATOMIC_RELEASE);
     __atomic_store_n(&ctx->bassWritten, written, __ATOMIC_RELEASE);
 }
 
@@ -664,11 +679,35 @@ static void tap_Process(MTAudioProcessingTapRef tap,
     if (!ctx) return nil;
     const int decim = dsp_bar_spectrum_decimation(ctx->sampleRate);
     const int64_t need = 512 * (int64_t)decim;
-    const int64_t end = __atomic_load_n(&ctx->bandWritten, __ATOMIC_ACQUIRE);
+
+    // The tap hands over ~4096 frames at a time. Android's window end follows
+    // the playback clock, so do the same here: walk the end through the newest
+    // completed buffer in real time, one buffer behind, so a frame is due on
+    // every display tick rather than once per buffer.
+    int64_t prev = 0, latest = 0;
+    uint64_t stamp = 0;
+    bool consistent = false;
+    for (int tries = 0; tries < 4 && !consistent; tries++) {
+        const uint32_t s1 = __atomic_load_n(&ctx->bandSeq, __ATOMIC_ACQUIRE);
+        if (s1 & 1) continue;
+        prev = ctx->bandPrev;
+        stamp = ctx->bandTime;
+        latest = __atomic_load_n(&ctx->bandWritten, __ATOMIC_RELAXED);
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        consistent = __atomic_load_n(&ctx->bandSeq, __ATOMIC_RELAXED) == s1;
+    }
+    if (!consistent) return nil;  // audio thread mid-write every time; next tick
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    const uint64_t now = mach_absolute_time();
+    const double age = now > stamp
+        ? (double)(now - stamp) * tb.numer / tb.denom * 1e-9 : 0.0;
+    int64_t end = dsp_spectrum_window_end(prev, latest, age, ctx->sampleRate);
+    // Stay inside the ring: the next buffer may overwrite its oldest part.
+    const int64_t oldest = latest - BAND_RING + MAX_SCRATCH_FRAMES + need;
+    if (end < oldest) end = oldest;
     if (end < need || end == ctx->spectrumSeen) return nil;
     ctx->spectrumSeen = end;
-    // 512 * 8 = 4096 samples at most; the ring holds 16384, so the audio
-    // thread cannot lap the oldest sample while it is copied.
     float mono[512 * 8];
     for (int64_t i = 0; i < need; i++) {
         mono[i] = ctx->bandRing[(end - need + i) % BAND_RING];

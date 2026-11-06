@@ -19,14 +19,16 @@ fi
 
 out="${TMPDIR:-/tmp}/hype_bar_spectrum_test"
 mkdir -p "$out"
-for t in bar_spectrum_test fft_visualizer_spectrum_test; do
+for t in bar_spectrum_test fft_visualizer_spectrum_test spectrum_window_test; do
   clang++ -std=c++17 -O2 -Wall -Wextra \
     -I"$repo/android/app/src/main/cpp" \
+    -I"$repo/ios/HypeDSP/src" \
     "$here/$t.cpp" \
     -o "$out/$t"
 done
 
 "$out/bar_spectrum_test"
 "$out/fft_visualizer_spectrum_test"
+"$out/spectrum_window_test"
 
 "$here/ios_checks.sh"

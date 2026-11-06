@@ -138,6 +138,17 @@ int  dsp_bar_spectrum_decimation(int sampleRate);
 // `out256` and returns 256 (0 on a null pointer).
 int  dsp_bar_spectrum(const float* mono, int decim, float* out256);
 
+// Where the spectrum window ends now, in samples counted since the tap began.
+// The tap delivers audio in big buffers; the window end is walked through the
+// newest completed buffer in real time, one buffer behind:
+//   prevCount   samples written before the newest buffer
+//   latestCount samples written including the newest buffer
+//   ageSeconds  time since the newest buffer completed
+// Returns prevCount + age * sampleRate clamped to [prevCount, latestCount]
+// (latestCount once the age passes two buffer periods: paused or stalled).
+int64_t dsp_spectrum_window_end(int64_t prevCount, int64_t latestCount,
+                                double ageSeconds, int sampleRate);
+
 #ifdef __cplusplus
 }
 #endif

@@ -91,4 +91,27 @@ void main() {
     feed.dispose();
     await ctrl.close();
   });
+
+  for (final order in [
+    [0, 1, 2],
+    [2, 1, 0],
+    [1, 2, 0],
+  ]) {
+    test('ref-count: two feeds + one visualizer, dispose order $order',
+        () async {
+      final a = SpectrumFeed(onFrame: (_) {});
+      final b = SpectrumFeed(onFrame: (_) {});
+      final other = AudioVisualizer(channel: Channel.channel)..activate(0);
+      final all = <void Function()>[a.dispose, b.dispose, other.dispose];
+      expect(calls.where((c) => c == 'activate_visualizer'), hasLength(1));
+      for (var i = 0; i < order.length; i++) {
+        all[order[i]]();
+        final deactivations =
+            calls.where((c) => c == 'deactivate_visualizer').length;
+        expect(deactivations, i == order.length - 1 ? 1 : 0,
+            reason: 'after disposing ${i + 1} of 3');
+      }
+      expect(calls.where((c) => c == 'activate_visualizer'), hasLength(1));
+    });
+  }
 }

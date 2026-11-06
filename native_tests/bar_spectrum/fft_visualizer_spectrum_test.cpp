@@ -116,12 +116,23 @@ static void heard_end_index() {
     CHECK(p >= 9 && p <= 10);
 }
 
+static void counter_saturates() {
+    std::printf("samplesAvailable_ saturates (spectrum-only sink)\n");
+    auto v = std::make_unique<FFTVisualizer>();
+    std::vector<float> st(65536 * 2, 0.25f);
+    // 2^31 + 2^21 frames pushed, nothing ever resets the counter.
+    for (int i = 0; i < 32768 + 32; i++) v->pushSamples(st.data(), 65536);
+    float bands[64];
+    CHECK(v->computeBands(bands));  // a wrapped counter would be negative
+}
+
 int main() {
     sine_48k();
     too_few_samples();
     sine_96k();
     advancing_end_without_pushes();
     heard_end_index();
+    counter_saturates();
     std::printf("%d checks, %d failures\n", gChecks, gFailures);
     return gFailures ? 1 : 0;
 }

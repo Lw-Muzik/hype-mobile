@@ -968,7 +968,7 @@ ProjectM (local)   (MilkDrop visualizer)
 
 **Visualizer**: `visualizerStyle`, `visualizerColor`, `visualizerFrameRate`, `visualizerReactivity`, `visualizerBeatSensitivity`, `milkdropFps`, `milkdropBeatSensitivity`, `milkdropPresetDuration`, `milkdropPresetLocked`, `milkdropPresetName`, `milkdropQuality`
 
-**UI**: `songGridExtent`, `visuals`, `blur`, `bgQuality`, `selectedTheme`, `fancyMode`, `isVisualInBackground`
+**UI**: `songGridExtent`, `visuals`, `blur`, `bgQuality`, `selectedTheme`, `fancyMode`
 
 **App Mode**: `appMode` (int)
 
@@ -1117,9 +1117,19 @@ lib/
 │   ├── onboarding_screen.dart         # Tutorial pages
 │   ├── coach_marks.dart               # Spotlight walkthrough
 │   └── home_guide.dart                # Home-specific guide
-├── Visualizers/
-│   ├── poweramp_visualizers.dart      # Radial, Mirror, Waveform
-│   ├── 3d_visualizers.dart            # Neon Grid, 3D Ring, Particles
+├── visualizers/
+│   ├── radial_burst_painter.dart      # Radial burst painter
+│   ├── waveform_line_painter.dart     # Waveform line painter
+│   ├── visualizer_styles.dart         # Style registry
+│   ├── spectrum_bars/                 # Built-in spectrum styles
+│   │   ├── presets.dart               # Preset definitions
+│   │   ├── analyzer.dart              # Smoothing, peaks, trails
+│   │   ├── geometry.dart              # Bar / mesh geometry
+│   │   ├── frame.dart                 # Frame rendering
+│   │   └── spectrum_bars_view.dart    # Widget (ticker driven)
+│   ├── bass_beat.dart, beat_detector.dart, beat_frame.dart
+│   ├── radial_motion.dart, radial_scene.dart
+│   ├── multiwave_visualizer.dart
 │   └── wave-visualizer.dart           # Wave visualizer
 ├── Routes/routes.dart                 # Navigation + transitions
 ├── Global/index.dart                  # Shared widgets, loadAudioSource

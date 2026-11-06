@@ -93,7 +93,14 @@ public:
             ringBuf_[(first + i) & RING_MASK] = mono;
         }
         writePos_.store(first + numFrames, std::memory_order_release);
-        samplesAvailable_.fetch_add(numFrames, std::memory_order_release);
+        // Saturate instead of wrapping: with only the spectrum sink attached
+        // nothing resets this counter. CAS keeps the viz thread's reset safe.
+        int cur = samplesAvailable_.load(std::memory_order_relaxed);
+        int next;
+        do {
+            next = cur >= RING_SIZE - numFrames ? RING_SIZE : cur + numFrames;
+        } while (!samplesAvailable_.compare_exchange_weak(
+            cur, next, std::memory_order_release, std::memory_order_relaxed));
         return first;
     }
 
