@@ -93,6 +93,13 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   bool _rootHook = false;
   bool _rubberMode = false;
 
+  /// A system back gesture owns the swipe until it has settled. One edge swipe
+  /// also reaches the swipe detector until the system takes its pointers, in
+  /// either order; those callbacks are ignored here, or the swipe would start
+  /// twice and leave the navigator stuck in a user gesture, with every page in
+  /// it ignoring touches.
+  bool _systemSwipe = false;
+
   /// The route on top of the nested navigator (a sheet or menu is not a page).
   Route<dynamic>? _top;
 
@@ -401,9 +408,10 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   bool get _topOpening =>
       _stack.lastOrNull?.animation?.status == AnimationStatus.forward;
 
-  /// Whether the swipe may start now: nothing is mid-pop, no sheet is open and
-  /// the top page has finished opening.
-  bool get _canStartSwipe => _busy == 0 && _pageOnTop && !_topOpening;
+  /// Whether the swipe may start now: no swipe is running, nothing is mid-pop,
+  /// no sheet is open and the top page has finished opening.
+  bool get _canStartSwipe =>
+      _swipe == null && _busy == 0 && _pageOnTop && !_topOpening;
 
   ReleaseRules _rules(double width, int dir) {
     final r = ReleaseRules.backSwipe.forExtent(width);
@@ -426,6 +434,7 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   double get _width => _layerSize.width <= 0 ? 360.0 : _layerSize.width;
 
   void _swipeStart() {
+    if (_systemSwipe) return;
     _rubberReturn.stop();
     if (_settling && _swipe != null && _swipeRoute != null) {
       // Grabbed again while it settles: carry on from where it is.
@@ -476,6 +485,7 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   }
 
   void _swipeUpdate(double signed) {
+    if (_systemSwipe) return;
     if (_regrab) {
       _swipe?.dragTo(_base + signed * _dir);
       return;
@@ -507,6 +517,7 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   /// [velocity] is progress per second in the screen's own direction (positive
   /// to the right).
   Future<void> _swipeEnd(double velocity) async {
+    if (_systemSwipe) return;
     if (!_active && !_regrab) {
       _dir = 0;
       return;
@@ -581,6 +592,7 @@ class LibraryNavigatorState extends State<LibraryNavigator>
     _swipeRoute = null;
     _swipeParent = null;
     _active = false;
+    _systemSwipe = false;
     _dir = 0;
     try {
       // The route is gone when the library was hidden mid-settle and showPath
@@ -606,6 +618,7 @@ class LibraryNavigatorState extends State<LibraryNavigator>
   }
 
   void _swipeCancel() {
+    if (_systemSwipe) return;
     if (!_active) {
       _dir = 0;
       return;
@@ -661,19 +674,23 @@ class LibraryNavigatorState extends State<LibraryNavigator>
 
   @override
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
-    // A finger swipe still settling owns the stack.
-    if (!systemBackEnabled ||
-        _stack.length < 2 ||
-        !_canStartSwipe ||
-        _swipe != null) {
-      return false;
+    if (!systemBackEnabled) return false;
+    // The finger got there first and the system is about to take its pointers:
+    // the system carries on with the same swipe.
+    if (_swipe != null && _active && !_settling) {
+      _regrab = false;
+      _systemSwipe = true;
+      return true;
     }
+    // A finger swipe still settling owns the stack.
+    if (_stack.length < 2 || !_canStartSwipe) return false;
     _swipeStart();
     // From the right edge the page leaves leftward (the mirrored look).
     final dir = backEvent.swipeEdge == SwipeEdge.right ? -1 : 1;
     if (!_begin(dir)) return false;
     _dir = dir;
     _active = true;
+    _systemSwipe = true;
     return true;
   }
 
