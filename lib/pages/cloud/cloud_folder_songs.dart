@@ -73,21 +73,26 @@ class _CloudFolderSongsState extends State<CloudFolderSongs>
     try {
       final models = <SongModel>[];
       final urls = <String>[];
-      for (final file in widget.files) {
+      // Dropbox needs one request per file. One after another, a 200-song
+      // folder sat on its shimmer for a minute before anything could play; six
+      // at a time it is a few seconds. Results are kept in the folder's order.
+      const width = 6;
+      final files = widget.files;
+      for (var i = 0; i < files.length; i += width) {
+        if (!mounted) return;
+        final group = files.sublist(
+          i,
+          files.length < i + width ? files.length : i + width,
+        );
         // Prefer cached version — may have preloaded ID3 metadata.
-        final enriched = cachedMap[file.fileId] ?? file;
-        String? streamUrl;
-        if (enriched.provider == CloudProvider.googleDrive) {
-          streamUrl = controller.googleDriveService.getStreamUrl(
-            enriched.fileId,
-          );
-        } else {
-          streamUrl = await controller.dropboxService.getTemporaryLink(
-            enriched.fileId,
-          );
-        }
-        if (streamUrl != null) {
-          models.add(enriched.toSongModel(streamUrl));
+        final enriched = [for (final f in group) cachedMap[f.fileId] ?? f];
+        final links = await Future.wait([
+          for (final file in enriched) _linkFor(controller, file),
+        ]);
+        for (var j = 0; j < enriched.length; j++) {
+          final streamUrl = links[j];
+          if (streamUrl == null) continue;
+          models.add(enriched[j].toSongModel(streamUrl));
           urls.add(streamUrl);
         }
       }
@@ -109,6 +114,15 @@ class _CloudFolderSongsState extends State<CloudFolderSongs>
         });
       }
     }
+  }
+
+  /// The playable link for one drive file: Google Drive's is a fixed address,
+  /// Dropbox's is a temporary link that costs a request to mint.
+  Future<String?> _linkFor(AppController controller, CloudFile file) async {
+    if (file.provider == CloudProvider.googleDrive) {
+      return controller.googleDriveService.getStreamUrl(file.fileId);
+    }
+    return controller.dropboxService.getTemporaryLink(file.fileId);
   }
 
   /// Extracts metadata for files that haven't been processed yet.

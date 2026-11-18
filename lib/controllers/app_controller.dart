@@ -2118,7 +2118,7 @@ class AppController with ChangeNotifier implements StationSink {
       cloudCache,
       googleDriveService,
       dropboxService,
-    );
+    )..isPlaying = () => handler.player.playing;
     _initCloudServices();
 
     // Hands the stems engine its YouTube exclusions and looks for the model.
@@ -4152,7 +4152,12 @@ class AppController with ChangeNotifier implements StationSink {
     }
 
     switch (recoveryFor(
-      isStream: song.ytVideoId != null,
+      // A drive track is a stream too: its link or sign-in token can be
+      // renewed. Treating it as a file that "will not open differently next
+      // time" is what made one expired token skip straight through the rest of
+      // the queue — each skip landing on another track with the same stale
+      // token — until the queue ran out.
+      isStream: song.ytVideoId != null || song.cloudFileId != null,
       attempts: _rescueAttempts,
       hasNext: index < songs.length - 1,
     )) {
@@ -4162,16 +4167,22 @@ class AppController with ChangeNotifier implements StationSink {
         // handler reports only changes — so without this a second dead url
         // would look like an echo of the first and go unanswered.
         handler.clearPlaybackError();
-        // A new session, not merely a new request. The url was not refused
-        // because it aged — it was minted by a session YouTube decided would
-        // need a proof-of-origin token, and every url that session mints will
-        // be refused the same way. Asking again on it produces another dead
-        // link; drawing a new one is the whole of the fix.
-        await YtMusicRepository.instance.resetSession();
-        // Everything the burned session minted is dead, not just this track, so
-        // the whole queue is marked for re-resolution — otherwise the next
-        // track looks fresh, is loaded unasked, and fails identically.
-        _staleAllStreamTargets();
+        if (song.ytVideoId != null) {
+          // A new session, not merely a new request. The url was not refused
+          // because it aged — it was minted by a session YouTube decided would
+          // need a proof-of-origin token, and every url that session mints will
+          // be refused the same way. Asking again on it produces another dead
+          // link; drawing a new one is the whole of the fix.
+          await YtMusicRepository.instance.resetSession();
+          // Everything the burned session minted is dead, not just this track,
+          // so the whole queue is marked for re-resolution — otherwise the next
+          // track looks fresh, is loaded unasked, and fails identically.
+          _staleAllStreamTargets();
+        } else {
+          // A drive track: just this entry. `loadTrackAt` renews its link and
+          // the sign-in token is fetched again as it loads.
+          _replaceSong(song.id, song.markStale());
+        }
         await loadTrackAt(index);
       case PlaybackRecovery.skip:
         // Deliberately not `next()`. That honours the loop mode, and under
@@ -4204,7 +4215,12 @@ class AppController with ChangeNotifier implements StationSink {
     if (!song.needsRefresh(staged: VideoRegistry.instance.isVideo(song.id))) {
       return;
     }
-    if (videoId == null) return;
+    if (videoId == null) {
+      // Not YouTube: a drive track whose link has aged out, or that a failure
+      // marked stale.
+      await _refreshCloudTarget(song);
+      return;
+    }
 
     try {
       if (song.isYtVideo) {
@@ -4226,6 +4242,38 @@ class AppController with ChangeNotifier implements StationSink {
       // playback error path takes it from here rather than this becoming a
       // second, competing failure mode.
       debugPrint('Re-resolve failed for $videoId: $e');
+    }
+  }
+
+  /// Makes a drive entry good again.
+  ///
+  /// Dropbox: a new temporary link, good for [dropboxLinkLifetime]. The
+  /// queue holds one minted when the folder was opened — one request per file —
+  /// and it dies a few hours later, long before a queue's life is over.
+  ///
+  /// Google Drive: the link is permanent and there is nothing to ask for; what
+  /// died was the sign-in token the player was handed with it, and that is
+  /// fetched fresh as the track loads. All that is left to do is clear the
+  /// stale mark, so the entry stops asking to be renewed.
+  Future<void> _refreshCloudTarget(SongModel song) async {
+    final fileId = song.cloudFileId;
+    if (fileId == null) return;
+    try {
+      var url = song.data;
+      int? expiresAt;
+      if (song.cloudProviderIndex == CloudProvider.dropbox.index) {
+        final link = await dropboxService.getTemporaryLink(fileId);
+        // No link: leave the entry as it is. The player's own error path
+        // takes it from here, rather than this becoming a second failure mode.
+        if (link == null) return;
+        url = link;
+        expiresAt =
+            DateTime.now().add(dropboxLinkLifetime).millisecondsSinceEpoch ~/
+            1000;
+      }
+      _replaceSong(song.id, song.withTarget(url, expiresAt));
+    } catch (e) {
+      debugPrint('Re-resolve failed for cloud file $fileId: $e');
     }
   }
 
@@ -4679,19 +4727,35 @@ class AppController with ChangeNotifier implements StationSink {
   }
 
   /// Pre-cache the next [count] cloud tracks in the queue.
-  void preCacheNextCloudTracks({int count = 2}) {
-    for (int i = songId + 1; i <= songId + count && i < songs.length; i++) {
-      final song = songs[i];
-      if (!song.data.startsWith('http')) continue;
-      // A video is megabytes per minute and its manifest expires; pre-fetching
-      // one into a cache keyed by song id would spend a phone's data plan on
-      // something that has to be re-resolved before it can play anyway.
-      if (VideoRegistry.instance.isVideo(song.id)) continue;
-      final fileId = song.id.toString();
-      if (cloudCache.isCached(fileId)) continue;
-      // Fire-and-forget
-      _preCacheSingle(song, fileId);
-    }
+  ///
+  /// Runs on every `ready` event — a track change, a seek, each rebuffer — so
+  /// it has to cost almost nothing when there is nothing to do. It used to be
+  /// one of three places that started downloads on a track change, the only
+  /// one that asked nobody's permission: it fetched the next two songs whole,
+  /// on any network, YouTube streams included (which the cache never serves).
+  ///
+  /// Now: only a drive file, only on a network the listener has agreed to
+  /// spend on (Wi-Fi unless they said otherwise, and short of their data
+  /// limit), and never while a download is already running — the downloader
+  /// holds one at a time, so the next ask simply comes with the next event.
+  void preCacheNextCloudTracks({int count = 1}) {
+    try {
+      if (!StreamingDataGuard.instance.shouldPrefetch()) return;
+      if (cloudCache.isBusy) return;
+      for (int i = songId + 1; i <= songId + count && i < songs.length; i++) {
+        final song = songs[i];
+        if (!isCloudCacheable(song.data)) continue;
+        // A video is megabytes per minute and its manifest expires; pre-fetching
+        // one into a cache keyed by song id would spend a phone's data plan on
+        // something that has to be re-resolved before it can play anyway.
+        if (VideoRegistry.instance.isVideo(song.id)) continue;
+        final fileId = song.id.toString();
+        if (cloudCache.isCached(fileId) || cloudCache.isActive(fileId)) continue;
+        // Fire-and-forget
+        unawaited(_preCacheSingle(song, fileId));
+        return; // one at a time
+      }
+    } catch (_) {}
   }
 
   Future<void> _preCacheSingle(SongModel song, String fileId) async {
@@ -4699,7 +4763,16 @@ class AppController with ChangeNotifier implements StationSink {
       final headers = song.data.contains('googleapis.com')
           ? await cloudAuth.getGoogleAuthHeaders()
           : <String, String>{};
-      await cloudCache.preCacheTrack(song.data, fileId, headers);
+      // On cellular — reached only if the listener allowed prefetching there —
+      // take just the first ~30 s (512 KB at 128 kbps); a whole song would
+      // spend their plan on something they may skip.
+      await cloudCache.preCacheTrack(
+        song.data,
+        fileId,
+        headers,
+        maxBytes: StreamingDataGuard.instance.isCellular ? 512 * 1024 : 0,
+        expectedBytes: song.size,
+      );
     } catch (_) {}
   }
 }

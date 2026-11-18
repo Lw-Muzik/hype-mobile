@@ -22,6 +22,13 @@ class CloudMetadataService {
   /// Max concurrent extractions to avoid hammering APIs.
   static const _maxConcurrent = 3;
 
+  /// The gap between files while something is playing.
+  static const _pauseWhilePlaying = Duration(seconds: 3);
+
+  /// Whether music is playing right now; set by the app. While it is, the
+  /// preload slows to a trickle instead of competing with the stream.
+  bool Function()? isPlaying;
+
   /// Track active runs per provider so we can cancel on disconnect.
   int _gdriveRunId = 0;
   int _dropboxRunId = 0;
@@ -113,22 +120,31 @@ class CloudMetadataService {
       pendingUpdates.clear();
     }
 
-    // Process in batches of _maxConcurrent.
-    for (int i = 0; i < pending.length; i += _maxConcurrent) {
+    // Process in batches of _maxConcurrent — or, while music is playing, one
+    // file at a time with a pause between. This runs at every launch until the
+    // whole library is read, and each file is a network round trip plus a
+    // native metadata read; at three at a time it competed with the song being
+    // streamed for the connection and the CPU, and every 30 files re-wrote the
+    // whole stored library on the main isolate. Listening comes first.
+    var i = 0;
+    while (i < pending.length) {
       // Check if this run was superseded or cancelled — keep what we have.
       if (!_isRunActive(provider, runId)) {
         flushUpdates();
         return;
       }
 
-      final end = (i + _maxConcurrent).clamp(0, pending.length);
+      final playing = isPlaying?.call() ?? false;
+      final end = (i + (playing ? 1 : _maxConcurrent)).clamp(0, pending.length);
       final batch = pending.sublist(i, end);
+      i = end;
 
       final results = await Future.wait(
         batch.map((file) => _extractSingle(file, tempDir, provider, runId)),
       );
       pendingUpdates.addAll(results.whereType<CloudFile>());
       if (pendingUpdates.length >= 30) flushUpdates();
+      if (playing) await Future<void>.delayed(_pauseWhilePlaying);
     }
     flushUpdates();
 

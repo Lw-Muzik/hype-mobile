@@ -1,6 +1,14 @@
 import '/exports/exports.dart';
+import 'track_extras.dart';
 
 enum CloudProvider { googleDrive, dropbox }
+
+/// How long a Dropbox temporary link is trusted.
+///
+/// Dropbox says four hours; three leaves room for a queue that was built a
+/// little before it was played. Past this a queue entry is renewed before it is
+/// opened, like a YouTube one, instead of being handed to the player to fail.
+const dropboxLinkLifetime = Duration(hours: 3);
 
 class CloudFile {
   final CloudProvider provider;
@@ -80,6 +88,15 @@ class CloudFile {
       "_display_name_wo_ext": name.split('.').first,
       "_size": size,
       "file_extension": name.split('.').last,
+      // Where the track came from, so a dead link — or a stale sign-in token —
+      // can be made good again from the queue entry alone. A Google Drive link
+      // never expires, so it records no deadline; a Dropbox one lasts hours.
+      TrackKeys.cloudProvider: provider.index,
+      TrackKeys.cloudFileId: fileId,
+      if (provider == CloudProvider.dropbox)
+        TrackKeys.expiresAt:
+            DateTime.now().add(dropboxLinkLifetime).millisecondsSinceEpoch ~/
+            1000,
     });
   }
 

@@ -2,19 +2,32 @@ import Flutter
 import UIKit
 import AVFoundation
 
+/// The app delegate under the UIScene life cycle.
+///
+/// iOS 27 refuses to launch an app built with its SDK unless it has adopted
+/// scenes (it is how the iPhone Duo's two displays and its fold/unfold resize
+/// reach an app). Under scenes the window belongs to the scene, so
+/// `AppDelegate.window` is nil for the whole life of the app and nothing here
+/// may reach the Flutter view controller through it. Everything that needs the
+/// engine — plugins, channels, the texture registry — is therefore set up in
+/// [didInitializeImplicitFlutterEngine], which hands over the engine's own
+/// messenger and registry.
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate,
+    FlutterSceneLifeCycleDelegate
+{
     private let dsp = DSPManager.shared
     private var visualizerTimer: CADisplayLink?
     private var visualizerChannel: FlutterMethodChannel?
     private var projectMRenderer: ProjectMRenderer?
+    /// The engine's texture registry, for projectM. Kept here because there is
+    /// no window to ask for the engine any more.
+    private var textureRegistry: FlutterTextureRegistry?
 
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
-        GeneratedPluginRegistrant.register(with: self)
-
         // Configure audio session for playback
         let session = AVAudioSession.sharedInstance()
         do {
@@ -29,10 +42,28 @@ import AVFoundation
         let sampleRate = Int(session.sampleRate)
         dsp.initialize(sampleRate: sampleRate > 0 ? sampleRate : 48000)
 
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+
+    /// Called once the engine the storyboard's `FlutterViewController` creates
+    /// exists. The scene-era home of everything that used to run in
+    /// `didFinishLaunching` against `window?.rootViewController`: plugins, the
+    /// app's own channels, and the engine's texture registry.
+    func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+        GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+        let messenger = engineBridge.applicationRegistrar.messenger()
+        textureRegistry = engineBridge.applicationRegistrar.textures()
+
+        // Scene events (file opens) are delivered to registered delegates, and
+        // a plugin registrar is how an app registers one.
+        engineBridge.pluginRegistry.registrar(forPlugin: "HypeSceneEvents")?
+            .addSceneDelegate(self)
+
         // Set up MethodChannel
-        if let controller = window?.rootViewController as? FlutterViewController {
+        do {
             let channel = FlutterMethodChannel(name: "eq_app",
-                                                binaryMessenger: controller.binaryMessenger)
+                                                binaryMessenger: messenger)
             channel.setMethodCallHandler { [weak self] call, result in
                 self?.handleMethodCall(call, result: result)
             }
@@ -41,10 +72,10 @@ import AVFoundation
             visualizerChannel = channel
 
             // Live stems: engine init + status events (HypeDSP/src/stems)
-            StemsBridge.shared.attach(messenger: controller.binaryMessenger)
+            StemsBridge.shared.attach(messenger: messenger)
 
             // System volume (0...1) for pause/resume on volume.
-            SystemVolumeFeed.shared.attach(messenger: controller.binaryMessenger)
+            SystemVolumeFeed.shared.attach(messenger: messenger)
 
             // Screen brightness, for the swipe gesture on the video screen.
             //
@@ -54,15 +85,15 @@ import AVFoundation
             // the full-screen route is left rather than on app exit.
             let brightnessChannel = FlutterMethodChannel(
                 name: "eq_app/screen_brightness",
-                binaryMessenger: controller.binaryMessenger)
+                binaryMessenger: messenger)
             brightnessChannel.setMethodCallHandler { call, result in
                 switch call.method {
                 case "get":
-                    result(Double(UIScreen.main.brightness))
+                    result(Double(AppDelegate.currentScreen().brightness))
                 case "set":
                     let value = (call.arguments as? [String: Any])?["value"] as? Double
                     if let value = value {
-                        UIScreen.main.brightness = CGFloat(min(max(value, 0.01), 1.0))
+                        AppDelegate.currentScreen().brightness = CGFloat(min(max(value, 0.01), 1.0))
                     }
                     result(nil)
                 case "keepAwake":
@@ -78,22 +109,75 @@ import AVFoundation
                 }
             }
         }
+    }
 
-        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // MARK: - Scene-aware window access
+    //
+    // Two displays and a resizing app mean there is no such thing as "the"
+    // window or "the" screen: ask the scene that is on show. `UIScreen.main`
+    // and `AppDelegate.window` are exactly the answers that stop being right.
+
+    private static func activeWindowScene() -> UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first { $0.activationState == .foregroundActive }
+            ?? scenes.first { $0.activationState == .foregroundInactive }
+            ?? scenes.first
+    }
+
+    /// The display the foreground scene is on.
+    private static func currentScreen() -> UIScreen {
+        activeWindowScene()?.screen ?? UIScreen.main
+    }
+
+    /// The view controller on top of the foreground scene, for presenting from.
+    private static func topViewController() -> UIViewController? {
+        let scene = activeWindowScene()
+        let window = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
     }
 
     // MARK: - Open audio files from other apps (Safari, Files, AirDrop, etc.)
+    //
+    // Under scenes UIKit stops calling `application(_:open:options:)`; a file
+    // arrives at the scene instead — `openURLContexts` while the app runs,
+    // `willConnectTo` (as `connectionOptions.urlContexts`) when the file is what
+    // launched it. Both reach us through [FlutterSceneLifeCycleDelegate],
+    // registered in [didInitializeImplicitFlutterEngine]. A URL that is not an
+    // audio file is left unhandled (`false`) so the plugins behind us — Google
+    // sign-in's redirect among them — still see it.
 
-    override func application(_ app: UIApplication, open url: URL,
-                              options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        // Check if this is an audio file
-        let ext = url.pathExtension.lowercased()
-        let audioExts: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "ogg", "wma", "aiff", "alac"]
-        if audioExts.contains(ext) {
-            copyToMusicFolder(url)
-            return true
+    private static let audioExts: Set<String> = [
+        "mp3", "m4a", "aac", "flac", "wav", "ogg", "wma", "aiff", "alac",
+    ]
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+        importAudioFiles(URLContexts.map { $0.url })
+    }
+
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions?
+    ) -> Bool {
+        if let urls = connectionOptions?.urlContexts.map({ $0.url }) {
+            _ = importAudioFiles(urls)
         }
-        return super.application(app, open: url, options: options)
+        // Importing a file is not "handling the connection": the scene still
+        // has to be set up by whoever comes next.
+        return false
+    }
+
+    /// Copies each audio file in [urls] into the Music folder. Returns whether
+    /// any of them was one.
+    private func importAudioFiles(_ urls: [URL]) -> Bool {
+        var handled = false
+        for url in urls where Self.audioExts.contains(url.pathExtension.lowercased()) {
+            copyToMusicFolder(url)
+            handled = true
+        }
+        return handled
     }
 
     private func copyToMusicFolder(_ url: URL) {
@@ -643,10 +727,10 @@ import AVFoundation
             // Flutter texture.
             projectMRenderer?.release()
             projectMRenderer = nil
-            if let controller = window?.rootViewController as? FlutterViewController {
+            if let textures = textureRegistry {
                 let renderer = ProjectMRenderer()
                 let texId = renderer.initialize(
-                    registrar: controller.engine.textureRegistry,
+                    registrar: textures,
                     width: w, height: h
                 )
                 if let texId = texId {
@@ -972,11 +1056,11 @@ import AVFoundation
     /// song's actions it was opened from.
     private func presentShareSheet(items: [Any], result: @escaping FlutterResult) {
         DispatchQueue.main.async {
-            guard var top = self.window?.rootViewController else {
+            // The top of the foreground scene — there is no app-level window.
+            guard let top = AppDelegate.topViewController() else {
                 result(false)
                 return
             }
-            while let presented = top.presentedViewController { top = presented }
             let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
             if let popover = sheet.popoverPresentationController {
                 popover.sourceView = top.view

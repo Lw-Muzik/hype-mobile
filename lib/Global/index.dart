@@ -605,22 +605,20 @@ Future<PreparedTrack?> prepareTrack(
         // Stream via URI — ExoPlayer uses HTTP range requests internally,
         // only downloads what the buffer needs (~15-50s ahead).
         // This is how Spotify/Tidal work: no full-file download.
+        //
+        // Nothing is downloaded alongside it. This used to start a whole-file
+        // download of the very track being streamed — two connections to the
+        // drive for the same bytes, the second competing with the first for the
+        // initial buffer — and a second "prefetch next" on top of the one the
+        // `ready` hook runs. Caching is now one thing in one place:
+        // `AppController.preCacheNextCloudTracks`, once playback is under way,
+        // on a network the listener allowed.
         source = AudioSource.uri(
           Uri.parse(item.id),
           headers: headers,
           tag: item,
         );
-
-        // Background cache: download the full file separately for offline use.
-        // This runs independently of playback and can be cancelled on skip.
-        // On cellular with data saver, skip background caching entirely.
-        if (!guard.isDataSaverActive) {
-          cache.preCacheTrack(song.data, fileId, headers);
-        }
       }
-
-      // Prefetch next cloud track in background
-      _prefetchNextTrack();
     }
   } else if (song.data.startsWith('/')) {
     // Local file: use AudioSource.file for proper path handling (spaces, special chars)
@@ -727,51 +725,6 @@ Future<void> loadAudioSource(
     );
   } else {
     handler.resetLevels(handler.player);
-  }
-}
-
-/// Prefetch the next track in the current queue if conditions allow.
-/// On cellular, only prefetches partial data (~512KB ≈ 30s at 128kbps).
-/// On WiFi, prefetches the full file for offline use.
-void _prefetchNextTrack() async {
-  try {
-    final ctrl = AppController.instance;
-    final guard = StreamingDataGuard.instance;
-    if (!guard.shouldPrefetch()) return;
-
-    final songs = ctrl.songs;
-    final currentIdx = ctrl.songId;
-    if (songs.isEmpty || currentIdx >= songs.length - 1) return;
-
-    final nextSong = songs[currentIdx + 1];
-    if (!nextSong.data.startsWith('http')) return;
-    // Don't prefetch discover streams (transient URLs)
-    if (nextSong.data.contains('nowviba.com')) return;
-    // A video's `data` is a watch page, not a media file: caching it would
-    // store an HTML document under a song id and then play it. What the player
-    // actually opens lives in the registry, and it expires anyway.
-    if (VideoRegistry.instance.isVideo(nextSong.id)) return;
-
-    final fileId = nextSong.id.toString();
-    final cache = ctrl.cloudCache;
-    if (cache.isCached(fileId) || cache.isDownloading(fileId)) return;
-
-    debugPrint('Prefetch: Starting next track ${nextSong.title}');
-    final headers = nextSong.data.contains('googleapis.com')
-        ? await ctrl.cloudAuth.getGoogleAuthHeaders()
-        : <String, String>{};
-
-    // On cellular: only prefetch first 512KB (enough for ~30s at 128kbps)
-    // On WiFi: prefetch entire file for offline use
-    final maxBytes = guard.isCellular ? 512 * 1024 : 0; // 0 = unlimited
-    await cache.preCacheTrack(
-      nextSong.data,
-      fileId,
-      headers,
-      maxBytes: maxBytes,
-    );
-  } catch (e) {
-    debugPrint('Prefetch failed: $e');
   }
 }
 

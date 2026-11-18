@@ -31,6 +31,13 @@ class TrackKeys {
 
   /// Whether this entry was queued to be *watched* rather than heard.
   static const isVideo = 'hype_is_video';
+
+  /// Which drive a cloud track came from (`CloudProvider.index`), and the id of
+  /// the file in it. Together they let a dead link — or a stale sign-in token —
+  /// be made good again from the entry alone, the way [videoId] does for
+  /// YouTube.
+  static const cloudProvider = 'hype_cloud_provider';
+  static const cloudFileId = 'hype_cloud_file_id';
 }
 
 extension TrackExtras on SongModel {
@@ -40,19 +47,36 @@ extension TrackExtras on SongModel {
   /// Whether this entry is a music video rather than an audio stream.
   bool get isYtVideo => getMap[TrackKeys.isVideo] == true;
 
+  /// The drive file this track streams from, or null for anything else.
+  String? get cloudFileId => getMap[TrackKeys.cloudFileId] as String?;
+
+  /// `CloudProvider.index` of the drive it streams from.
+  int? get cloudProviderIndex => (getMap[TrackKeys.cloudProvider] as num?)?.toInt();
+
   /// Whether the stored URL can still be handed to a player.
   ///
   /// Mirrors `StreamTarget.isFresh`, including its refusal to guess: an entry
   /// with no recorded deadline is stale, because assuming a lifetime is how a
-  /// restored queue serves a URL the CDN stopped honouring hours ago. A track
-  /// that never came from YouTube has no deadline to miss and is always fresh.
+  /// restored queue serves a URL the CDN stopped honouring hours ago.
+  ///
+  /// A cloud track is the one exception to "no deadline means stale": a Google
+  /// Drive link never expires (its sign-in token does, and that is fetched at
+  /// load), so it records none and stays fresh. A Dropbox link lasts hours and
+  /// records when; an entry past that is stale like any YouTube one. A track
+  /// that is neither has no deadline to miss and is always fresh.
   bool get hasFreshTarget {
-    if (ytVideoId == null) return true;
     final deadline = (getMap[TrackKeys.expiresAt] as num?)?.toInt();
+    if (ytVideoId == null) {
+      if (cloudFileId == null || deadline == null) return true;
+      return _beforeDeadline(deadline);
+    }
     if (deadline == null) return false;
-    // A minute of headroom, so a URL cannot expire mid-buffer.
-    return DateTime.now().millisecondsSinceEpoch ~/ 1000 < deadline - 60;
+    return _beforeDeadline(deadline);
   }
+
+  /// A minute of headroom, so a URL cannot expire mid-buffer.
+  static bool _beforeDeadline(int deadline) =>
+      DateTime.now().millisecondsSinceEpoch ~/ 1000 < deadline - 60;
 
   /// Whether this entry must be resolved again before it can be handed to a
   /// player.
@@ -69,10 +93,17 @@ extension TrackExtras on SongModel {
   /// and no file behind it. Trusting the deadline alone hands the player a path
   /// to something that is not there.
   bool needsRefresh({required bool staged}) {
-    if (ytVideoId == null) return false;
+    // A cloud track is renewed when its link has aged out, or when a failure
+    // stamped it stale (see `markStale`).
+    if (ytVideoId == null) return cloudFileId != null && !hasFreshTarget;
     if (!hasFreshTarget) return true;
     return isYtVideo && !staged;
   }
+
+  /// A copy marked as needing a new link and token, for a track the player
+  /// just refused. The deadline is set to the start of time, which every check
+  /// reads as "already over".
+  SongModel markStale() => withTarget(getMap['_data'] as String? ?? '', 1);
 
   /// A copy of this track pointing at [url], valid until [expiresAt].
   ///

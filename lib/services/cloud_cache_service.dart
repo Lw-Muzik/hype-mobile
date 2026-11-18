@@ -8,6 +8,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/cloud_file.dart';
 import 'streaming_data_guard.dart';
+import 'ytmusic/yt_innertube.dart';
+
+/// Whether a queue entry's link belongs in the cloud cache at all.
+///
+/// Only a drive file does. A YouTube stream resolves to a signed, single-use
+/// googlevideo url that the player always opens directly — the cache is never
+/// read for it — so downloading one into the cache spent a song's worth of data
+/// on bytes nobody would play, and pushed real cloud files out of the cache to
+/// make room. `nowviba.com` is Discover's transient streams, same reasoning.
+bool isCloudCacheable(String url) =>
+    url.startsWith('http') &&
+    !YtInnerTube.isStreamUrl(url) &&
+    !url.contains('nowviba.com');
 
 class CloudCacheService {
   final SharedPreferences _prefs;
@@ -21,10 +34,14 @@ class CloudCacheService {
   static const _dropboxListTsKey = 'cloud_file_list_dropbox_ts';
   static const int defaultMaxCacheBytes = 500 * 1024 * 1024; // 500 MB
 
-  // Track active downloads for cancellation and dedup
-  String? _prefetchingFileId;
-  http.Client? _activeClient;
-  bool _downloadCancelled = false;
+  /// The one download in flight, if any.
+  ///
+  /// It used to be three loose fields — a file id, a client and a cancel flag —
+  /// shared by every caller. A second download overwrote the first one's id and
+  /// client, so cancelling closed only the newest connection and a third ask
+  /// for a file already in flight opened a second writer on the same `.part`
+  /// file. One object per download, and only ever one at a time.
+  _Download? _active;
 
   int get maxCacheBytes =>
       _prefs.getInt('cloudCacheMaxBytes') ?? defaultMaxCacheBytes;
@@ -35,8 +52,9 @@ class CloudCacheService {
 
   CloudCacheService(this._prefs);
 
-  Future<void> init() async {
-    final appDir = await getApplicationSupportDirectory();
+  /// [directory] is for tests, which have no application-support folder.
+  Future<void> init({@visibleForTesting Directory? directory}) async {
+    final appDir = directory ?? await getApplicationSupportDirectory();
     _cacheDir = Directory('${appDir.path}/cloud_audio_cache');
     if (!_cacheDir.existsSync()) {
       _cacheDir.createSync(recursive: true);
@@ -69,61 +87,64 @@ class CloudCacheService {
     return 0;
   }
 
-  /// Check if a download is already in progress.
+  /// Whether any download is running. Callers use it to skip the work of
+  /// preparing a request the downloader would refuse anyway.
+  bool get isBusy => _active != null;
+
+  /// Whether [fileId] is being downloaded right now.
+  bool isActive(String fileId) => _active?.fileId == fileId;
+
+  /// Check if a download is already in progress (or left half-done).
   bool isDownloading(String fileId) {
-    if (_prefetchingFileId == fileId) return true;
+    if (isActive(fileId)) return true;
     return _partialFile(fileId).existsSync();
   }
 
   /// Cancel any active background download.
   /// Called when the user skips a track to stop wasting data.
   void cancelActiveDownload() {
-    if (_activeClient != null) {
-      _downloadCancelled = true;
-      _activeClient!.close();
-      _activeClient = null;
-      debugPrint('CloudCache: Cancelled active download');
-    }
+    final active = _active;
+    if (active == null) return;
+    active.cancelled = true;
+    // Closing the client makes the read loop throw; its `finally` closes the
+    // file, so the partial on disk is whole up to the byte it stopped at.
+    active.client.close();
+    debugPrint('CloudCache: Cancelled active download');
   }
 
   /// Pre-cache a track with resume support.
   /// Downloads the file, resuming from partial if available.
   /// [maxBytes] limits how much to download (0 = unlimited).
   /// Use maxBytes on cellular to only cache enough for ~30s of playback.
+  ///
+  /// One download at a time. A phone has one radio, and the track that is
+  /// playing is already using it; a second ask — for another track, or for this
+  /// one again because a `ready` event fired — is refused (`false`) rather than
+  /// queued, because the next track change asks again.
+  ///
+  /// [expectedBytes] is the file's size from the drive's own listing. It is the
+  /// fallback when the server states no length: a connection that closes
+  /// cleanly after half a song must not be filed as the whole song.
   Future<bool> preCacheTrack(
     String url,
     String fileId,
     Map<String, String> headers, {
     int maxBytes = 0,
+    int? expectedBytes,
   }) async {
     if (isCached(fileId)) return true;
-    if (_prefetchingFileId == fileId) return false; // already in progress
+    if (_active != null) return false;
 
-    _prefetchingFileId = fileId;
-    _downloadCancelled = false;
-    final file = cacheFile(fileId);
     final partial = _partialFile(fileId);
+    var existingBytes = partial.existsSync() ? partial.lengthSync() : 0;
+    // Already holds enough for a partial prefetch.
+    if (maxBytes > 0 && existingBytes >= maxBytes) return true;
+
+    final download = _Download(fileId);
+    _active = download;
+    IOSink? sink;
 
     try {
-      final client = http.Client();
-      _activeClient = client;
-
-      // Check for existing partial download
-      int existingBytes = 0;
-      IOSink sink;
-      if (partial.existsSync()) {
-        existingBytes = partial.lengthSync();
-        // If we already have enough for a partial prefetch, skip
-        if (maxBytes > 0 && existingBytes >= maxBytes) {
-          _activeClient = null;
-          _prefetchingFileId = null;
-          return true;
-        }
-        sink = partial.openWrite(mode: FileMode.append);
-      } else {
-        sink = partial.openWrite();
-      }
-
       // Build request with Range header for resume
       final request = http.Request('GET', Uri.parse(url));
       request.headers.addAll(headers);
@@ -131,27 +152,22 @@ class CloudCacheService {
         request.headers['Range'] = 'bytes=$existingBytes-';
       }
 
-      final response = await client.send(request);
-
-      // If server doesn't support range and we had partial, start over
-      if (existingBytes > 0 && response.statusCode == 200) {
-        await sink.close();
-        sink = partial.openWrite(); // overwrite
-        existingBytes = 0;
-      }
+      final response = await download.client.send(request);
 
       if (response.statusCode != 200 && response.statusCode != 206) {
-        await sink.close();
-        client.close();
-        _activeClient = null;
-        _prefetchingFileId = null;
         return false;
       }
 
+      // A server that ignored the Range sends the whole file with a 200:
+      // start over rather than append a second copy to the first.
+      final resumed = existingBytes > 0 && response.statusCode == 206;
+      if (!resumed) existingBytes = 0;
+      sink = partial.openWrite(mode: resumed ? FileMode.append : FileMode.write);
+
       // Stream to file, tracking data usage
-      int totalDownloaded = existingBytes;
+      var totalDownloaded = existingBytes;
       await for (final chunk in response.stream) {
-        if (_downloadCancelled) {
+        if (download.cancelled) {
           debugPrint(
             'CloudCache: Download cancelled for $fileId at ${_formatBytes(totalDownloaded)}',
           );
@@ -177,14 +193,19 @@ class CloudCacheService {
 
       await sink.flush();
       await sink.close();
-      client.close();
-      _activeClient = null;
+      sink = null;
 
-      // Only mark complete if we downloaded the entire file (not partial/cancelled)
-      final isComplete = !_downloadCancelled && maxBytes == 0;
+      // Complete only if the whole file arrived: not cancelled, not a partial
+      // prefetch, and as many bytes as the server (or the listing) promised.
+      final whole = _wholeSize(response, existingBytes, expectedBytes);
+      final isComplete =
+          !download.cancelled &&
+          maxBytes == 0 &&
+          (whole == null || totalDownloaded == whole);
 
       if (isComplete && partial.existsSync()) {
         // Move partial → complete
+        final file = cacheFile(fileId);
         final dest = file.path;
         if (file.existsSync()) file.deleteSync();
         partial.renameSync(dest);
@@ -199,19 +220,52 @@ class CloudCacheService {
         await _evictIfNeeded();
 
         debugPrint('CloudCache: Cached $fileId (${_formatBytes(stat.size)})');
+      } else if (!download.cancelled &&
+          maxBytes == 0 &&
+          whole != null &&
+          totalDownloaded != whole) {
+        debugPrint(
+          'CloudCache: $fileId ended at ${_formatBytes(totalDownloaded)} of '
+          '${_formatBytes(whole)}; kept to resume',
+        );
       }
 
-      _prefetchingFileId = null;
       return isComplete;
     } catch (e) {
-      if (!_downloadCancelled) {
+      if (!download.cancelled) {
         debugPrint('CloudCache: Download failed for $fileId: $e');
       }
       // DON'T delete partial file — keep it for resume on retry
-      _activeClient = null;
-      _prefetchingFileId = null;
       return false;
+    } finally {
+      // Whichever way this ended — a cancel closes the connection under the
+      // read loop and lands here with the file still open — the file is closed.
+      // A skipped track used to leave one open per skip.
+      try {
+        await sink?.close();
+      } catch (_) {}
+      download.client.close();
+      if (identical(_active, download)) _active = null;
     }
+  }
+
+  /// The size the finished file must have, or null when nothing says.
+  ///
+  /// The server's word comes first (`Content-Range` on a resume, else
+  /// `Content-Length`); the drive listing's size is the fallback.
+  static int? _wholeSize(
+    http.StreamedResponse response,
+    int offset,
+    int? expectedBytes,
+  ) {
+    final range = response.headers['content-range'];
+    if (range != null) {
+      final total = RegExp(r'/(\d+)\s*$').firstMatch(range)?.group(1);
+      if (total != null) return int.parse(total);
+    }
+    final length = response.contentLength;
+    if (length != null && length >= 0) return offset + length;
+    return (expectedBytes != null && expectedBytes > 0) ? expectedBytes : null;
   }
 
   /// Mark a download as complete in metadata.
@@ -390,6 +444,16 @@ class CloudCacheService {
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
+}
+
+/// One download: the file it is for, its own connection, and its own cancel
+/// flag — so cancelling it can never be mistaken for cancelling another.
+class _Download {
+  _Download(this.fileId);
+
+  final String fileId;
+  final http.Client client = http.Client();
+  bool cancelled = false;
 }
 
 class _CacheEntry {
